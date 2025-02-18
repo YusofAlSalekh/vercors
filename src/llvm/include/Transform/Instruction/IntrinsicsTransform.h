@@ -18,6 +18,13 @@ void transformTrap(llvm::CallInst &callInstruction,
                    col::LlvmBasicBlock &colBlock,
                    pallas::FunctionCursor &funcCursor);
 
+/**
+ * Transform call to the @llvm.expect.XXX-intrinsic
+ */
+void transformExpect(llvm::CallInst &callInstruction,
+                     col::LlvmBasicBlock &colBlock,
+                     pallas::FunctionCursor &funcCursor);
+
 } // namespace llvm2col
 
 #endif // PALLAS_INTRINSICSTRANSFORM_H
