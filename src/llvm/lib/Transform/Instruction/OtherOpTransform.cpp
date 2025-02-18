@@ -10,6 +10,7 @@
 
 #include "Passes/Function/ExprWrapperMapper.h"
 #include "Transform/BlockTransform.h"
+#include "Transform/Instruction/IntrinsicsTransform.h"
 #include "Transform/Transform.h"
 #include "Util/BlockUtils.h"
 #include "Util/Constants.h"
@@ -255,7 +256,7 @@ void llvm2col::transformCallExpr(llvm::CallInst &callInstruction,
         return;
 
     if (callInstruction.getCalledFunction()->isIntrinsic()) {
-        // TODO: Deal with intrinsic functions
+        transformIntrinsic(callInstruction, colBlock, funcCursor);
         return;
     }
 
