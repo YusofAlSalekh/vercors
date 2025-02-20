@@ -1,6 +1,7 @@
 #include "Passes/Module/GlobalVariableDeclarer.h"
 #include "Passes/Module/RootContainer.h"
 #include "Transform/Transform.h"
+#include "Util/Constants.h"
 
 namespace pallas {
 const std::string SOURCE_LOC = "Passes::Module::GlobalVariableDeclarer";
@@ -12,6 +13,11 @@ PreservedAnalyses GlobalVariableDeclarerPass::run(Module &M,
     auto pProgram = MAM.getResult<RootContainer>(M).program;
 
     for (auto &global : M.globals()) {
+        // Skip the entry-point global from swift, as it contains currently 
+        // unsupported poitner-casting and is not needed for verification.
+        if (global.getSection().str() == constants::SWIFT_ENTRY_SECTION)
+            continue;
+        
         col::GlobalDeclaration *globDecl = pProgram->add_declarations();
         col::LlvmGlobalVariable *colGlobal =
             globDecl->mutable_llvm_global_variable();

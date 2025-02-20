@@ -37,6 +37,10 @@ const std::string VC_PREFIX = "VC.";
 const std::string METADATA_PURE_KEYWORD = VC_PREFIX + "pure";
 const std::string METADATA_CONTRACT_KEYWORD = VC_PREFIX + "contract";
 const std::string METADATA_GLOBAL_KEYWORD = VC_PREFIX + "global";
+
+// Other constants
+const std::string SWIFT_ENTRY_SECTION = "swift5_entry";
+
 } // namespace pallas::constants
 
 #endif // PALLAS_CONSTANTS_H
