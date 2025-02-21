@@ -73,6 +73,14 @@ case object LangLLVMToCol {
       )
   }
 
+  private final case class UnsupportedExtractValueType(o: Origin)
+      extends UserError {
+    override def code: String = "unsupportedExtractValueType"
+
+    override def text: String =
+      o.messageInContext(s"Unsupported aggregate-type used in extractvalue")
+  }
+
   private final case class UnreachableReached(
       unreachable: LLVMBranchUnreachable[_]
   ) extends Blame[AssertFailed] {
@@ -80,13 +88,14 @@ case object LangLLVMToCol {
       unreachable.blame.blame(UnreachableReachedError(unreachable))
   }
 
-  val pallasResArgPermOrigin: Origin = Origin(Seq(
+  private val pallasResArgPermOrigin: Origin = Origin(Seq(
     PreferredName(Seq("resArg context")),
     LabelContext("Generated context for resArg"),
   ))
 
   // TODO: This should be replaced with the correct blames!
-  object InvalidGEP extends PanicBlame("Invalid use of getelementpointer!")
+  private object InvalidGEP
+      extends PanicBlame("Invalid use of getelementpointer!")
 }
 
 case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
@@ -449,7 +458,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def rewriteLocalVariable(v: Variable[Pre]): Unit = {
-    implicit val o: Origin = v.o;
+    implicit val o: Origin = v.o
     rw.variables.succeed(v, new Variable[Post](rw.dispatch(getLocalVarType(v))))
   }
 
@@ -905,6 +914,32 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     // Deref might not be the correct thing to use here since technically the pointer is only dereferenced in the load or store instruction
   }
 
+  def derefStructIndexChain(value: Expr[Post], t: Type[Pre], indices: Seq[Int])(
+      implicit o: Origin
+  ): Expr[Post] = {
+    if (indices.isEmpty) { return value }
+    t match {
+      case struct: LLVMTStruct[Pre] =>
+        if (!structMap.contains(struct)) { rewriteStruct(struct) }
+        val idx = indices.head
+        derefStructIndexChain(
+          Deref[Post](value, structFieldMap.ref((struct, idx)))(InvalidGEP),
+          struct.elements(idx),
+          indices.tail,
+        )
+      case _ => throw UnsupportedExtractValueType(o)
+    }
+  }
+
+  def rewriteExtractValue(extrVal: LLVMExtractValue[Pre]): Expr[Post] = {
+    implicit val o: Origin = extrVal.o
+    derefStructIndexChain(
+      rw.dispatch(extrVal.value),
+      extrVal.aggregateType,
+      extrVal.indices,
+    )
+  }
+
   def rewriteSignExtend(sext: LLVMSignExtend[Pre]): Expr[Post] = {
     implicit val o: Origin = sext.o
     // As long as we don't support integers as bitvectors this is mostly a no-op
@@ -947,7 +982,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     CastFloat(rw.dispatch(fpext.value), rw.dispatch(fpext.t))
   }
 
-  def rewriteArithOpWithOverflow(
+  private def rewriteArithOpWithOverflow(
       instr: LLVMArithOpWithOverflow[Pre],
       op: (Expr[Post], Expr[Post]) => Expr[Post],
   ) = {
@@ -1259,13 +1294,13 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       implicit o: Origin
   ): Expr[Post] = Result[Post](llvmFunctionMap.ref(ref.decl))
 
-  def phiTmpVarOrigin() =
+  private def phiTmpVarOrigin() =
     Origin(Seq(
       PreferredName(Seq("phiTmp")),
       LabelContext(s"Generated tmp-var for phi-assignment"),
     ))
 
-  def phiTmpVarAssignOrigin() =
+  private def phiTmpVarAssignOrigin() =
     Origin(Seq(LabelContext(s"Generated assignment to tmp-var for phi-node")))
 
   private def buildPhiAssignments(
@@ -1385,8 +1420,8 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   Loop restructuring should be handled by Pallas as it has much more analytical and contextual information about
   the program.
    */
-  case class GotoEliminator(bodyScope: Scope[Pre]) extends LazyLogging {
-    val labelDeclMap: Map[LabelDecl[Pre], LLVMBasicBlock[Pre]] =
+  private case class GotoEliminator(bodyScope: Scope[Pre]) extends LazyLogging {
+    private val labelDeclMap: Map[LabelDecl[Pre], LLVMBasicBlock[Pre]] =
       bodyScope.body match {
         case block: Block[Pre] =>
           block.statements.map {
@@ -1414,7 +1449,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }
     }
 
-    def eliminate(bb: LLVMBasicBlock[Pre]): Block[Post] = {
+    private def eliminate(bb: LLVMBasicBlock[Pre]): Block[Post] = {
       implicit val o: Origin = bb.o
       bb.terminator match {
         case goto: Goto[Pre] =>
@@ -1436,7 +1471,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }
     }
 
-    def eliminate(branch: Branch[Pre]): Branch[Post] = {
+    private def eliminate(branch: Branch[Pre]): Branch[Post] = {
       implicit val o: Origin = branch.o
       Branch[Post](branch.branches.map(bs =>
         (

@@ -3767,6 +3767,14 @@ final case class LLVMGetElementPointer[G](
 )(implicit val o: Origin)
     extends LLVMExpr[G] with LLVMGetElementPointerImpl[G]
 
+final case class LLVMExtractValue[G](
+    aggregateType: Type[G],
+    resultType: Type[G],
+    value: Expr[G],
+    indices: Seq[Int],
+)(implicit val o: Origin)
+    extends LLVMExpr[G] with LLVMExtractValueImpl[G]
+
 final case class LLVMSignExtend[G](
     inputType: Type[G],
     outputType: Type[G],

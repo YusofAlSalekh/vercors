@@ -452,6 +452,7 @@ case class LangSpecificToCol[Pre <: Generation](
         llvm.rewriteFunctionPointer(pointer)
       case pointer: LLVMPointerValue[Pre] => llvm.rewritePointerValue(pointer)
       case gep: LLVMGetElementPointer[Pre] => llvm.rewriteGetElementPointer(gep)
+      case extrVal: LLVMExtractValue[Pre] => llvm.rewriteExtractValue(extrVal)
       case int: LLVMIntegerValue[Pre] => IntegerValue(int.value)(int.o)
       case float: LLVMFloatValue[Pre] =>
         FloatValue(float.bigDecimalValue, dispatch(float.t))(float.o)
