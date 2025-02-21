@@ -43,9 +43,9 @@ trait CLocalImpl[G] extends CLocalOps[G] {
           case Some(_) => Types.notAValue(ref) // Function declaration
           case None =>
             declInfo
-              .typeOrReturnType(CPrimitiveType(
-                decls.decl.specs
-              )) // Static declaration
+              .typeOrReturnType(
+                C.getPrimitiveType(decls.decl.specs)
+              ) // Static declaration
         }
       case RefModelField(field) => field.t
       case target: SpecInvocationTarget[G] => Types.notAValue(target)

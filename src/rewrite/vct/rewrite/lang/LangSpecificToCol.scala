@@ -415,18 +415,12 @@ case class LangSpecificToCol[Pre <: Generation](
         assign.target match {
           case AmbiguousSubscript(v, _) =>
             v.t match {
-              case CPrimitiveType(specs) if specs.collectFirst {
-                    case CSpecificationType(_: CTVector[Pre]) => ()
-                  }.isDefined =>
-                return c.assignSubscriptVector(assign)
+              case _: CTVector[Pre] => return c.assignSubscriptVector(assign)
               case _ =>
             }
           case CFieldAccess(obj, _) =>
             obj.t match {
-              case CPrimitiveType(specs) if specs.collectFirst {
-                    case CSpecificationType(_: TOpenCLVector[Pre]) => ()
-                  }.isDefined =>
-                return c.assignOpenCLVector(assign)
+              case TOpenCLVector(_, _) => return c.assignOpenCLVector(assign)
               case _ =>
             }
           case _ =>

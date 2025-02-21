@@ -40,7 +40,7 @@ import vct.rewrite.{
   GenerateSingleOwnerPermissions,
   HeapVariableToRef,
   InlineTrivialLets,
-  LowerLocalHeapVariables,
+  LowerHeapVariables,
   MonomorphizeClass,
   SmtlibToProverTypes,
   VariableToPointer,
@@ -454,6 +454,7 @@ case class SilverTransformation(
         // value is pure and therefore be put in the contract of the constant function.
         ConstantifyFinalFields,
         EncodeByValueClassUsage,
+        LowerHeapVariables,
         // Resolve side effects including method invocations, for encodetrythrowsignals.
         ResolveExpressionSideChecks,
         ResolveExpressionSideEffects,
@@ -463,7 +464,6 @@ case class SilverTransformation(
         // No more classes
         ClassToRef,
         HeapVariableToRef,
-        LowerLocalHeapVariables,
         CheckContractSatisfiability.withArg(checkSat),
         DesugarCollectionOperators,
         EncodeNdIndex,

@@ -55,12 +55,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
     // TODO: Replace the asByReferenceClass checks with something that more clearly communicates that we want to exclude all reference types
     addressedSet.addAll(program.collect {
       case AddrOf(Local(Ref(v))) if v.t.asByReferenceClass.isEmpty => v
-      case AddrOf(DerefHeapVariable(Ref(v)))
-          if v.t.asByReferenceClass.isEmpty =>
-        v
-      case AddrOf(Deref(o, Ref(f)))
-          if f.t.asByReferenceClass.isEmpty && o.t.asByValueClass.isEmpty =>
-        f
     })
     super.dispatch(program)
   }

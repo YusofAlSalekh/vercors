@@ -495,8 +495,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
       case CCast(e, t) if e.t.asPointer.isDefined && t.asPointer.isDefined =>
-        val newEElement = rw.dispatch(e.t.asPointer.get.element)
-        val newTElement = rw.dispatch(t.asPointer.get.element)
+        val newEElement = getBaseType(rw.dispatch(e.t.asPointer.get.element))
+        val newTElement = getBaseType(rw.dispatch(t.asPointer.get.element))
         if (
           newEElement == TVoid[Post]() || newTElement == TVoid[Post]() ||
           CoercionUtils.firstElementIsType(newEElement, newTElement) ||
@@ -1154,12 +1154,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             )
           )
         case None =>
-          val newT =
-            if (t.asByValueClass.isDefined) { TNonNullPointer(t) }
-            else { t }
           cGlobalNameSuccessor(RefCGlobalDeclaration(decl, idx)) = rw
-            .globalDeclarations
-            .declare(new HeapVariable(newT)(init.o.sourceName(info.name)))
+            .globalDeclarations.declare(new HeapVariable(TNonNullPointer(t))(
+              init.o.sourceName(info.name)
+            ))
       }
     }
   }
@@ -1461,17 +1459,17 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
               decl.decl.specs.collectFirst { case t: CSpecificationType[Pre] =>
                 t.t
               }.get
-            if (t.isInstanceOf[CTStruct[Pre]]) {
-              DerefPointer(
-                DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
-                  local.blame
-                )
-              )(local.blame)
-            } else {
-              DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
-                local.blame
-              )
-            }
+//            if (t.isInstanceOf[CTStruct[Pre]]) {
+//              DerefPointer(
+//                DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
+//                  local.blame
+//                )
+//              )(local.blame)
+//            } else {
+            DerefPointer(DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
+              local.blame
+            ))(local.blame)
+//            }
           case Some(_) =>
             // Is this ever possible? I.e. would it not be a RefCFunctionDefinition?
             throw NotAValue(local)
@@ -1513,10 +1511,6 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         else {
           val elementType =
             deref.obj.t match {
-              case CPrimitiveType(
-                    Seq(CSpecificationType(v: TOpenCLVector[Pre]))
-                  ) =>
-                v.innerType
               case v: TOpenCLVector[Pre] => v.innerType
               case _ => ???
             }
@@ -1617,7 +1611,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val sub @ AmbiguousSubscript(v, i) = assign.target
     val t =
       v.t match {
-        case CPrimitiveType(Seq(CSpecificationType(t: CTVector[Pre]))) => t
+        case t: CTVector[Pre] => t
         case _ => ???
       }
 
@@ -1645,7 +1639,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val CFieldAccess(obj, idxs) = assign.target
     val t =
       obj.t match {
-        case CPrimitiveType(Seq(CSpecificationType(t: TOpenCLVector[Pre]))) => t
+        case t: TOpenCLVector[Pre] => t
         case _ => ???
       }
 

@@ -253,9 +253,11 @@ case object C {
       )
       val otherSpecifiers = specs.filter(!_.isInstanceOf[CTypeSpecifier[G]])
 
-      return CPrimitiveType(
+      return getPrimitiveType(
         CSpecificationType[G](CTFunction(returnType, info.params.get)) +:
-          otherSpecifiers
+          otherSpecifiers,
+        platformContext,
+        context,
       )
     }
 
