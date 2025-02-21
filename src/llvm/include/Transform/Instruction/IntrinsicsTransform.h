@@ -25,6 +25,30 @@ void transformExpect(llvm::CallInst &callInstruction,
                      col::LlvmBasicBlock &colBlock,
                      pallas::FunctionCursor &funcCursor);
 
+/**
+ * Transform call to the @llvm.sadd.with.overflow or
+ *                       @llvm.uadd.with.overflow-intrinsic
+ */
+void transformAddWithOverflow(llvm::CallInst &callInstruction,
+                              col::LlvmBasicBlock &colBlock,
+                              pallas::FunctionCursor &funcCursor, bool sign);
+
+/**
+ * Transform call to the @llvm.ssub.with.overflow or
+ *                       @llvm.usub.with.overflow-intrinsic
+ */
+void transformSubWithOverflow(llvm::CallInst &callInstruction,
+                              col::LlvmBasicBlock &colBlock,
+                              pallas::FunctionCursor &funcCursor, bool sign);
+
+/**
+ * Transform call to the @llvm.smult.with.overflow or
+ *                       @llvm.umult.with.overflow-intrinsic
+ */
+void transformMultWithOverflow(llvm::CallInst &callInstruction,
+                               col::LlvmBasicBlock &colBlock,
+                               pallas::FunctionCursor &funcCursor, bool sign);
+
 } // namespace llvm2col
 
 #endif // PALLAS_INTRINSICSTRANSFORM_H

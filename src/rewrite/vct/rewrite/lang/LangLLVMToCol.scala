@@ -947,6 +947,64 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     CastFloat(rw.dispatch(fpext.value), rw.dispatch(fpext.t))
   }
 
+  def rewriteArithOpWithOverflow(
+      instr: LLVMArithOpWithOverflow[Pre],
+      op: (Expr[Post], Expr[Post]) => Expr[Post],
+  ) = {
+    implicit val o: Origin = instr.o
+    // TODO: Do not ignore the signedness
+    val targetStructT =
+      instr.target.t match {
+        case s: LLVMTStruct[Pre] => s
+        case _ => ??? // Should never happen
+      }
+    // Assign new object to target
+    val newCls = structMap.get(targetStructT).get
+    val assignNew =
+      Assign(rw.dispatch(instr.target), new NewObject[Post](newCls.ref))(
+        instr.blame
+      )
+    // Set result-field
+    val resField = structFieldMap((targetStructT, 0))
+    val assignRes =
+      Assign(
+        Deref[Post](rw.dispatch(instr.target), resField.ref)(PanicBlame(
+          "Generated object always has permissions"
+        )),
+        op(rw.dispatch(instr.left), rw.dispatch(instr.right)),
+      )(instr.blame)
+
+    // Set overflow-flag
+    val flagField = structFieldMap((targetStructT, 1))
+    val assignFlag =
+      Assign(
+        Deref[Post](rw.dispatch(instr.target), flagField.ref)(PanicBlame(
+          "Generated object always has permissions"
+        )),
+        ff,
+      )(instr.blame)
+
+    // Build Block
+    Block(Seq(assignNew, assignRes, assignFlag))
+  }
+
+  def rewriteAddWithOverflow(add: LLVMAddWithOverflow[Pre]): Statement[Post] = {
+    implicit val o: Origin = add.o
+    rewriteArithOpWithOverflow(add, (l, r) => l + r)
+  }
+
+  def rewriteSubWithOverflow(sub: LLVMSubWithOverflow[Pre]): Statement[Post] = {
+    implicit val o: Origin = sub.o
+    rewriteArithOpWithOverflow(sub, (l, r) => l - r)
+  }
+
+  def rewriteMultWithOverflow(
+      mult: LLVMMultWithOverflow[Pre]
+  ): Statement[Post] = {
+    implicit val o: Origin = mult.o
+    rewriteArithOpWithOverflow(mult, (l, r) => l * r)
+  }
+
   def rewriteUnreachable(
       unreachable: LLVMBranchUnreachable[Pre]
   ): Statement[Post] = {

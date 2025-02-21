@@ -339,6 +339,9 @@ case class LangSpecificToCol[Pre <: Generation](
       case unreachable: LLVMBranchUnreachable[Pre] =>
         llvm.rewriteUnreachable(unreachable)
       case fracOf: LLVMFracOf[Pre] => llvm.rewriteFracOf(fracOf)
+      case add: LLVMAddWithOverflow[Pre] => llvm.rewriteAddWithOverflow(add)
+      case sub: LLVMSubWithOverflow[Pre] => llvm.rewriteSubWithOverflow(sub)
+      case mult: LLVMMultWithOverflow[Pre] => llvm.rewriteMultWithOverflow(mult)
       case other => other.rewriteDefault()
     }
 

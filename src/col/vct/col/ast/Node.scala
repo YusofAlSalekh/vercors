@@ -3795,6 +3795,33 @@ final case class LLVMFloatExtend[G](
 )(implicit val o: Origin)
     extends LLVMExpr[G] with LLVMFloatExtendImpl[G]
 
+sealed trait LLVMArithOpWithOverflow[G]
+    extends LLVMStatement[G] with LLVMArithOpWithOverflowImpl[G]
+
+final case class LLVMAddWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMAddWithOverflowImpl[G]
+
+final case class LLVMSubWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMSubWithOverflowImpl[G]
+
+final case class LLVMMultWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMMultWithOverflowImpl[G]
+
 final class LLVMGlobalSpecification[G](val value: String)(
     implicit val o: Origin
 ) extends GlobalDeclaration[G] with LLVMGlobalSpecificationImpl[G] {
