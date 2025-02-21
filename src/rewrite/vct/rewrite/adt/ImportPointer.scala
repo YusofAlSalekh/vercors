@@ -563,7 +563,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
         val newValue = dispatch(value)
         (targetType, value.t) match {
-          case (TInt(), TPointer(_)) =>
+          case (TInt() | TBoundedInt(_, _), TPointer(_)) =>
             Select[Post](
               OptEmpty(newValue),
               const(0),
@@ -580,7 +580,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 Nil,
               )(PanicBlame("Stride > 0")),
             )
-          case (TInt(), TNonNullPointer(_)) =>
+          case (TInt() | TBoundedInt(_, _), TNonNullPointer(_)) =>
             FunctionInvocation[Post](
               ref = pointerAddress.ref,
               args = Seq(newValue, dispatch(typeSize)),
@@ -588,7 +588,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               Nil,
               Nil,
             )(PanicBlame("Stride > 0"))
-          case (TPointer(_), TInt()) =>
+          case (TPointer(_), TInt() | TBoundedInt(_, _)) =>
             Select[Post](
               newValue === const(0),
               OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
@@ -602,7 +602,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 )(PanicBlame("Stride > 0"))
               ),
             )
-          case (TNonNullPointer(_), TInt()) =>
+          case (TNonNullPointer(_), TInt() | TBoundedInt(_, _)) =>
             FunctionInvocation[Post](
               ref = pointerFromAddress.ref,
               args = Seq(newValue, dispatch(typeSize)),

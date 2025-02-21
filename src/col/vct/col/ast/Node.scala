@@ -2965,6 +2965,11 @@ final case class CPrimitiveType[G](specifiers: Seq[CDeclarationSpecifier[G]])(
 final case class CTPointer[G](innerType: Type[G])(
     implicit val o: Origin = DiagnosticOrigin
 ) extends CType[G] with CTPointerImpl[G]
+final case class CTFunction[G](returnType: Type[G], params: Seq[CParam[G]])(
+    implicit val o: Origin = DiagnosticOrigin
+) extends CType[G] with CTFunctionImpl[G] {
+  var decl: Option[RefCFunctionDefinition[G]] = None
+}
 final case class CTArray[G](size: Option[Expr[G]], innerType: Type[G])(
     val blame: Blame[ArraySizeError]
 )(implicit val o: Origin = DiagnosticOrigin)

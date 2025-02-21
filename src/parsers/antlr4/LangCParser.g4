@@ -107,7 +107,7 @@ unaryOperator
     ;
 
 castExpression
-    : '(' typeName ')' castExpression
+    : {isTypedefName($ctx)}? '(' typeName ')' castExpression
     |   '__extension__' '(' typeName ')' castExpression
     | unaryExpression
     ;

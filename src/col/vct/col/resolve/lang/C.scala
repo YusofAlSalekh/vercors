@@ -246,6 +246,19 @@ case object C {
         case _ => ???
       }
 
+    val info = getDeclaratorInfo(decl.inits.head.decl)
+    if (info.params.isDefined) {
+      val returnType = info.typeOrReturnType(
+        C.getPrimitiveType(decl.specs, platformContext, context)
+      )
+      val otherSpecifiers = specs.filter(!_.isInstanceOf[CTypeSpecifier[G]])
+
+      return CPrimitiveType(
+        CSpecificationType[G](CTFunction(returnType, info.params.get)) +:
+          otherSpecifiers
+      )
+    }
+
     // Need to get specifications from the init (can only have one init as typedef), since it can contain GCC Type extensions
     getPrimitiveType(
       getSpecs(decl.inits.head.decl) ++ specs,
@@ -494,6 +507,11 @@ case object C {
       ctx: ReferenceResolutionContext[G],
   ): CInvocationTarget[G] =
     obj.t match {
+      case CTPointer(t @ CTFunction(_, _)) =>
+        t.decl match {
+          case Some(target) => target
+          case _ => throw NotApplicable(obj)
+        }
       case t: TNotAValue[G] =>
         t.decl.get match {
           case target: CInvocationTarget[G] => target

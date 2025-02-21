@@ -18,7 +18,14 @@ trait CLocalImpl[G] extends CLocalOps[G] {
         )
       case ref: RefAxiomaticDataType[G] => Types.notAValue(ref)
       case RefVariable(decl) => decl.t
-      case ref: RefCFunctionDefinition[G] => Types.notAValue(ref)
+      case ref: RefCFunctionDefinition[G] =>
+        val declInfo = C.getDeclaratorInfo(ref.decl.declarator)
+        val ptr = CTFunction[G](
+          declInfo.typeOrReturnType(CPrimitiveType[G](ref.decl.specs)),
+          declInfo.params.get,
+        );
+        ptr.decl = Some(ref);
+        CTPointer(ptr)
       case ref: RefCStruct[G] => Types.notAValue(ref)
       case ref @ RefCGlobalDeclaration(decls, initIdx) =>
         val declInfo = C.getDeclaratorInfo(decls.decl.inits(initIdx).decl)

@@ -142,6 +142,8 @@ case object CoercionUtils {
             TPointer(element),
           ) => // if element == innerType =>
         getAnyCoercion(element, innerType).getOrElse(return None)
+      case (CTPointer(l), CTPointer(r)) => // if element == innerType =>
+        getAnyCoercion(l, r).getOrElse(return None)
       case (TNonNullPointer(innerType), TPointer(element))
           if innerType == element =>
         CoerceNonNullPointer(innerType)
@@ -281,6 +283,9 @@ case object CoercionUtils {
           CoerceCIntCFloat(coercedCFloat),
           CoerceCFloatFloat(coercedCFloat, target),
         ))
+      case (CTFunction(_, _) | TVoid(), CTFunction(_, _) | TVoid()) =>
+        // Function compatibility left unchecked
+        CoerceIdentity(target)
       case (source @ CPrimitiveType(specs), target) =>
         specs.collectFirst { case spec: CSpecificationType[G] => spec } match {
           case Some(CSpecificationType(t)) =>

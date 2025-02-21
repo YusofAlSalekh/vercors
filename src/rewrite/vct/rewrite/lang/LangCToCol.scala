@@ -284,6 +284,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     mutable.Map()
   private val globalMemNames: mutable.Set[RefCParam[Pre]] = mutable.Set()
   private var kernelSpecifier: Option[CGpgpuKernelSpecifier[Pre]] = None
+  private val functionPointers
+      : mutable.Map[CFunctionDefinition[Pre], Function[Post]] = mutable.Map()
 
   private def CStructOrigin(sdecl: CStructDeclaration[_]): Origin =
     sdecl.o.sourceName(sdecl.name.get).withContent(TypeName("struct"))
@@ -493,15 +495,13 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
       case CCast(e, t) if e.t.asPointer.isDefined && t.asPointer.isDefined =>
-        val newE = rw.dispatch(e)
-        val newT = rw.dispatch(t)
-        val newEElement = newE.t.asPointer.get.element
-        val newTElement = newT.asPointer.get.element
+        val newEElement = rw.dispatch(e.t.asPointer.get.element)
+        val newTElement = rw.dispatch(t.asPointer.get.element)
         if (
           newEElement == TVoid[Post]() || newTElement == TVoid[Post]() ||
           CoercionUtils.firstElementIsType(newEElement, newTElement) ||
           CoercionUtils.firstElementIsType(newTElement, newEElement)
-        ) { Cast(newE, TypeValue(newT)(t.o))(c.o) }
+        ) { Cast(rw.dispatch(e), TypeValue(rw.dispatch(t))(t.o))(c.o) }
         else { throw UnsupportedCast(c) }
       case CCast(e, t @ TCInt()) if e.t.asPointer.isDefined =>
         IntegerPointerCast(
@@ -1438,7 +1438,21 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           )))
         else
           Local(cNameSuccessor.ref(ref))
-      case RefCFunctionDefinition(_) => throw NotAValue(local)
+      case RefCFunctionDefinition(func) =>
+        functionInvocation(
+          TrueSatisfiable,
+          functionPointers.getOrElseUpdate(
+            func, {
+              rw.globalDeclarations.declare(
+                function[Post](
+                  AbstractApplicable,
+                  TrueSatisfiable,
+                  TPointer(TVoid()),
+                )(func.o)
+              )
+            },
+          ).ref,
+        )
       case ref: RefCStruct[Pre] => throw NotAValue(local)
       case ref @ RefCGlobalDeclaration(decl, initIdx) =>
         C.getDeclaratorInfo(decl.decl.inits(initIdx).decl).params match {
@@ -1458,7 +1472,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 local.blame
               )
             }
-          case Some(_) => throw NotAValue(local)
+          case Some(_) =>
+            // Is this ever possible? I.e. would it not be a RefCFunctionDefinition?
+            throw NotAValue(local)
         }
       case ref: RefCLocalDeclaration[Pre]
           if cLocalHeapNameSuccessor.contains(ref) =>

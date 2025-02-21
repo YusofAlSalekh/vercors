@@ -494,10 +494,10 @@ case class LangSpecificToCol[Pre <: Generation](
           dispatch(left),
           dispatch(right),
           determineBitVectorSize(e, left, right),
-          determineBitVectorSignedness(e, left, right),
+          isSigned(left.t),
         )(b.blame)(e.o)
       case b @ AmbiguousBitShr(left, right) =>
-        if (isSigned(left.t) || isSigned(right.t)) {
+        if (isSigned(left.t)) {
           BitShr(
             dispatch(left),
             dispatch(right),
@@ -508,7 +508,7 @@ case class LangSpecificToCol[Pre <: Generation](
             dispatch(left),
             dispatch(right),
             determineBitVectorSize(e, left, right),
-            false,
+            signed = false,
           )(b.blame)(e.o)
         }
       case b @ BitShr(left, right, 0) =>
@@ -525,7 +525,7 @@ case class LangSpecificToCol[Pre <: Generation](
           dispatch(left),
           dispatch(right),
           determineBitVectorSize(e, left, right),
-          determineBitVectorSignedness(e, left, right),
+          isSigned(left.t),
         )(b.blame)(e.o)
       case b @ BitNot(arg, 0, true) =>
         BitNot(
@@ -556,6 +556,7 @@ case class LangSpecificToCol[Pre <: Generation](
       t match {
         case t: JavaTClass[Pre] => java.classType(t)
         case t: CTPointer[Pre] => c.pointerType(t)
+        case _: CTFunction[Pre] => TVoid()
         case t: CTVector[Pre] => c.vectorType(t)
         case t: TOpenCLVector[Pre] => c.vectorType(t)
         case t: TCInt[Pre] =>
@@ -590,8 +591,8 @@ case class LangSpecificToCol[Pre <: Generation](
       case (l: BitwiseType[Pre], r: BitwiseType[Pre]) =>
         (BinOperatorTypes.getBits(l), BinOperatorTypes.getBits(r)) match {
           case (0, _) | (_, 0) => throw IndeterminableBitVectorSize(op)
-          case (l, r) if l == r => l
-          case (l, r) => throw IncompatibleBitVectorSize(op, l, r)
+          case (l, r) if l > r => l
+          case (_, r) => r
         }
       case _ => throw IndeterminableBitVectorSize(op)
     }
