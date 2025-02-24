@@ -44,6 +44,10 @@ void llvm2col::transformIntrinsic(llvm::CallInst &callInstruction,
     case llvm::Intrinsic::dbg_assign:
         // Ignore debug-intrinsics
         break;
+    case llvm::Intrinsic::lifetime_start:
+    case llvm::Intrinsic::lifetime_end:
+        // Ignore lifetime intrinsics
+        break;
     default:
         reportUnsupportedOperatorError(SOURCE_LOC, callInstruction);
     }

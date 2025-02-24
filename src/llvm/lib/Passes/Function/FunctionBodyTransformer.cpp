@@ -209,8 +209,8 @@ FunctionBodyTransformerPass::run(Function &F, FunctionAnalysisManager &FAM) {
     // (As it uses currently unsupported instructions). We generate an
     // requires false; - contract instead.
     if (F.getName().str() == constants::SWIFT_FATAL_ERROR) {
-        ErrorReporter::addWarning(
-            SOURCE_LOC, "Skipping body of swift fatalError", F);
+        ErrorReporter::addWarning(SOURCE_LOC,
+                                  "Skipping body of swift fatalError", F);
         return PreservedAnalyses::all();
     }
 
