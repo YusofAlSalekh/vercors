@@ -227,8 +227,8 @@ void llvm2col::transformExtractValueInst(
                                   *extrVal->mutable_result_type());
     // Value
     llvm2col::transformAndSetExpr(funcCursor, llvmInstruction,
-        *llvmInstruction.getAggregateOperand(),
-        *extrVal->mutable_value());
+                                  *llvmInstruction.getAggregateOperand(),
+                                  *extrVal->mutable_value());
     // Indices
     for (auto &index : llvmInstruction.indices()) {
         extrVal->add_indices(index);

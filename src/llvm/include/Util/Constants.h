@@ -40,6 +40,8 @@ const std::string METADATA_GLOBAL_KEYWORD = VC_PREFIX + "global";
 
 // Other constants
 const std::string SWIFT_ENTRY_SECTION = "swift5_entry";
+const std::string SWIFT_FATAL_ERROR =
+    "$ss10fatalError_4file4lines5NeverOSSyXK_s12StaticStringVSutFfA_SSycfu_";
 
 } // namespace pallas::constants
 
