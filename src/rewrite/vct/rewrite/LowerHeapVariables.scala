@@ -74,7 +74,10 @@ case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
             new Variable[Post](dispatch(v.t.asPointer.get.element))(v.o)
         )
         program.collect {
-          case DerefHeapVariable(Ref(v)) if !nakedHeapGlobals.contains(v) => v
+          case DerefHeapVariable(Ref(v))
+              if !nakedHeapGlobals.contains(v) &&
+                v.t.isInstanceOf[TNonNullPointer[Pre]] =>
+            v
         }.foreach(v =>
           globalStripped(v) =
             new HeapVariable[Post](dispatch(v.t.asPointer.get.element))(v.o)
