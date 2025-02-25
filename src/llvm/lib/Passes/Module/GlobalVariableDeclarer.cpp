@@ -13,11 +13,6 @@ PreservedAnalyses GlobalVariableDeclarerPass::run(Module &M,
     auto pProgram = MAM.getResult<RootContainer>(M).program;
 
     for (auto &global : M.globals()) {
-        // Skip the entry-point global from swift, as it contains currently
-        // unsupported poitner-casting and is not needed for verification.
-        if (global.getSection().str() == constants::SWIFT_ENTRY_SECTION)
-            continue;
-
         col::GlobalDeclaration *globDecl = pProgram->add_declarations();
         col::LlvmGlobalVariable *colGlobal =
             globDecl->mutable_llvm_global_variable();
@@ -25,13 +20,16 @@ PreservedAnalyses GlobalVariableDeclarerPass::run(Module &M,
         llvm2col::transformAndSetType(*global.getType(),
                                       *colGlobal->mutable_variable_type());
         if (global.hasInitializer()) {
-            llvm2col::transformAndSetConstExpr(
-                MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
-                    .getManager(),
-                llvm2col::generateGlobalVariableInitializerOrigin(
-                    M, global, *global.getInitializer()),
-                *global.getInitializer(), *colGlobal->mutable_value());
-
+            // Skip the entry-point global from swift, as it contains currently
+            // unsupported poitner-casting and is not needed for verification.
+            if (global.getSection().str() != constants::SWIFT_ENTRY_SECTION) {
+                llvm2col::transformAndSetConstExpr(
+                    MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
+                        .getManager(),
+                    llvm2col::generateGlobalVariableInitializerOrigin(
+                        M, global, *global.getInitializer()),
+                    *global.getInitializer(), *colGlobal->mutable_value());
+            }
             llvm2col::transformAndSetType(*global.getInitializer()->getType(),
                                           *colGlobal->mutable_variable_type());
         } else {
