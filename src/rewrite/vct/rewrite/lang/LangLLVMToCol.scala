@@ -181,15 +181,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case (a, b) if a == b => false
         case (LLVMTPointer(None), _) => false
         case (LLVMTPointer(Some(TVoid())), _) => false
-        case (TPointer(TVoid()), _) => false
+        case (TPointer(TVoid(), _), _) => false
         case (_, LLVMTPointer(None)) => true
         case (_, LLVMTPointer(Some(TVoid()))) => true
-        case (_, TPointer(TVoid())) => true
+        case (_, TPointer(TVoid(), _)) => true
         case (LLVMTPointer(Some(a)), LLVMTPointer(Some(b))) =>
           moreSpecific(a, b)
-        case (LLVMTPointer(Some(a)), TPointer(b)) => moreSpecific(a, b)
-        case (TPointer(a), LLVMTPointer(Some(b))) => moreSpecific(a, b)
-        case (TPointer(a), TPointer(b)) => moreSpecific(a, b)
+        case (LLVMTPointer(Some(a)), TPointer(b, _)) => moreSpecific(a, b)
+        case (TPointer(a, _), LLVMTPointer(Some(b))) => moreSpecific(a, b)
+        case (TPointer(a, _), TPointer(b, _)) => moreSpecific(a, b)
         case (LLVMTStruct(_, _, a), LLVMTStruct(_, _, b)) =>
           a.headOption.exists(ta => b.exists(tb => moreSpecific(ta, tb)))
         case (LLVMTStruct(_, _, _), _) => true
@@ -222,17 +222,17 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case (a, b) if a == b => Some(a)
         case (LLVMTPointer(None), _) => Some(a)
         case (LLVMTPointer(Some(TVoid())), _) => Some(a)
-        case (TPointer(TVoid()), _) => Some(a)
+        case (TPointer(TVoid(), _), _) => Some(a)
         case (_, LLVMTPointer(None)) => Some(b)
         case (_, LLVMTPointer(Some(TVoid()))) => Some(b)
-        case (_, TPointer(TVoid())) => Some(b)
+        case (_, TPointer(TVoid(), _)) => Some(b)
         case (LLVMTPointer(Some(a)), LLVMTPointer(Some(b))) =>
           Some(LLVMTPointer(findSuperType(a, b)))
-        case (LLVMTPointer(Some(a)), TPointer(b)) =>
+        case (LLVMTPointer(Some(a)), TPointer(b, _)) =>
           Some(LLVMTPointer(findSuperType(a, b)))
-        case (TPointer(a), LLVMTPointer(Some(b))) =>
+        case (TPointer(a, _), LLVMTPointer(Some(b))) =>
           Some(LLVMTPointer(findSuperType(a, b)))
-        case (TPointer(a), TPointer(b)) =>
+        case (TPointer(a, _), TPointer(b, _)) =>
           Some(LLVMTPointer(findSuperType(a, b)))
         case _ => None
       }
@@ -679,7 +679,8 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 new TByValueClass[Post](
                   new DirectRef[Post, Class[Post]](structMap(struct)),
                   Seq(),
-                )(struct.o)
+                )(struct.o),
+                None
               )(struct.o)
             )(decl.o)
           ),
@@ -690,7 +691,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           decl,
           rw.globalDeclarations.declare(
             new HeapVariable[Post](
-              new TPointer[Post](rw.dispatch(array.elementType))(array.o)
+              new TPointer[Post](rw.dispatch(array.elementType), None)(array.o)
             )(decl.o)
           ),
         )
@@ -700,7 +701,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           decl,
           rw.globalDeclarations.declare(
             new HeapVariable[Post](
-              new TPointer[Post](rw.dispatch(vector.elementType))(vector.o)
+              new TPointer[Post](rw.dispatch(vector.elementType), None)(vector.o)
             )(decl.o)
           ),
         )
@@ -992,7 +993,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       } else {
         DerefPointer(Cast(
           rw.dispatch(store.pointer),
-          TypeValue(TPointer(rw.dispatch(valueInferredType))),
+          TypeValue(TPointer(rw.dispatch(valueInferredType), None)),
         ))(store.blame)
       }
     }
@@ -1029,7 +1030,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           (
             DerefPointer(Cast(
               rw.dispatch(load.pointer),
-              TypeValue(TPointer(rw.dispatch(destinationInferredType))),
+              TypeValue(TPointer(rw.dispatch(destinationInferredType), None)),
             ))(load.blame),
             pointerInferredType,
           )
@@ -1066,7 +1067,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         Block(Seq(
           assignLocal(
             v,
-            NewNonNullPointerArray[Post](newT, elements)(PanicBlame(
+            NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
               "allocation should never fail"
             )),
           ),
@@ -1078,7 +1079,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case _ =>
         assignLocal(
           v,
-          NewNonNullPointerArray[Post](newT, elements)(PanicBlame(
+          NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
             "allocation should never fail"
           )),
         )
@@ -1405,13 +1406,13 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def pointerType(t: LLVMTPointer[Pre]): Type[Post] =
     t.innerType match {
-      case Some(innerType) => TPointer[Post](rw.dispatch(innerType))(t.o)
-      case None => TPointer[Post](TVoid())(t.o)
+      case Some(innerType) => TPointer[Post](rw.dispatch(innerType), None)(t.o)
+      case None => TPointer[Post](TVoid(), None)(t.o)
     }
 
   def arrayType(t: LLVMTArray[Pre]): Type[Post] =
-    TPointer(rw.dispatch(t.elementType))(t.o)
+    TPointer(rw.dispatch(t.elementType), None)(t.o)
 
   def vectorType(t: LLVMTVector[Pre]): Type[Post] =
-    TPointer(rw.dispatch(t.elementType))(t.o)
+    TPointer(rw.dispatch(t.elementType), None)(t.o)
 }

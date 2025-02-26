@@ -291,6 +291,7 @@ case class CToCol[G](
       case TypeQualifier1(_) => CRestrict()
       case TypeQualifier2(_) => CVolatile()
       case TypeQualifier3(_) => CAtomic()
+      case TypeQualifier4(spec) => convert(spec)
     }
 
   def convert(
@@ -852,7 +853,9 @@ case class CToCol[G](
       case SpecifierQualifierList0(t, tail) =>
         convert(t) +: tail.map((e: SpecifierQualifierListContext) => convert(e))
           .getOrElse(Nil)
-      case SpecifierQualifierList1(_, _) => ??(specifiers)
+      case SpecifierQualifierList1(t, tail) =>
+        CTypeQualifierDeclarationSpecifier(convert(t)) +: tail.map((e: SpecifierQualifierListContext) => convert(e))
+        .getOrElse(Nil)
     }
 
   def convert(implicit expr: CastExpressionContext): Expr[G] =
@@ -1036,11 +1039,11 @@ case class CToCol[G](
   def convert(t: TypeSpecifierWithPointerOrArrayContext): Type[G] =
     t match {
       case TypeSpecifierWithPointerOrArray0(typeSpec) =>
-        CPrimitiveType(Seq(convert(typeSpec)))
+        CPrimitiveType(convert(typeSpec))
       case TypeSpecifierWithPointerOrArray1(typeSpec, _, _) =>
-        CTArray(None, CPrimitiveType(Seq(convert(typeSpec))))(blame(t))
+        CTArray(None, CPrimitiveType(convert(typeSpec)))(blame(t))
       case TypeSpecifierWithPointerOrArray2(typeSpec, _) =>
-        CTPointer(CPrimitiveType(Seq(convert(typeSpec))))
+        CTPointer(CPrimitiveType(convert(typeSpec)))
     }
 
   def convert(id: LangIdContext): String =
@@ -1219,6 +1222,18 @@ case class CToCol[G](
             fail(mod, "This modifier is not allowed here.")
         }
       case ValStatic(_) => collector.static += mod
+    }
+
+  def convert(mod: ValEmbedTypeQualifierContext): CTypeQualifier[G] =
+    mod match {
+      case ValEmbedTypeQualifier0(_, mod, _) => convert(mod)
+      case ValEmbedTypeQualifier1(mod) => convert(mod)
+    }
+
+  def convert(implicit mod: ValTypeQualifierContext): CTypeQualifier[G] =
+    mod match {
+      case ValUnique(_, _, uniqueId, _) => CUnique[G](convert(uniqueId))
+      case ValUniquePointerField(_, _, name, _, uniqueId, _) => CUniquePointerField[G](convert(name), convert(uniqueId))
     }
 
   def convertEmbedWith(
@@ -1762,7 +1777,7 @@ case class CToCol[G](
         TMap(convert(key), convert(value))
       case ValTupleType(_, _, t1, _, t2, _) =>
         TTuple(Seq(convert(t1), convert(t2)))
-      case ValPointerType(_, _, element, _) => TPointer(convert(element))
+      case ValPointerType(_, _, element, _) => TPointer(convert(element), None)
       case ValTypeType(_, _, element, _) => TType(convert(element))
       case ValEitherType(_, _, left, _, right, _) =>
         TEither(convert(left), convert(right))

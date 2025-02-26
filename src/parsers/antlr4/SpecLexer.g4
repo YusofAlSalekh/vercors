@@ -58,6 +58,8 @@ VAL_STRING: 'string';
 VAL_PURE: 'pure';
 VAL_THREAD_LOCAL: 'thread_local';
 VAL_BIP_ANNOTATION: 'bip_annotation';
+VAL_UNIQUE: 'unique';
+VAL_UNIQUE_POINTER_FIELD: 'unique_pointer_field';
 
 VAL_WITH: 'with';
 VAL_THEN: 'then';

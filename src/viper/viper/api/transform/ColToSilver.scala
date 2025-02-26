@@ -298,17 +298,17 @@ case class ColToSilver(program: col.Program[_]) {
       case col.DecreasesClauseAssume() =>
         DecreasesWildcard(condition = None)(
           pos = pos(clause),
-          info = NodeInfo(clause),
+          info = expInfo(clause),
         )
       case col.DecreasesClauseNoRecursion() =>
         DecreasesTuple(Nil, condition = None)(
           pos = pos(clause),
-          info = NodeInfo(clause),
+          info = expInfo(clause),
         )
       case col.DecreasesClauseTuple(exprs) =>
         DecreasesTuple(exprs.map(exp), condition = None)(
           pos = pos(clause),
-          info = NodeInfo(clause),
+          info = expInfo(clause),
         )
     }
 

@@ -79,7 +79,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                   val newV = variables.succeed(v, v.rewriteDefault())
                   if (addressedSet.contains(v)) {
                     variableMap(v) =
-                      new Variable(TNonNullPointer(dispatch(v.t)))(v.o)
+                      new Variable(TNonNullPointer(dispatch(v.t), None))(v.o)
                     skipVars += v
                     extraVars += ((newV, variableMap(v)))
                   }
@@ -119,15 +119,15 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
       }
       case v: HeapVariable[Pre] if addressedSet.contains(v) =>
         heapVariableMap(v) = globalDeclarations
-          .succeed(v, new HeapVariable(TNonNullPointer(dispatch(v.t)))(v.o))
+          .succeed(v, new HeapVariable(TNonNullPointer(dispatch(v.t), None))(v.o))
       case v: Variable[Pre] if addressedSet.contains(v) =>
         variableMap(v) = variables
-          .succeed(v, new Variable(TNonNullPointer(dispatch(v.t)))(v.o))
+          .succeed(v, new Variable(TNonNullPointer(dispatch(v.t), None))(v.o))
       case f: InstanceField[Pre] if addressedSet.contains(f) =>
         fieldMap(f) = classDeclarations.succeed(
           f,
           new InstanceField(
-            TNonNullPointer(dispatch(f.t)),
+            TNonNullPointer(dispatch(f.t), None),
             f.flags.map { it => dispatch(it) },
           )(f.o),
         )
@@ -148,6 +148,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                 NewNonNullPointerArray(
                   variableMap(local).t.asPointer.get.element,
                   const(1),
+                  None
                 )(PanicBlame("Size is > 0")),
               )(PanicBlame("Initialisation should always succeed"))
             } ++ Seq(dispatch(s.body))),
@@ -165,6 +166,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                   NewNonNullPointerArray(
                     fieldMap(f).t.asPointer.get.element,
                     const(1),
+                    None
                   )(PanicBlame("Size is > 0")),
                 )(PanicBlame("Initialisation should always succeed")),
                 Assign(
@@ -186,6 +188,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                   NewNonNullPointerArray(
                     fieldMap(f).t.asPointer.get.element,
                     const(1),
+                    None
                   )(PanicBlame("Size is > 0")),
                 )(PanicBlame("Initialisation should always succeed"))
               )
@@ -239,6 +242,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                           NewNonNullPointerArray(
                             fieldMap(f).t.asPointer.get.element,
                             const(1),
+                            None
                           )(PanicBlame("Size is > 0")),
                         )(PanicBlame("Initialisation should always succeed"))
                       )

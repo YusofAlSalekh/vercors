@@ -4,6 +4,7 @@ import hre.util.FuncTools
 import vct.col.ast._
 import vct.col.ast.`type`.typeclass.TFloats.{C_ieee754_32bit, C_ieee754_64bit}
 import vct.col.origin._
+import vct.col.ref.Ref
 import vct.col.resolve._
 import vct.col.resolve.ctx._
 import vct.col.typerules.{PlatformContext, TypeSize}
@@ -165,6 +166,22 @@ case object C {
       name: String,
   )
 
+  def qualify[G](t: Type[G], q: CTypeQualifier[G]): Type[G] = {
+    q match {
+      case CConst() => TConst(t)(q.o)
+      case CUnique(i) => TUnique(t, i)(q.o)
+      case pf@CUniquePointerField(_, i) =>
+        val field: CStructMemberDeclarator[G] = pf.ref.get.decls
+        val fieldRef: Ref[G, CStructMemberDeclarator[G]] = field.ref
+        CTStructUnique(t, fieldRef, i)(q.o)
+      case _ => throw CTypeNotSupported(Some(q))
+    }
+  }
+
+  def processPointer[G](p: CPointer[G], t: Type[G]): Type[G] = {
+    p.qualifiers.foldLeft(CTPointer[G](t)(p.o): Type[G])(qualify[G])
+  }
+
   def getDeclaratorInfo[G](decl: CDeclarator[G]): DeclaratorInfo[G] =
     decl match {
       case CPointerDeclarator(pointers, inner) =>
@@ -173,7 +190,7 @@ case object C {
           innerInfo.params,
           t =>
             innerInfo.typeOrReturnType(
-              FuncTools.repeat[Type[G]](CTPointer(_), pointers.size, t)
+              pointers.foldLeft(t)((qt, p) => processPointer(p, qt))
             ),
           innerInfo.name,
         )
@@ -181,17 +198,7 @@ case object C {
         val innerInfo = getDeclaratorInfo(inner)
         DeclaratorInfo(
           innerInfo.params,
-          t => innerInfo.typeOrReturnType(CTArray(size, t)(c.blame)),
-          innerInfo.name,
-        )
-      case CPointerDeclarator(pointers, inner) =>
-        val innerInfo = getDeclaratorInfo(inner)
-        DeclaratorInfo(
-          innerInfo.params,
-          t =>
-            innerInfo.typeOrReturnType(
-              FuncTools.repeat[Type[G]](CTPointer(_), pointers.size, t)
-            ),
+            t => CTArray(size, t)(c.blame),
           innerInfo.name,
         )
       case CTypeExtensionDeclarator(Seq(CTypeAttribute(name, Seq(size))), inner)
@@ -236,16 +243,19 @@ case object C {
     }
 
   private def getTypeFromTypeDef[G](
-      decl: CDeclaration[G],
+      gdecl: CGlobalDeclaration[G],
       platformContext: Option[PlatformContext],
       context: Option[Node[G]] = None,
   ): Type[G] = {
+    val decl = gdecl.decl
     val specs: Seq[CDeclarationSpecifier[G]] =
       decl.specs match {
         case CTypedef() +: remaining => remaining
-        case _ => ???
+        case _ => throw CTypeNotSupported(context)
       }
 
+    // Need to get specifications from the init (can only have one init as typedef)
+    if(decl.inits.size != 1) throw CTypeNotSupported(context)
     val info = getDeclaratorInfo(decl.inits.head.decl)
     if (info.params.isDefined) {
       val returnType = info.typeOrReturnType(
@@ -261,12 +271,12 @@ case object C {
       )
     }
 
-    // Need to get specifications from the init (can only have one init as typedef), since it can contain GCC Type extensions
-    getPrimitiveType(
-      getSpecs(decl.inits.head.decl) ++ specs,
-      platformContext,
-      context,
-    )
+    val t = specs match {
+      case CStructDeclaration(_, _) +: Seq() => CTStruct[G](gdecl.ref)
+      case _ => getPrimitiveType(specs, platformContext, context)
+    }
+
+    info.typeOrReturnType(t)
   }
 
   def getPrimitiveType[G](
@@ -274,6 +284,7 @@ case object C {
       platformContext: Option[PlatformContext] = None,
       context: Option[Node[G]] = None,
   ): Type[G] = {
+    implicit val o: Origin = context.map(_.o).getOrElse(DiagnosticOrigin)
     val vectorSize: Option[Expr[G]] =
       specs.collect { case ext: CFunctionTypeExtensionModifier[G] =>
         ext.extensions
@@ -285,12 +296,12 @@ case object C {
         case _ => throw CTypeNotSupported(context)
       }
 
-    val filteredSpecs = specs.filter {
-      case _: CFunctionTypeExtensionModifier[G] => false; case _ => true
-    }.collect { case spec: CTypeSpecifier[G] => spec }
+    val (typeSpecs, qualifiers) = specs.filter {
+      case _: CTypeSpecifier[G] | _: CTypeQualifierDeclarationSpecifier[G] => true ; case _ => false
+    }.partition { case _: CTypeSpecifier[G] => true; case _ => false }
 
     val t: Type[G] =
-      filteredSpecs match {
+      typeSpecs match {
         case Seq(CVoid()) => TVoid()
         case t if C.INTEGER_LIKE_TYPES.contains(t) =>
           if (platformContext.isEmpty) { throw UnresolvedCType(specs) }
@@ -305,7 +316,7 @@ case object C {
         case Seq(defn @ CTypedefName(_)) =>
           defn.ref.get match {
             case RefTypeDef(decl) =>
-              getTypeFromTypeDef(decl.decl, platformContext)
+              getTypeFromTypeDef(decl, platformContext)
             case _ => ???
           }
         case Seq(CSpecificationType(typ)) => typ
@@ -313,10 +324,13 @@ case object C {
         case spec +: _ => throw CTypeNotSupported(context.orElse(Some(spec)))
         case _ => throw CTypeNotSupported(context)
       }
-    vectorSize match {
+    val res = vectorSize match {
       case None => t
       case Some(size) => CTVector(size, t)
     }
+
+    qualifiers.collect{ case CTypeQualifierDeclarationSpecifier(q) => q }
+      .foldLeft(res)(qualify[G])
   }
 
   def nameFromDeclarator(declarator: CDeclarator[_]): String =
@@ -390,35 +404,40 @@ case object C {
       case _ => t
     }
 
-  def findPointerDeref[G](
+  def stripUniqueType[G](t: Type[G]): Type[G] =
+    t match {
+      case CTStructUnique(innerT, _, _) => stripUniqueType(innerT)
+      case TUnique(innerT, _) => stripUniqueType(innerT)
+      case _ => t
+    }
+
+    def findPointerDeref[G](
       obj: Expr[G],
       name: String,
       ctx: ReferenceResolutionContext[G],
       blame: Blame[BuiltinError],
-  ): Option[CDerefTarget[G]] = {
-    stripCPrimitiveType(obj.t) match {
-      case CTPointer(innerType: TNotAValue[G]) =>
-        innerType.decl.get match {
-          case RefCStruct(decl) => getCStructDeref(decl, name)
-          case _ => None
-        }
-      case CTPointer(struct: CTStruct[G]) =>
-        getCStructDeref(struct.ref.decl, name)
-      case CTArray(_, innerType: TNotAValue[G]) =>
-        innerType.decl.get match {
-          case RefCStruct(decl) => getCStructDeref(decl, name)
-          case _ => None
-        }
-      case CTArray(_, struct: CTStruct[G]) =>
-        getCStructDeref(struct.ref.decl, name)
+  ): Option[CDerefTarget[G]] =
+      stripUniqueType(stripCPrimitiveType(obj.t)) match {
+      case CTPointer(t) => findStruct(t, name)
+      case CTArray(_, t) => findStruct(t, name)
       case _ => None
     }
+//   }
+
+  def findStruct[G](t: Type[G], name: String): Option[CDerefTarget[G]] = t match {
+    case innerType: TNotAValue[G] => innerType.decl.get match {
+      case RefCStruct(decl) => getCStructDeref(decl, name)
+      case _ => None
+    }
+    case struct: CTStruct[G] => getCStructDeref(struct.ref.decl, name)
+    case struct: CTStructUnique[G] => findStruct(struct.inner, name)
+    case _ => None
   }
 
-  private def getCStructDeref[G](
+  def getCStructDeref[G](
       decl: CGlobalDeclaration[G],
       name: String,
-  ): Option[CDerefTarget[G]] =
+  ): Option[RefCStructField[G]] =
     decl.decl match {
       case CDeclaration(_, _, Seq(CStructDeclaration(_, decls)), Seq()) =>
         decls.flatMap(Referrable.from).collectFirst {
@@ -426,6 +445,25 @@ case object C {
         }
       case _ => None
     }
+
+  def getUniquePointerStructFieldRef[G](
+      specs: Seq[CDeclarationSpecifier[G]],
+      pointerField: CUniquePointerField[G],
+      ctx: TypeResolutionContext[G]
+  ): Option[RefCStructField[G]] = {
+    var struct: Option[CStructSpecifier[G]] = None
+    specs foreach {
+      case s: CStructSpecifier[G] =>
+        if(struct.isDefined) return None
+        struct = Some(s)
+      case _ =>
+    }
+    if(struct.isEmpty) return None
+
+    val structRef: RefCStruct[G] = C.findCStruct(struct.get.name, ctx)
+      .getOrElse(return None)
+    C.getCStructDeref(structRef.decl, pointerField.name)
+  }
 
   def openCLVectorAccessString[G](
       access: String,
@@ -477,7 +515,7 @@ case object C {
       ctx: ReferenceResolutionContext[G],
       blame: Blame[BuiltinError],
   ): Option[CDerefTarget[G]] = {
-    (stripCPrimitiveType(obj.t) match {
+    (stripUniqueType(stripCPrimitiveType(obj.t)) match {
       case t: TNotAValue[G] =>
         t.decl.get match {
           case RefAxiomaticDataType(decl) =>
@@ -489,6 +527,8 @@ case object C {
           case _ => None
         }
       case struct: CTStruct[G] => getCStructDeref(struct.ref.decl, name)
+      case struct: CTStructUnique[G] =>
+        findStruct(struct, name)
       case CTCudaVec() =>
         val ref = obj.asInstanceOf[CLocal[G]].ref.get
           .asInstanceOf[RefCudaVec[G]]
@@ -501,7 +541,7 @@ case object C {
       case v: TOpenCLVector[G] =>
         openCLVectorAccessString(name, v.size).map(RefOpenCLVectorMembers[G])
       case _ => None
-    }).orElse(Spec.builtinField(obj, name, blame))
+    }).orElse(Spec.builtinField(stripCPrimitiveType(obj.t), name, blame, obj.o))
   }
 
   def resolveInvocation[G](

@@ -200,7 +200,7 @@ case class EncodeResourceValues[Pre <: Generation]()
             case ResourcePattern.ArrayLocation(t) =>
               Seq(TArray(dispatch(t)), TInt())
             case ResourcePattern.PointerLocation(t) =>
-              Seq(TPointer(dispatch(t)))
+              Seq(TPointer(dispatch(t), None))
             case ResourcePattern.PredicateLocation(ref) =>
               ref.args.map(_.t).map(dispatch)
             case ResourcePattern.InstancePredicateLocation(ref) =>
