@@ -49,6 +49,13 @@ void transformMultWithOverflow(llvm::CallInst &callInstruction,
                                col::LlvmBasicBlock &colBlock,
                                pallas::FunctionCursor &funcCursor, bool sign);
 
+/**
+ * Transform call to the @llvm.memset.*-intrinsic
+ */
+void transformMemset(llvm::CallInst &callInstruction,
+                     col::LlvmBasicBlock &colBlock,
+                     pallas::FunctionCursor &funcCursor);
+
 } // namespace llvm2col
 
 #endif // PALLAS_INTRINSICSTRANSFORM_H

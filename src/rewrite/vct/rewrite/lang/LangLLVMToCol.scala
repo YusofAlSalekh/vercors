@@ -678,7 +678,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     // TODO: Handle the initializer
     // TODO: Include array and vector bounds somehow
     globalVariableInferredType.getOrElse(decl, decl.variableType) match {
-      case struct: LLVMTStruct[Pre] => {
+      case struct: LLVMTStruct[Pre] =>
         rewriteStruct(struct)
         globalVariableMap.update(
           decl,
@@ -693,8 +693,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             )(decl.o)
           ),
         )
-      }
-      case array: LLVMTArray[Pre] => {
+      case array: LLVMTArray[Pre] =>
         globalVariableMap.update(
           decl,
           rw.globalDeclarations.declare(
@@ -703,8 +702,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             )(decl.o)
           ),
         )
-      }
-      case vector: LLVMTVector[Pre] => {
+      case vector: LLVMTVector[Pre] =>
         globalVariableMap.update(
           decl,
           rw.globalDeclarations.declare(
@@ -713,8 +711,13 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             )(decl.o)
           ),
         )
-      }
-      case _ => { ??? }
+      case int: LLVMTInt[Pre] =>
+        globalVariableMap.update(
+          decl,
+          rw.globalDeclarations
+            .declare(new HeapVariable[Post](rw.dispatch(int))(decl.o)),
+        )
+      case _ => ???
     }
   }
 
@@ -994,6 +997,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case _ => ??? // Should never happen
       }
     // Assign new object to target
+    if (!structMap.contains(targetStructT)) { rewriteStruct(targetStructT) }
     val newCls = structMap.get(targetStructT).get
     val assignNew =
       Assign(rw.dispatch(instr.target), new NewObject[Post](newCls.ref))(
@@ -1467,6 +1471,10 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             buildPhiAssignments(bb),
             eliminate(branch),
           ))
+        case unr: LLVMBranchUnreachable[Pre] =>
+          Block[Post](
+            Seq(rw.dispatch(bb.body), buildPhiAssignments(bb), rw.dispatch(unr))
+          )
         case other => throw UnexpectedLLVMNode(other)
       }
     }
@@ -1492,6 +1500,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def structType(t: LLVMTStruct[Pre]): Type[Post] = {
+    if (!structMap.contains(t)) { rewriteStruct(t) }
     val targetClass = new LazyRef[Post, Class[Post]](structMap(t))
     TByValueClass[Post](targetClass, Seq())(t.o)
   }

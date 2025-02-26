@@ -102,9 +102,11 @@ void llvm2col::transformBitwiseXor(llvm::Instruction &llvmInstruction,
         if (rightAsConst != nullptr && rightAsConst->isOne()) {
             // XOR %1 true  --> not %1
             col::Not *colNot = assignment.mutable_value()->mutable_not_();
-            colNot->set_allocated_origin(generateBinExprOrigin(llvmInstruction));
+            colNot->set_allocated_origin(
+                generateBinExprOrigin(llvmInstruction));
             llvm2col::transformAndSetExpr(funcCursor, llvmInstruction,
-                *llvmInstruction.getOperand(0), *colNot->mutable_arg());
+                                          *llvmInstruction.getOperand(0),
+                                          *colNot->mutable_arg());
             return;
         }
         auto *leftAsConst = llvm::dyn_cast_if_present<llvm::ConstantInt>(
@@ -112,9 +114,11 @@ void llvm2col::transformBitwiseXor(llvm::Instruction &llvmInstruction,
         if (leftAsConst != nullptr && leftAsConst->isOne()) {
             // XOR true %2  --> not %2
             col::Not *colNot = assignment.mutable_value()->mutable_not_();
-            colNot->set_allocated_origin(generateBinExprOrigin(llvmInstruction));
+            colNot->set_allocated_origin(
+                generateBinExprOrigin(llvmInstruction));
             llvm2col::transformAndSetExpr(funcCursor, llvmInstruction,
-                *llvmInstruction.getOperand(1), *colNot->mutable_arg());
+                                          *llvmInstruction.getOperand(1),
+                                          *colNot->mutable_arg());
             return;
         }
     }

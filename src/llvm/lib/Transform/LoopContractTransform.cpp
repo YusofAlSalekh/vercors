@@ -1,4 +1,5 @@
 #include "Transform/LoopContractTransform.h"
+#include "Transform/Transform.h"
 #include "Origin/OriginProvider.h"
 #include "Passes/Function/FunctionDeclarer.h"
 #include "Util/Constants.h"
@@ -9,6 +10,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Metadata.h>
@@ -147,7 +149,7 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
     wrapperCall->mutable_ref()->set_id(colWFunc.id());
 
     // Add arguments to wrapper-call
-    for (auto *diVar : diVars) {
+    for (auto [argIdx, diVar] : llvm::enumerate(diVars)) {
         // Match DIVariables to LLVM-Values
         llvm::Value *llvmVal =
             pallas::utils::mapDIVarToValue(*llvmParentFunc, *diVar, &llvmLoop);
@@ -160,17 +162,9 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
 
         // Get variables from llvm-values and build argument-expressions
         if (llvm::isa<llvm::AllocaInst>(llvmVal)) {
-            col::Variable *colVar =
-                &functionCursor.getVariableMapEntry(*llvmVal, false);
-            auto *ptrDeref = wrapperCall->add_args()->mutable_deref_pointer();
-            ptrDeref->set_allocated_origin(
-                llvm2col::generatePallasWrapperCallOrigin(*llvmWFunc, *srcLoc));
-            ptrDeref->set_allocated_blame(new col::Blame());
-            // Local to var of alloca
-            auto *local = ptrDeref->mutable_pointer()->mutable_local();
-            local->set_allocated_origin(
-                llvm2col::generatePallasWrapperCallOrigin(*llvmWFunc, *srcLoc));
-            local->mutable_ref()->set_id(colVar->id());
+            llvm2col::buildArgExprFromAlloca(
+                *wrapperCall, argIdx, *llvm::cast<llvm::AllocaInst>(llvmVal),
+                *llvmWFunc, *srcLoc, functionCursor);
         } else if (llvm::isa<llvm::PHINode>(llvmVal)) {
             col::Variable *colVar =
                 &functionCursor.getVariableMapEntry(*llvmVal, true);
@@ -218,4 +212,50 @@ void llvm2col::initializeEmptyLoopContract(col::LoopContract &colContract) {
     tt->set_allocated_origin(generateLabelledOrigin("constant true"));
     invariant->set_allocated_origin(generateLabelledOrigin("constant true"));
     invariant->mutable_blame();
+}
+
+void llvm2col::buildArgExprFromAlloca(col::LlvmFunctionInvocation &wrapperCall,
+                                      unsigned int argIdx,
+                                      llvm::AllocaInst &llvmAlloca,
+                                      llvm::Function &llvmWFunc,
+                                      llvm::MDNode &srcLoc,
+                                      pallas::FunctionCursor &functionCursor) {
+    col::Variable &colVar =
+        functionCursor.getVariableMapEntry(llvmAlloca, false);
+    // Ptr deref
+    auto *ptrDeref = wrapperCall.add_args()->mutable_deref_pointer();
+    ptrDeref->set_allocated_origin(
+        llvm2col::generatePallasWrapperCallOrigin(llvmWFunc, srcLoc));
+    ptrDeref->set_allocated_blame(new col::Blame());
+
+    // Cast, if type is packed struct with single element
+    auto *structTy =
+        llvm::dyn_cast<llvm::StructType>(llvmAlloca.getAllocatedType());
+    llvm::Type *expectedTy = llvmWFunc.getArg(argIdx)->getType();
+    bool isTrivialStruct = structTy != nullptr && structTy->isPacked() &&
+                           structTy->getNumElements() == 1;
+
+    col::Local *local = nullptr;
+    if (structTy != expectedTy && isTrivialStruct &&
+        structTy->getElementType(0) == expectedTy) {
+        auto *cast = ptrDeref->mutable_pointer()->mutable_cast();
+        cast->set_allocated_origin(
+            llvm2col::generatePallasWrapperCallOrigin(llvmWFunc, srcLoc));
+        col::TypeValue *tVal = cast->mutable_type_value()->mutable_type_value();
+        tVal->set_allocated_origin(
+            llvm2col::generatePallasWrapperCallOrigin(llvmWFunc, srcLoc));
+        // TODO: Set correct type for cast (i.e. is missing a pointer)
+        llvm2col::transformAndSetPointerType(*expectedTy, *tVal->mutable_value());
+        // llvm2col::transformAndSetType(*expectedTy, *tVal->mutable_value());
+        // tVal->set_allocated_value();
+        // llvm2col::transformAndSetType(*expectedTy, *tVal->mutable_value());
+        local = cast->mutable_value()->mutable_local();
+    } else {
+        local = ptrDeref->mutable_pointer()->mutable_local();
+    }
+
+    // Local to var of alloca
+    local->set_allocated_origin(
+        llvm2col::generatePallasWrapperCallOrigin(llvmWFunc, srcLoc));
+    local->mutable_ref()->set_id(colVar.id());
 }
