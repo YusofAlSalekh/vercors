@@ -1,7 +1,7 @@
 #include "Transform/LoopContractTransform.h"
-#include "Transform/Transform.h"
 #include "Origin/OriginProvider.h"
 #include "Passes/Function/FunctionDeclarer.h"
+#include "Transform/Transform.h"
 #include "Util/Constants.h"
 #include "Util/Exceptions.h"
 #include "Util/PallasDIMapping.h"
@@ -245,7 +245,8 @@ void llvm2col::buildArgExprFromAlloca(col::LlvmFunctionInvocation &wrapperCall,
         tVal->set_allocated_origin(
             llvm2col::generatePallasWrapperCallOrigin(llvmWFunc, srcLoc));
         // TODO: Set correct type for cast (i.e. is missing a pointer)
-        llvm2col::transformAndSetPointerType(*expectedTy, *tVal->mutable_value());
+        llvm2col::transformAndSetPointerType(*expectedTy,
+                                             *tVal->mutable_value());
         // llvm2col::transformAndSetType(*expectedTy, *tVal->mutable_value());
         // tVal->set_allocated_value();
         // llvm2col::transformAndSetType(*expectedTy, *tVal->mutable_value());

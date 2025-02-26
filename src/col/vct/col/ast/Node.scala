@@ -3754,6 +3754,14 @@ final case class LLVMStore[G](
 )(val blame: Blame[VerificationFailure])(implicit val o: Origin)
     extends LLVMStatement[G] with LLVMStoreImpl[G]
 
+final case class LLVMMemset[G](
+    dest: Expr[G],
+    value: Expr[G],
+    len: Expr[G],
+    volatile: Expr[G],
+)(val blame: Blame[VerificationFailure])(implicit val o: Origin)
+    extends LLVMStatement[G] with LLVMMemsetImpl[G]
+
 final case class LLVMBranchUnreachable[G]()(
     val blame: Blame[UnreachableReachedError]
 )(implicit val o: Origin)

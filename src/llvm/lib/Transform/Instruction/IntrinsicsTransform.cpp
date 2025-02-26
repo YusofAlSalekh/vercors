@@ -48,6 +48,9 @@ void llvm2col::transformIntrinsic(llvm::CallInst &callInstruction,
     case llvm::Intrinsic::lifetime_end:
         // Ignore lifetime intrinsics
         break;
+    case llvm::Intrinsic::memset:
+        transformMemset(callInstruction, colBlock, funcCursor);
+        break;
     default:
         reportUnsupportedOperatorError(SOURCE_LOC, callInstruction);
     }
@@ -167,4 +170,32 @@ void llvm2col::transformMultWithOverflow(llvm::CallInst &callInstruction,
     llvm2col::transformAndSetExpr(funcCursor, callInstruction,
                                   *callInstruction.getArgOperand(1),
                                   *mult->mutable_right());
+}
+
+void llvm2col::transformMemset(llvm::CallInst &callInstruction,
+                               col::LlvmBasicBlock &colBlock,
+                               pallas::FunctionCursor &funcCursor) {
+    llvm::Function *intrFunc = callInstruction.getCalledFunction();
+    col::Block &body = pallas::bodyAsBlock(colBlock);
+    col::Variable &targetVar = funcCursor.declareVariable(callInstruction);
+    col::LlvmMemset *memset = body.add_statements()->mutable_llvm_memset();
+    memset->set_allocated_origin(
+        llvm2col::generateSingleStatementOrigin(callInstruction));
+    memset->set_allocated_blame(new col::Blame());
+    // dest
+    llvm2col::transformAndSetExpr(funcCursor, callInstruction,
+                                  *callInstruction.getArgOperand(0),
+                                  *memset->mutable_dest());
+    // value
+    llvm2col::transformAndSetExpr(funcCursor, callInstruction,
+                                  *callInstruction.getArgOperand(1),
+                                  *memset->mutable_value());
+    // len
+    llvm2col::transformAndSetExpr(funcCursor, callInstruction,
+                                  *callInstruction.getArgOperand(2),
+                                  *memset->mutable_len());
+    // volatile
+    llvm2col::transformAndSetExpr(funcCursor, callInstruction,
+                                  *callInstruction.getArgOperand(3),
+                                  *memset->mutable_volatile_());
 }
