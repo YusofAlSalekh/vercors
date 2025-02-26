@@ -715,7 +715,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             ))),
             NoPerm(),
           ) ==>
-            (InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT)))) ===
+            (InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT, None)))) ===
               adtFunctionInvocation(
                 valueAsFunctions
                   .getOrElseUpdate(t, makeValueAsFunction(t.toString, newT))
@@ -838,8 +838,9 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           case t: TClass[Pre] if t.typeArgs.isEmpty =>
             const(typeNumber(t.cls.decl))(e.o)
           // Keep pointer casts intact for the adtPointer stage
-          case _: TPointer[Pre] | _: TNonNullPointer[Pre] | _: TConstPointer[Pre]  | _: TNonNullConstPointer[Pre]
-            => e.rewriteDefault()
+          case _: TPointer[Pre] | _: TNonNullPointer[Pre] |
+              _: TConstPointer[Pre] | _: TNonNullConstPointer[Pre] =>
+            e.rewriteDefault()
           // Keep integer casts intact for casting between integers and pointers
           case _: TInt[Pre] => e.rewriteDefault()
           // Keep any casts intact for the adtAny stage

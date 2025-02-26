@@ -66,7 +66,9 @@ case object LangCToCol {
     override def code: String = "wrongUniqueFieldStruct"
 
     override def text: String =
-      decl.o.messageInContext(s"Cannot add a unique pointer field towards a field which already had one for that field.")
+      decl.o.messageInContext(
+        s"Cannot add a unique pointer field towards a field which already had one for that field."
+      )
   }
 
   private case class WrongOpenCLLiteralVector(e: Node[_]) extends UserError {
@@ -393,31 +395,31 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         getBaseType(C.getPrimitiveType(specs, None, Some(t)))
       case TUnique(it, _) => getBaseType(it)
       case TConst(it) => getBaseType(it)
-      case t@TClassUnique(cls, _) => t.inner
+      case t @ TClassUnique(cls, _) => t.inner
       case CTStructUnique(it, _, _) => getBaseType(it)
       case _ => t
     }
 
   private def getStructType[G](t: Type[G]): CType[G] =
     t match {
-      case CPrimitiveType(specs) =>
-        ???
-        //getStructType(C.getPrimitiveType(specs, None, Some(t)))
+      case CPrimitiveType(specs) => ???
+      // getStructType(C.getPrimitiveType(specs, None, Some(t)))
       case st: CTStructUnique[G] => st
       case st: CTStruct[G] => st
       case _ => throw WrongStructType(t)
     }
 
   private def getBaseStructTypeWithUnique[G](
-    t: Type[G],
-    m: Map[Ref[G, CStructMemberDeclarator[G]],BigInt] = Map[Ref[G, CStructMemberDeclarator[G]],BigInt]()):
-    Option[(CTStruct[G], Map[Ref[G, CStructMemberDeclarator[G]],BigInt])] =
+      t: Type[G],
+      m: Map[Ref[G, CStructMemberDeclarator[G]], BigInt] =
+        Map[Ref[G, CStructMemberDeclarator[G]], BigInt](),
+  ): Option[(CTStruct[G], Map[Ref[G, CStructMemberDeclarator[G]], BigInt])] =
     t match {
-      case CPrimitiveType(specs) =>
-        ???
+      case CPrimitiveType(specs) => ???
 //        getBaseStructTypeWithUnique(C.getPrimitiveType(specs, Some(t)), m)
       case CTStructUnique(it, ref, unique) =>
-        if(m.contains(ref)) throw WrongUniqueFieldStruct(t)
+        if (m.contains(ref))
+          throw WrongUniqueFieldStruct(t)
         getBaseStructTypeWithUnique(it, m + (ref -> unique))
       case ts: CTStruct[G] => Some(ts, m)
       case _ => None
@@ -513,10 +515,11 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             inv @ CInvocation(CLocal("__vercors_malloc"), Seq(arg), Nil, Nil),
             tcast,
           ) =>
-        val t2 = tcast match {
-          case CTPointer(t2) => t2
-          case _ => throw UnsupportedMalloc(c)
-        }
+        val t2 =
+          tcast match {
+            case CTPointer(t2) => t2
+            case _ => throw UnsupportedMalloc(c)
+          }
         val (t1, size) =
           arg match {
             case SizeOf(t1) if castIsId(t1, t2) => (t1, c_const[Post](1)(c.o))
@@ -532,7 +535,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 )(c.o),
               )
           }
-        NewPointerArray(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(c.o)
+        NewPointerArray(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(
+          c.o
+        )
       case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _), _) =>
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
@@ -546,14 +551,16 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         ) { Cast(rw.dispatch(e), TypeValue(rw.dispatch(t))(t.o))(c.o) }
         else { throw UnsupportedCast(c) }
       case CCast(e, t @ TCInt()) if e.t.asPointer.isDefined =>
-        if(isUniquePointerElement(e.t.asPointer.get.element)) throw UnsupportedCast(c)
+        if (isUniquePointerElement(e.t.asPointer.get.element))
+          throw UnsupportedCast(c)
         IntegerPointerCast(
           rw.dispatch(e),
           TypeValue(rw.dispatch(t))(t.o),
           getStride(e.t.asPointer.get.element, c.o),
         )(c.o)
       case CCast(e, t @ CTPointer(innerType))
-          if getBaseType(e.t).isInstanceOf[TCInt[Pre]] && !isUniquePointerElement(innerType) =>
+          if getBaseType(e.t).isInstanceOf[TCInt[Pre]] &&
+            !isUniquePointerElement(innerType) =>
         IntegerPointerCast(
           rw.dispatch(e),
           TypeValue(TPointer(rw.dispatch(innerType), None))(t.o),
@@ -563,12 +570,13 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
 
   // Traverse all type qualifiers
-  private def isUniquePointerElement(t: Type[Pre]): Boolean = t match {
-    case TUnique(_, _) => true
-    case TConst(inner) => isUniquePointerElement(inner)
-    case CTStructUnique(inner, _, _) => isUniquePointerElement(inner)
-    case _ => false
-  }
+  private def isUniquePointerElement(t: Type[Pre]): Boolean =
+    t match {
+      case TUnique(_, _) => true
+      case TConst(inner) => isUniquePointerElement(inner)
+      case CTStructUnique(inner, _, _) => isUniquePointerElement(inner)
+      case _ => false
+    }
 
   private def getStride(t: Type[Pre], o: Origin): Expr[Post] =
     t match {
@@ -626,7 +634,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case GPUGlobal() => throw WrongGPUType(cParam)
     }
     val prop = new TypeProperties(cParam.specifiers, cParam)
-    if(!prop.validCParam) throw WrongCType(cParam)
+    if (!prop.validCParam)
+      throw WrongCType(cParam)
     val specType = rw.dispatch(prop.mainType.get)
 
     cParam.drop()
@@ -786,7 +795,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           NewNonNullPointerArray[Post](
             cNameSuccessor(d).t.asPointer.get.element,
             Local(v.ref),
-            None
+            None,
           )(PanicBlame("Shared memory sizes cannot be negative.")),
         )
         declarations ++= Seq(cNameSuccessor(d))
@@ -800,7 +809,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           NewNonNullPointerArray[Post](
             cNameSuccessor(d).t.asPointer.get.element,
             c_const(size),
-            None
+            None,
           )(blame.get),
         )
         declarations ++= Seq(cNameSuccessor(d))
@@ -988,7 +997,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   class TypeProperties(
-      specs: Seq[CDeclarationSpecifier[Pre]], decl: Declaration[Pre]
+      specs: Seq[CDeclarationSpecifier[Pre]],
+      decl: Declaration[Pre],
   ) {
     var arrayOrPointer = false
     var global = false
@@ -1013,8 +1023,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         mainType = Some(t)
         sizeBlame = blame
         arraySize = size
-      case CSpecificationType(t) =>
-        mainType = Some(t)
+      case CSpecificationType(t) => mainType = Some(t)
       case CExtern() => extern = true
       case CPure() => pure = true
       case CInline() => inline = true
@@ -1209,7 +1218,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             if (t.asByValueClass.isDefined) { TNonNullPointer(t, None) }
             else { t }
           cGlobalNameSuccessor(RefCGlobalDeclaration(decl, idx)) = rw
-            .globalDeclarations.declare(new HeapVariable(TNonNullPointer(t))(
+            .globalDeclarations
+            .declare(new HeapVariable(TNonNullPointer(t, None))(
               init.o.sourceName(info.name)
             ))
       }
@@ -1224,11 +1234,11 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     implicit val o: Origin = origin
     (exprs.zipWithIndex.map { case (value, index) =>
       // Since we model const arrays with sequences internally, we cannot assign to them, so we assume their values
-        Assume[Post](
+      Assume[Post](
         AmbiguousSubscript(array.get, c_const(index))(PanicBlame(
           "The explicit initialization of an array in C should never exceed the bounds of the array"
-        )) === rw.dispatch(value),
-        )
+        )) === rw.dispatch(value)
+      )
     })
   }
 
@@ -1263,7 +1273,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   def rewriteArrayDeclaration(
       decl: CLocalDeclaration[Pre],
       cta: CTArray[Pre],
-      init: CInit[Pre]
+      init: CInit[Pre],
   ): Statement[Post] = {
     // LangTypesToCol makes it so that each declaration only has one init
     val init = decl.decl.inits.head
@@ -1280,7 +1290,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           case (None, None) => throw WrongCType(decl)
           case (Some(size), None) =>
             val newArr =
-              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(cta.blame)
+              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(
+                cta.blame
+              )
             Block(Seq(LocalDecl(v), assignLocal(v.get, newArr)))
           case (None, Some(CLiteralArray(exprs))) =>
             val newArr =
@@ -1312,7 +1324,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def rewriteStructDeclaration(
       decl: CLocalDeclaration[Pre],
-      structT: Type[Pre]
+      structT: Type[Pre],
   ): Statement[Post] = {
     val init = decl.decl.inits.head
     val info = C.getDeclaratorInfo(init.decl)
@@ -1320,7 +1332,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
     implicit val o: Origin = init.o
     val v =
-      new LocalHeapVariable[Post](TNonNullPointer(t, None))(o.sourceName(info.name))
+      new LocalHeapVariable[Post](TNonNullPointer(t, None))(o.sourceName(
+        info.name
+      ))
     cLocalHeapNameSuccessor(RefCLocalDeclaration(decl, 0)) = v
 
     if (init.init.isDefined) {
@@ -1339,17 +1353,18 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   def rewriteLocal(decl: CLocalDeclaration[Pre]): Statement[Post] = {
     decl.drop()
     val prop = new TypeProperties(decl.decl.specs, decl)
-    if(!prop.validCLocal) throw WrongCType(decl)
+    if (!prop.validCLocal)
+      throw WrongCType(decl)
     // LangTypesToCol makes it so that each declaration only has one init
     val init = decl.decl.inits.head
 
-    val t = prop.mainType.get match {
+    val t =
+      prop.mainType.get match {
         case t: CTVector[Pre] if init.init.collect({
               case _: CLiteralArray[Pre] => true
             }).isDefined =>
           return rewriteVectorDeclaration(decl, t, init)
-        case t: CTArray[Pre] =>
-          return rewriteArrayDeclaration(decl, t, init)
+        case t: CTArray[Pre] => return rewriteArrayDeclaration(decl, t, init)
         case t: CTStruct[Pre] => return rewriteStructDeclaration(decl, t)
         case t: CTStructUnique[Pre] => return rewriteStructDeclaration(decl, t)
         case t => rw.dispatch(t)
@@ -1400,23 +1415,25 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     )(KernelBarrierFailure(barrier))
   }
 
-  def getInnerPointerInfo(t: Type[Pre]) : Option[(Type[Pre], Option[Expr[Pre]], Option[Blame[ArraySizeError]])] =
+  def getInnerPointerInfo(
+      t: Type[Pre]
+  ): Option[(Type[Pre], Option[Expr[Pre]], Option[Blame[ArraySizeError]])] =
     getBaseType(t) match {
       case TPointer(it, _) => Some((it, None, None))
       case CTPointer(it) => Some((it, None, None))
-      case a@CTArray(size, it) => Some((it, size, Some(a.blame)))
+      case a @ CTArray(size, it) => Some((it, size, Some(a.blame)))
       case _ => None
     }
 
   def isVector(t: Type[Pre]): Boolean =
     getBaseType(t) match {
-      case _ : CTVector[Pre] => true
+      case _: CTVector[Pre] => true
       case _ => false
     }
 
   def isArray(t: Type[Pre]): Boolean =
     getBaseType(t) match {
-      case _ : CTArray[Pre] => true
+      case _: CTArray[Pre] => true
       case _ => false
     }
 
@@ -1424,7 +1441,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def getStruct(t: Type[Pre]): Option[CTStruct[Pre]] =
     getBaseType(t) match {
-      case t : CTStruct[Pre] => Some(t)
+      case t: CTStruct[Pre] => Some(t)
       case _ => None
     }
 
@@ -1521,7 +1538,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 function[Post](
                   AbstractApplicable,
                   TrueSatisfiable,
-                  TPointer(TVoid()),
+                  TPointer(TVoid(), None),
                 )(func.o)
               )
             },
@@ -1620,8 +1637,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         val b: Blame[PointerDerefError] = deref.blame
         val structRef =
           getBaseType(deref.struct.t) match {
-            case CTPointer(struct) => getBaseStructTypeWithUnique(struct).map({case (t,_) => t.ref})
-              .getOrElse(throw WrongStructType(deref.struct.t))
+            case CTPointer(struct) =>
+              getBaseStructTypeWithUnique(struct).map({ case (t, _) => t.ref })
+                .getOrElse(throw WrongStructType(deref.struct.t))
             case t => throw WrongStructType(t)
           }
         Deref[Post](
@@ -2076,10 +2094,11 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
-  def pointerType(t: CPointerType[Pre]): Type[Post] = t match {
-    case CTPointer(innerType) => TPointer(rw.dispatch(innerType), None)
-    case CTArray(_, innerType) => TPointer(rw.dispatch(innerType), None)
-  }
+  def pointerType(t: CPointerType[Pre]): Type[Post] =
+    t match {
+      case CTPointer(innerType) => TPointer(rw.dispatch(innerType), None)
+      case CTArray(_, innerType) => TPointer(rw.dispatch(innerType), None)
+    }
 
   def vectorType(t: CType[Pre]): Type[Post] = {
     val (intSize, innerType) =
@@ -2100,19 +2119,28 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     TPointer(rw.dispatch(t.innerType), None)
   }
 
-  def structType(t: CType[Pre]): TClass[Post] = t match {
-    case ts @ CTStruct(ref) =>
-      val targetClass =
-        new LazyRef[Post, Class[Post]](cStructSuccessor(ref.decl))
-      TByValueClass[Post](targetClass, Seq())(t.o)
-    case t@CTStructUnique(_, _, _) =>
-      val(CTStruct(ref), map) = getBaseStructTypeWithUnique(t).get
-      val targetClass =
-        new LazyRef[Post, Class[Post]](cStructSuccessor(ref.decl))
-      val uniqueMap = map.toSeq.map{case (fieldRef, unique) =>
-        (new LazyRef[Post, InstanceField[Post]](cStructFieldsSuccessor((ref.decl, fieldRef.decl))), unique)
-      }
-      TClassUnique[Post](TByValueClass[Post](targetClass, Seq())(t.o), uniqueMap)(t.o)
-    case _ => ???
-  }
+  def structType(t: CType[Pre]): TClass[Post] =
+    t match {
+      case ts @ CTStruct(ref) =>
+        val targetClass =
+          new LazyRef[Post, Class[Post]](cStructSuccessor(ref.decl))
+        TByValueClass[Post](targetClass, Seq())(t.o)
+      case t @ CTStructUnique(_, _, _) =>
+        val (CTStruct(ref), map) = getBaseStructTypeWithUnique(t).get
+        val targetClass =
+          new LazyRef[Post, Class[Post]](cStructSuccessor(ref.decl))
+        val uniqueMap = map.toSeq.map { case (fieldRef, unique) =>
+          (
+            new LazyRef[Post, InstanceField[Post]](cStructFieldsSuccessor(
+              (ref.decl, fieldRef.decl)
+            )),
+            unique,
+          )
+        }
+        TClassUnique[Post](
+          TByValueClass[Post](targetClass, Seq())(t.o),
+          uniqueMap,
+        )(t.o)
+      case _ => ???
+    }
 }
