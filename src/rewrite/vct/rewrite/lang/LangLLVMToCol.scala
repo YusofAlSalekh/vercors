@@ -93,6 +93,11 @@ case object LangLLVMToCol {
     LabelContext("Generated context for resArg"),
   ))
 
+  private val overflowOpInitializerOrigin: Origin = Origin(Seq(
+    PreferredName(Seq("initStruct")),
+    LabelContext("Generated initializer for arith-op with overflow"),
+  ))
+
   // TODO: This should be replaced with the correct blames!
   private object InvalidGEP
       extends PanicBlame("Invalid use of getelementpointer!")
@@ -147,6 +152,11 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   // are assigned using store-instructions.
   private val assignedInLoop: ScopedStack[mutable.Set[Variable[Pre]]] =
     ScopedStack()
+
+  // Initializer-functions for the structs that are returned by the llvm intrinsics
+  // for arithmetic operaitons with overflows.
+  private val overflowOpInitializers
+      : mutable.Map[LLVMTStruct[Pre], Procedure[Post]] = mutable.Map()
 
   def gatherPallasTypeSubst(program: Program[Pre]): Unit = {
     // Get all variables that are assigned a new type directly
@@ -985,10 +995,53 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     CastFloat(rw.dispatch(fpext.value), rw.dispatch(fpext.t))
   }
 
+  private def getInitializerForArithOpWithOverflow(
+      resT: LLVMTStruct[Pre]
+  ): Procedure[Post] = {
+    if (!overflowOpInitializers.contains(resT)) {
+      implicit val o: Origin = overflowOpInitializerOrigin
+      val derefByValBlame = PanicBlame("By-value type always has permission")
+      val resArg =
+        new Variable[Post](rw.dispatch(resT.elements(0)))(
+          o.where(name = "resArg")
+        )
+      val flagArg =
+        new Variable[Post](rw.dispatch(resT.elements(1)))(
+          o.where(name = "flagArg")
+        )
+      val resField = structFieldMap((resT, 0))
+      val flagField = structFieldMap((resT, 1))
+
+      val initializer = rw.globalDeclarations.declare {
+        withResult((result: Result[Post]) => {
+          new Procedure[Post](
+            returnType = rw.dispatch(resT),
+            args = Seq(resArg, flagArg),
+            outArgs = Nil,
+            typeArgs = Nil,
+            body = None,
+            contract = contract[Post](
+              blame = PanicBlame("Generated contract cannot fail"),
+              ensures = UnitAccountedPredicate(
+                (Deref[Post](result, resField.ref)(derefByValBlame) ===
+                  Local(resArg.ref)) &&
+                  (Deref[Post](result, flagField.ref)(derefByValBlame) ===
+                    Local(flagArg.ref))
+              ),
+            ),
+            pure = true,
+          )(PanicBlame("Generated initializer does not raise errors"))
+        })
+      }
+      overflowOpInitializers(resT) = initializer
+    }
+    overflowOpInitializers(resT)
+  }
+
   private def rewriteArithOpWithOverflow(
       instr: LLVMArithOpWithOverflow[Pre],
       op: (Expr[Post], Expr[Post]) => Expr[Post],
-  ) = {
+  ): Statement[Post] = {
     implicit val o: Origin = instr.o
     // TODO: Do not ignore the signedness
     val targetStructT =
@@ -998,33 +1051,14 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }
     // Assign new object to target
     if (!structMap.contains(targetStructT)) { rewriteStruct(targetStructT) }
-    val newCls = structMap.get(targetStructT).get
-    val assignNew =
-      Assign(rw.dispatch(instr.target), new NewObject[Post](newCls.ref))(
-        instr.blame
-      )
-    // Set result-field
-    val resField = structFieldMap((targetStructT, 0))
-    val assignRes =
-      Assign(
-        Deref[Post](rw.dispatch(instr.target), resField.ref)(PanicBlame(
-          "Generated object always has permissions"
-        )),
-        op(rw.dispatch(instr.left), rw.dispatch(instr.right)),
-      )(instr.blame)
-
-    // Set overflow-flag
-    val flagField = structFieldMap((targetStructT, 1))
-    val assignFlag =
-      Assign(
-        Deref[Post](rw.dispatch(instr.target), flagField.ref)(PanicBlame(
-          "Generated object always has permissions"
-        )),
-        ff,
-      )(instr.blame)
-
-    // Build Block
-    Block(Seq(assignNew, assignRes, assignFlag))
+    val initFunc = getInitializerForArithOpWithOverflow(targetStructT)
+    val initCall = procedureInvocation[Post](
+      blame = PanicBlame("Generated initializer does not fail"),
+      ref = initFunc.ref,
+      args = Seq(op(rw.dispatch(instr.left), rw.dispatch(instr.right)), ff),
+    )
+    val assign = Assign(rw.dispatch(instr.target), initCall)(instr.blame)
+    assign
   }
 
   def rewriteAddWithOverflow(add: LLVMAddWithOverflow[Pre]): Statement[Post] = {
