@@ -335,6 +335,7 @@ case class LangSpecificToCol[Pre <: Generation](
       case load: LLVMLoad[Pre] => llvm.rewriteLoad(load)
       case store: LLVMStore[Pre] => llvm.rewriteStore(store)
       case alloc: LLVMAllocA[Pre] => llvm.rewriteAllocA(alloc)
+      case memset: LLVMMemset[Pre] => llvm.rewriteMemset(memset)
       case block: LLVMBasicBlock[Pre] => llvm.rewriteBasicBlock(block)
       case unreachable: LLVMBranchUnreachable[Pre] =>
         llvm.rewriteUnreachable(unreachable)

@@ -81,6 +81,14 @@ case object LangLLVMToCol {
       o.messageInContext(s"Unsupported aggregate-type used in extractvalue")
   }
 
+  private final case class UnsupportedMemset(memset: LLVMMemset[_])
+      extends UserError {
+    override def code: String = "unsupportedMemset"
+
+    override def text: String =
+      memset.o.messageInContext(s"Unsupported memset operation")
+  }
+
   private final case class UnreachableReached(
       unreachable: LLVMBranchUnreachable[_]
   ) extends Blame[AssertFailed] {
@@ -1248,6 +1256,57 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           )),
         )
     }
+  }
+
+  def rewriteMemset(memset: LLVMMemset[Pre]): Statement[Post] = {
+    implicit val o: Origin = memset.o
+    // Curently only memset with constant value of 0 is supported
+    memset.value match {
+      case LLVMIntegerValue(v, _) if v.intValue == 0 =>
+      case _ => throw UnsupportedMemset(memset)
+    }
+    // TODO: Make this more more generic
+    //  Currently, only very basic type-wrapper structs are supported (i.e. a packed struct with one integer value)
+    val numBytes =
+      memset.len match {
+        case LLVMIntegerValue(bytes, _) => bytes
+        case _ => throw UnsupportedMemset(memset)
+      }
+    val structType =
+      memset.dest match {
+        case Local(Ref(v)) =>
+          v.t match {
+            case LLVMTPointer(Some(s: LLVMTStruct[Pre])) => s
+            case _ => throw throw UnsupportedMemset(memset)
+          }
+        case _ => throw UnsupportedMemset(memset)
+      }
+    if (!structType.packed || !(structType.elements.size == 1)) {
+      throw UnsupportedMemset(memset)
+    }
+    structType.elements.head match {
+      case LLVMTInt(bits) if (bits / 8) == numBytes =>
+      case _ => throw UnsupportedMemset(memset)
+    }
+
+    // Assign new value to the struct
+    val newCls = structMap.get(structType).get
+    val assignStruct =
+      Assign(
+        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+        new NewObject[Post](newCls.ref),
+      )(memset.blame)
+    // Set field of the struct to 0
+    val structField = structFieldMap((structType, 0))
+    val assignField =
+      Assign[Post](
+        Deref[Post](
+          DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+          structField.ref,
+        )(memset.blame),
+        rw.dispatch(memset.value),
+      )(memset.blame)
+    Block(Seq(assignStruct, assignField))
   }
 
   def rewritePointerValue(pointer: LLVMPointerValue[Pre]): Expr[Post] = {
