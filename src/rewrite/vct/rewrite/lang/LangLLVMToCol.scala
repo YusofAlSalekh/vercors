@@ -98,6 +98,11 @@ case object LangLLVMToCol {
     LabelContext("Generated initializer for arith-op with overflow"),
   ))
 
+  private val nondetValueOrigin: Origin = Origin(Seq(
+    LabelContext("Getter for nondeterministic value"),
+    PreferredName(Seq("getNondet")),
+  ))
+
   // TODO: This should be replaced with the correct blames!
   private object InvalidGEP
       extends PanicBlame("Invalid use of getelementpointer!")
@@ -157,6 +162,14 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   // for arithmetic operaitons with overflows.
   private val overflowOpInitializers
       : mutable.Map[LLVMTStruct[Pre], Procedure[Post]] = mutable.Map()
+
+  // Functions that are used to get a nondeterministic value of a given type.
+  // Used to encode the unreachable-instruction.
+  private val nondetGetters: mutable.Map[Type[Post], Function[Post]] = mutable
+    .Map()
+
+  // Return type of the LLVMFunction that is currently rewritten
+  private val funcRetType: ScopedStack[Type[Post]] = ScopedStack()
 
   def gatherPallasTypeSubst(program: Program[Pre]): Unit = {
     // Get all variables that are assigned a new type directly
@@ -495,43 +508,45 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             case None => None
           }
         val isWrapper = func.pallasExprWrapperFor.isDefined
-        rw.globalDeclarations.declare(
-          new Procedure[Post](
-            returnType =
-              if (isWrapper) { TResource() }
-              else {
-                rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
-              },
-            args = argList,
-            outArgs = Nil,
-            typeArgs = Nil,
-            body =
-              inWrapperFunction.having(isWrapper) {
-                func.functionBody match {
-                  case None => None
-                  case Some(functionBody) =>
-                    if (func.pure)
-                      Some(GotoEliminator(functionBody match {
-                        case scope: Scope[Pre] => scope;
-                        case other => throw UnexpectedLLVMNode(other)
-                      }).eliminate())
-                    else
-                      Some(rw.dispatch(functionBody))
-                }
-              },
-            contract =
-              func.contract match {
-                case contract: VCLLVMFunctionContract[Pre] =>
-                  rw.dispatch(contract.data.get)
-                case contract: PallasFunctionContract[Pre] =>
-                  extendContractWithSretPerm(contract.content, cRetArg)
-              },
-            pure = func.pure,
-            pallasWrapper = isWrapper,
-            pallasFunction = true,
-          )(func.blame)
-        )
-
+        val returnT =
+          if (isWrapper) { TResource[Post]() }
+          else {
+            rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
+          }
+        funcRetType.having(returnT) {
+          rw.globalDeclarations.declare(
+            new Procedure[Post](
+              returnType = returnT,
+              args = argList,
+              outArgs = Nil,
+              typeArgs = Nil,
+              body =
+                inWrapperFunction.having(isWrapper) {
+                  func.functionBody match {
+                    case None => None
+                    case Some(functionBody) =>
+                      if (func.pure)
+                        Some(GotoEliminator(functionBody match {
+                          case scope: Scope[Pre] => scope;
+                          case other => throw UnexpectedLLVMNode(other)
+                        }).eliminate())
+                      else
+                        Some(rw.dispatch(functionBody))
+                  }
+                },
+              contract =
+                func.contract match {
+                  case contract: VCLLVMFunctionContract[Pre] =>
+                    rw.dispatch(contract.data.get)
+                  case contract: PallasFunctionContract[Pre] =>
+                    extendContractWithSretPerm(contract.content, cRetArg)
+                },
+              pure = func.pure,
+              pallasWrapper = isWrapper,
+              pallasFunction = true,
+            )(func.blame)
+          )
+        }
       }
     }
     llvmFunctionMap.update(func, procedure)
@@ -1082,7 +1097,26 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       unreachable: LLVMBranchUnreachable[Pre]
   ): Statement[Post] = {
     implicit val o: Origin = unreachable.o
-    Assert[Post](ff)(UnreachableReached(unreachable))
+    val a = Assert[Post](ff)(UnreachableReached(unreachable))
+    val nondetGetter = getNondetValFunc(funcRetType.top)
+    val r = Return[Post](
+      functionInvocation[Post](blame = TrueSatisfiable, ref = nondetGetter.ref)
+    )
+    Block(Seq(a, r))
+  }
+
+  private def getNondetValFunc(t: Type[Post]): Function[Post] = {
+    if (!nondetGetters.contains(t)) {
+      val getterFunc = rw.globalDeclarations.declare(
+        function[Post](
+          blame = AbstractApplicable,
+          contractBlame = TrueSatisfiable,
+          returnType = t,
+        )(nondetValueOrigin)
+      )
+      nondetGetters(t) = getterFunc
+    }
+    nondetGetters(t)
   }
 
   private def getInferredType(e: Expr[Pre]): Type[Pre] =
