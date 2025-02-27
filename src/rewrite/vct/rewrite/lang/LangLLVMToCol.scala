@@ -1534,7 +1534,12 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def structType(t: LLVMTStruct[Pre]): Type[Post] = {
-    if (!structMap.contains(t)) { rewriteStruct(t) }
+    // TODO: Remove this. The check for the golbalDeclarations is required because
+    //  the function-type is called in the post-comparisson in derefUntil, outside of
+    //  a scope. Once that is removed, this should no longe be required.
+    if (!rw.globalDeclarations.isEmpty) { // <--
+      if (!structMap.contains(t)) { rewriteStruct(t) }
+    }
     val targetClass = new LazyRef[Post, Class[Post]](structMap(t))
     TByValueClass[Post](targetClass, Seq())(t.o)
   }
