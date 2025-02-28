@@ -102,7 +102,7 @@ case object LangLLVMToCol {
   ))
 
   private val overflowOpInitializerOrigin: Origin = Origin(Seq(
-    PreferredName(Seq("initStruct")),
+    PreferredName(Seq("initTuple")),
     LabelContext("Generated initializer for arith-op with overflow"),
   ))
 
@@ -166,7 +166,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val assignedInLoop: ScopedStack[mutable.Set[Variable[Pre]]] =
     ScopedStack()
 
-  // Initializer-functions for the structs that are returned by the llvm intrinsics
+  // Initializer-functions for the tuples that are returned by the llvm intrinsics
   // for arithmetic operaitons with overflows.
   private val overflowOpInitializers
       : mutable.Map[LLVMTStruct[Pre], Procedure[Post]] = mutable.Map()
@@ -192,6 +192,17 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       // Rational
       case LLVMFracOf(Ref(v), _, _) => typeSubstitutions(v) = TRational()
       case LLVMPerm(_, Ref(v)) => typeSubstitutions(v) = TRational()
+      // Tuples
+      case op: LLVMArithOpWithOverflow[Pre] =>
+        op.target match {
+          case Local(Ref(v)) =>
+            v.t match {
+              case sT: LLVMTStruct[Pre] =>
+                typeSubstitutions(v) = TTuple(
+                  Seq(sT.elements(0), sT.elements(1))
+                )
+            }
+        }
     }
 
     // Propagate the new types across trivial assignments.
@@ -969,11 +980,20 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def rewriteExtractValue(extrVal: LLVMExtractValue[Pre]): Expr[Post] = {
     implicit val o: Origin = extrVal.o
-    derefStructIndexChain(
-      rw.dispatch(extrVal.value),
-      extrVal.aggregateType,
-      extrVal.indices,
-    )
+
+    extrVal.value match {
+      case Local(Ref(v))
+          if getLocalVarType(v).isInstanceOf[TTuple[Pre]] &&
+            extrVal.indices.size == 1 =>
+        // Special case for results of arithmetic ops with overflow-flag (encoded as tuple)
+        TupGet[Post](rw.dispatch(extrVal.value), extrVal.indices.head)
+      case _ =>
+        derefStructIndexChain(
+          rw.dispatch(extrVal.value),
+          extrVal.aggregateType,
+          extrVal.indices,
+        )
+    }
   }
 
   def rewriteSignExtend(sext: LLVMSignExtend[Pre]): Expr[Post] = {
@@ -1019,46 +1039,45 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   private def getInitializerForArithOpWithOverflow(
-      resT: LLVMTStruct[Pre]
+      structT: LLVMTStruct[Pre]
   ): Procedure[Post] = {
-    if (!overflowOpInitializers.contains(resT)) {
+    if (!overflowOpInitializers.contains(structT)) {
       implicit val o: Origin = overflowOpInitializerOrigin
-      val derefByValBlame = PanicBlame("By-value type always has permission")
+      val (resT, flagT) =
+        structT match {
+          case LLVMTStruct(_, _, Seq(res: LLVMTInt[Pre], flag: TBool[Pre])) =>
+            (res, flag)
+        }
       val resArg =
-        new Variable[Post](rw.dispatch(resT.elements(0)))(
-          o.where(name = "resArg")
-        )
+        new Variable[Post](rw.dispatch(resT))(o.where(name = "resArg"))
       val flagArg =
-        new Variable[Post](rw.dispatch(resT.elements(1)))(
-          o.where(name = "flagArg")
-        )
-      val resField = structFieldMap((resT, 0))
-      val flagField = structFieldMap((resT, 1))
+        new Variable[Post](rw.dispatch(flagT))(o.where(name = "flagArg"))
+      val tupleT = TTuple(Seq(resT, flagT))
 
       val initializer = rw.globalDeclarations.declare {
         withResult((result: Result[Post]) => {
+          val ensuresClauses = Seq(
+            TupGet[Post](result, 0) === Local(resArg.ref),
+            TupGet[Post](result, 1) === Local(flagArg.ref),
+          )
+
           new Procedure[Post](
-            returnType = rw.dispatch(resT),
+            returnType = rw.dispatch(tupleT),
             args = Seq(resArg, flagArg),
             outArgs = Nil,
             typeArgs = Nil,
             body = None,
             contract = contract[Post](
-              blame = PanicBlame("Generated contract cannot fail"),
-              ensures = UnitAccountedPredicate(
-                (Deref[Post](result, resField.ref)(derefByValBlame) ===
-                  Local(resArg.ref)) &&
-                  (Deref[Post](result, flagField.ref)(derefByValBlame) ===
-                    Local(flagArg.ref))
-              ),
+              blame = AbstractApplicable,
+              ensures = UnitAccountedPredicate(foldStar(ensuresClauses)),
             ),
             pure = true,
           )(PanicBlame("Generated initializer does not raise errors"))
         })
       }
-      overflowOpInitializers(resT) = initializer
+      overflowOpInitializers(structT) = initializer
     }
-    overflowOpInitializers(resT)
+    overflowOpInitializers(structT)
   }
 
   private def rewriteArithOpWithOverflow(
@@ -1067,13 +1086,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   ): Statement[Post] = {
     implicit val o: Origin = instr.o
     // TODO: Do not ignore the signedness
-    val targetStructT =
-      instr.target.t match {
-        case s: LLVMTStruct[Pre] => s
-        case _ => ??? // Should never happen
-      }
-    // Assign new object to target
-    if (!structMap.contains(targetStructT)) { rewriteStruct(targetStructT) }
+    val targetStructT = instr.target.t match { case s: LLVMTStruct[Pre] => s }
     val initFunc = getInitializerForArithOpWithOverflow(targetStructT)
     val initCall = procedureInvocation[Post](
       blame = PanicBlame("Generated initializer does not fail"),
@@ -1106,7 +1119,12 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   ): Statement[Post] = {
     implicit val o: Origin = unreachable.o
     val a = Assert[Post](ff)(UnreachableReached(unreachable))
-    val nondetGetter = getNondetValFunc(funcRetType.top)
+    // If we are in a wrapper-function, the type needs to be set to bool.
+    // The default-type of Resource causes isses in the col->viper conversion
+    val t =
+      if (!inWrapperFunction.isEmpty && inWrapperFunction.top) { TBool[Post]() }
+      else { funcRetType.top }
+    val nondetGetter = getNondetValFunc(t)
     val r = Return[Post](
       functionInvocation[Post](blame = TrueSatisfiable, ref = nondetGetter.ref)
     )
