@@ -5,6 +5,7 @@ import vct.col.ast.{
   InstanceField,
   TByReferenceClass,
   TByValueClass,
+  TClassUnique,
   TClass,
   Type,
   Variable,
@@ -45,6 +46,8 @@ trait TClassImpl[G] {
         t.particularize(cls.typeArgs.zip(typeArgs).toMap)
       case TByValueClass(Ref(cls), typeArgs) if typeArgs.nonEmpty =>
         t.particularize(cls.typeArgs.zip(typeArgs).toMap)
+      case t: TClassUnique[G] if t.typeArgs.nonEmpty =>
+        ??? // TODO
       case _ => t
     }
 

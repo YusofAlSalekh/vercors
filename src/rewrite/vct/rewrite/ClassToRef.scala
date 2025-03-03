@@ -176,7 +176,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
       Seq(new Variable(TVar[Post](valueAdtTypeArgument.ref))(
         ValueAdtOrigin.where(name = "v")
       )),
-      TNonNullPointer(t),
+      TNonNullPointer(t, None),
     )(ValueAdtOrigin.where(name = "value_as_" + typeName))
   }
 
@@ -205,7 +205,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           args = Seq(a),
         )) === Cast(
           adtFunctionInvocation(fieldRef, args = Seq(a)),
-          TypeValue(TNonNullPointer(newT)),
+          TypeValue(TNonNullPointer(newT, None)),
         )
       },
     ))
@@ -391,7 +391,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     val (fieldFunctions, fieldInverses, fieldTypes) =
       cls.decls.collect { case field: Field[Pre] =>
         val newT = dispatch(field.t)
-        val nonnullT = TNonNullPointer(newT)
+        val nonnullT = TNonNullPointer(newT, None)
         byValFieldSucc(field) =
           new ADTFunction[Post](
             Seq(new Variable(axiomType)(field.o)),
@@ -466,7 +466,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     // TAnyValue is a placeholder the pointer adt doesn't have type parameters
     val indexFunction =
       new ADTFunction[Post](
-        Seq(new Variable(TNonNullPointer(TAnyValue()))(Origin(
+        Seq(new Variable(TNonNullPointer(TAnyValue(), None))(Origin(
           Seq(PreferredName(Seq("pointer")), LabelContext("classToRef"))
         ))),
         TInt(),
@@ -707,7 +707,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     val newT = dispatch(t)
     val constraint =
       forall[Post](
-        TNonNullPointer(outerType),
+        TNonNullPointer(outerType, None),
         body = { p =>
           PolarityDependent(
             Greater(
@@ -716,7 +716,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
               ))),
               NoPerm(),
             ) ==>
-              (InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT)))) ===
+              (InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT, None)))) ===
                 adtFunctionInvocation(
                   valueAsFunctions
                     .getOrElseUpdate(t, makeValueAsFunction(t.toString, newT))
@@ -728,7 +728,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           )
         },
       ) &* forall[Post](
-        TNonNullPointer(outerType),
+        TNonNullPointer(outerType, None),
         body = { p =>
           PolarityDependent(
             Greater(
@@ -738,8 +738,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
               NoPerm(),
             ) ==>
               (InlinePattern(Cast(
-                Cast(p, TypeValue(TNonNullPointer(newT))),
-                TypeValue(TNonNullPointer(outerType)),
+                Cast(p, TypeValue(TNonNullPointer(newT, None))),
+                TypeValue(TNonNullPointer(outerType, None)),
               )) === p),
             tt,
           )
@@ -857,7 +857,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           case t: TClass[Pre] if t.typeArgs.isEmpty =>
             const(typeNumber(t.cls.decl))(e.o)
           // Keep pointer casts intact for the adtPointer stage
-          case _: TPointer[Pre] | _: TNonNullPointer[Pre] => e.rewriteDefault()
+          case _: TPointer[Pre] | _: TNonNullPointer[Pre] | _: TConstPointer[Pre]  | _: TNonNullConstPointer[Pre]
+            => e.rewriteDefault()
           // Keep integer casts intact for casting between integers and pointers
           case _: TInt[Pre] => e.rewriteDefault()
           // Keep any casts intact for the adtAny stage

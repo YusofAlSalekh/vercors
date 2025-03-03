@@ -560,7 +560,7 @@ case class LangSpecificToCol[Pre <: Generation](
     setSize(
       t match {
         case t: JavaTClass[Pre] => java.classType(t)
-        case t: CTPointer[Pre] => c.pointerType(t)
+        case t: CPointerType[Pre] => c.pointerType(t)
         case t: CTVector[Pre] => c.vectorType(t)
         case t: TOpenCLVector[Pre] => c.vectorType(t)
         case t: TCInt[Pre] =>
@@ -569,6 +569,7 @@ case class LangSpecificToCol[Pre <: Generation](
           cint
         case t: CTArray[Pre] => c.arrayType(t)
         case t: CTStruct[Pre] => c.structType(t)
+        case t: CTStructUnique[Pre] => c.structType(t)
         case t: LLVMTInt[Pre] => TInt()(t.o)
         case t: LLVMTFloat[Pre] => TFloat(t.exponent, t.mantissa)
         case t: LLVMTStruct[Pre] => llvm.structType(t)

@@ -7,6 +7,7 @@ import vct.col.resolve.ctx._
 import vct.col.resolve.lang.{C, CPP}
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilderArg, Rewritten}
 import vct.col.typerules.PlatformContext
+import vct.col.util.SuccessionMap
 import vct.result.VerificationError.UserError
 import vct.rewrite.lang.LangTypesToCol.{EmptyInlineDecl, IncompleteTypeArgs}
 
@@ -36,6 +37,12 @@ case object LangTypesToCol extends RewriterBuilderArg[PlatformContext] {
 
 case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
     extends Rewriter[Pre] {
+
+  val cStructFieldsSuccessor: SuccessionMap[
+    (CStructMemberDeclarator[Pre]),
+    CStructMemberDeclarator[Post],
+  ] = SuccessionMap()
+
   override def porcelainRefSucc[RefDecl <: Declaration[Rewritten[Pre]]](
       ref: Ref[Pre, _]
   )(implicit tag: ClassTag[RefDecl]): Option[Ref[Rewritten[Pre], RefDecl]] =
@@ -97,6 +104,9 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
         )
       case t @ CPPPrimitiveType(specs) =>
         dispatch(CPP.getBaseTypeFromSpecs(specs, context = Some(t)))
+      case t @ CTStructUnique(inner, pointerFieldRef, unique) =>
+        val fieldSucc: Ref[Post, CStructMemberDeclarator[Post]] = cStructFieldsSuccessor(pointerFieldRef.decl).ref
+        t.rewrite(pointerFieldRef = fieldSucc)
       case t @ SilverPartialTAxiomatic(Ref(adt), partialTypeArgs) =>
         if (partialTypeArgs.map(_._1.decl).toSet != adt.typeArgs.toSet)
           throw IncompleteTypeArgs(t)
@@ -135,13 +145,14 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
       implicit o: Origin
   ): (Seq[CDeclarationSpecifier[Post]], CDeclarator[Post]) = {
     val info = C.getDeclaratorInfo(declarator)
-    val baseType = C
-      .getPrimitiveType(specifiers, Some(platformContext), context)
-    val otherSpecifiers = specifiers
-      .filter(!_.isInstanceOf[CTypeSpecifier[Pre]]).map(dispatch)
-    val newSpecifiers =
+    val (specs, otherSpecifiers) = specifiers
+      .partition({case _ : CTypeSpecifier[Pre] => true; case _: CTypeQualifierDeclarationSpecifier[Pre] => true;
+      case _ => false})
+    val newOtherSpecifiers = otherSpecifiers.map(dispatch)
+    val baseType = C.getPrimitiveType(specs, Some(platformContext), context)
+    val newSpecifiers : Seq[CDeclarationSpecifier[LangTypesToCol.this.Post]] =
       CSpecificationType[Post](dispatch(info.typeOrReturnType(baseType))) +:
-        otherSpecifiers
+        newOtherSpecifiers
     val newDeclarator =
       info.params match {
         case Some(params) =>
@@ -223,6 +234,17 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
           case CDeclaration(_, _, Seq(_: CStructDeclaration[Pre]), Seq()) =>
             globalDeclarations
               .succeed(declaration, declaration.rewriteDefault())
+          case decl@CDeclaration(_, _, Seq(td: CTypedef[Pre], struct: CStructDeclaration[Pre]), Seq(init)) =>
+            val structDecl =
+              new CGlobalDeclaration[Post](
+                CDeclaration[Post](dispatch(decl.contract),
+                  dispatch(decl.kernelInvariant),
+                  Seq(dispatch(struct)), Seq())(decl.o))(decl.o)
+            val structSpec = CStructSpecifier[Post](struct.name.get)(decl.o)
+            structSpec.ref = Some(RefCStruct(structDecl))
+
+            globalDeclarations
+              .succeed(declaration, structDecl)
           case decl =>
             decl.inits.foreach(init => {
               implicit val o: Origin = init.o
@@ -247,8 +269,9 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
             decl,
             context = Some(declaration),
           )
-          cStructMemberDeclarators
-            .declare(declaration.rewrite(specs = specs, decls = Seq(newDecl)))
+          val newMember = declaration.rewrite(specs = specs, decls = Seq(newDecl))
+          cStructFieldsSuccessor(declaration) = newMember
+          cStructMemberDeclarators.declare(newMember)
         })
       case declaration: CFunctionDefinition[Pre] =>
         implicit val o: Origin = declaration.o

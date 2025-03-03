@@ -12,8 +12,8 @@ import vct.col.util.SuccessionMap
 import scala.collection.mutable
 
 case object ImportPointer extends ImportADTBuilder("pointer") {
-  private def PointerField(t: Type[_]): Origin =
-    Origin(Seq(PreferredName(Seq(typeText(t))), LabelContext("pointer field")))
+  private def PointerField(t: Type[_], uniqueId: Option[BigInt]): Origin =
+    Origin(Seq(PreferredName(Seq(typeText(t) + uniqueId.map(_.toString).getOrElse(""))), LabelContext("pointer field")))
 
   private val PointerCreationOrigin: Origin = Origin(
     Seq(LabelContext("adtPointer, pointer creation method"))
@@ -98,11 +98,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     "ptr_from_address",
   )
 
-  private val pointerField: mutable.Map[Type[Post], SilverField[Post]] = mutable
-    .Map()
+  private val pointerField: mutable.Map[(Type[Post], Option[BigInt]), SilverField[Post]] = mutable.Map()
 
   private val pointerCreationMethods
-      : SuccessionMap[Type[Pre], Procedure[Post]] = SuccessionMap()
+      : SuccessionMap[TNonNullPointer[Pre], Procedure[Post]] = SuccessionMap()
 
   private val asTypeFunctions: mutable.Map[Type[Pre], Function[Post]] = mutable
     .Map()
@@ -131,9 +130,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   }
 
   private def makePointerCreationMethod(
-      t: Type[Pre],
+      pointerT: TNonNullPointer[Pre],
       newT: Type[Post],
   ): Procedure[Post] = {
+    val t = pointerT.element
     implicit val o: Origin = PointerCreationOrigin
       .where(name = "create_nonnull_pointer_" + newT.toString)
 
@@ -170,9 +170,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 )(PanicBlame("ptr_deref requires nothing.")),
               field =
                 pointerField.getOrElseUpdate(
-                  newT, {
+                  (newT, pointerT.unique), {
                     globalDeclarations
-                      .declare(new SilverField(newT)(PointerField(newT)))
+                      .declare(new SilverField(newT)(PointerField(newT, pointerT.unique)))
                   },
                 ).ref,
             ),
@@ -184,11 +184,12 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   }
 
   private def getPointerField(ptr: Expr[Pre]): Ref[Post, SilverField[Post]] = {
-    val tElement = dispatch(ptr.t.asPointer.get.element)
+    val ptrT = ptr.t.asPointer.get
+    val tElement = dispatch(ptrT.element)
     pointerField.getOrElseUpdate(
-      tElement, {
+      (tElement, ptrT.unique), {
         globalDeclarations
-          .declare(new SilverField(tElement)(PointerField(tElement)))
+          .declare(new SilverField(tElement)(PointerField(tElement, ptrT.unique)))
       },
     ).ref
   }
@@ -198,12 +199,12 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       blame: Blame[PointerNull],
   ): Expr[Post] = {
     ptr.t match {
-      case TPointer(_) =>
+      case TPointer(_, _) =>
         dispatch(ptr) match {
           case OptSome(inner) => inner
           case newPtr => OptGet(newPtr)(PointerNullOptNone(blame, ptr))(ptr.o)
         }
-      case TNonNullPointer(_) => dispatch(ptr)
+      case TNonNullPointer(_, _) => dispatch(ptr)
     }
   }
 
@@ -304,8 +305,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
 
   override def postCoerce(t: Type[Pre]): Type[Post] =
     t match {
-      case TPointer(_) => TOption(TAxiomatic(pointerAdt.ref, Nil))
-      case TNonNullPointer(_) => TAxiomatic(pointerAdt.ref, Nil)
+      case TPointer(_, _) => TOption(TAxiomatic(pointerAdt.ref, Nil))
+      case TNonNullPointer(_, _) => TAxiomatic(pointerAdt.ref, Nil)
       case other => super.postCoerce(other)
     }
 
@@ -358,8 +359,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                     System.identityHashCode(firstUse.get)
               }.getOrElse(true)
             ) {
-              val oldT = v.t.asInstanceOf[TNonNullPointer[Pre]].element
-              val newT = dispatch(oldT)
+              val oldT = v.t.asInstanceOf[TNonNullPointer[Pre]]
+              val newT = dispatch(oldT.element)
               Seq(
                 InvokeProcedure[Post](
                   pointerCreationMethods.getOrElseUpdate(
@@ -475,8 +476,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
             Nil,
           )(NoContext(PointerBoundsPreconditionFailed(add.blame, pointer)))
         pointer.t match {
-          case TPointer(_) => OptSome(inv)
-          case TNonNullPointer(_) => inv
+          case TPointer(_, _) => OptSome(inv)
+          case TNonNullPointer(_, _) => inv
         }
       case deref @ DerefPointer(pointer) =>
         SilverDeref(
@@ -532,7 +533,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
         val newValue = dispatch(value)
         (targetType, value.t) match {
-          case (TPointer(innerType), TPointer(_)) =>
+          case (target: PointerType[Pre], value: PointerType[Pre]) if target.unique != value.unique =>
+            // Should not occur
+            ???
+          case (TPointer(innerType, _), TPointer(_, _)) =>
             Select[Post](
               OptEmpty(newValue),
               OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
@@ -544,7 +548,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 )),
               )),
             )
-          case (TNonNullPointer(innerType), TPointer(_)) =>
+          case (TNonNullPointer(innerType, _), TPointer(_, _)) =>
             applyAsTypeFunction(
               innerType,
               value,
@@ -552,9 +556,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 "Casting a pointer to a non-null pointer implies the pointer must be statically known to be non-null"
               )),
             )
-          case (TPointer(innerType), TNonNullPointer(_)) =>
+          case (TPointer(innerType, _), TNonNullPointer(_, _)) =>
             OptSome(applyAsTypeFunction(innerType, value, newValue))
-          case (TNonNullPointer(innerType), TNonNullPointer(_)) =>
+          case (TNonNullPointer(innerType, _), TNonNullPointer(_, _)) =>
             applyAsTypeFunction(innerType, value, newValue)
           // Other type of cast probably a cast to any
           case (_, _) => super.postCoerce(e)
@@ -563,7 +567,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
         val newValue = dispatch(value)
         (targetType, value.t) match {
-          case (TInt(), TPointer(_)) =>
+          case (TInt(), TPointer(_, None)) =>
             Select[Post](
               OptEmpty(newValue),
               const(0),
@@ -580,7 +584,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 Nil,
               )(PanicBlame("Stride > 0")),
             )
-          case (TInt(), TNonNullPointer(_)) =>
+          case (TInt(), TNonNullPointer(_, _)) =>
             FunctionInvocation[Post](
               ref = pointerAddress.ref,
               args = Seq(newValue, dispatch(typeSize)),
@@ -588,7 +592,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               Nil,
               Nil,
             )(PanicBlame("Stride > 0"))
-          case (TPointer(_), TInt()) =>
+          case (TPointer(_, None), TInt()) =>
             Select[Post](
               newValue === const(0),
               OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
@@ -602,7 +606,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 )(PanicBlame("Stride > 0"))
               ),
             )
-          case (TNonNullPointer(_), TInt()) =>
+          case (TNonNullPointer(_, None), TInt()) =>
             FunctionInvocation[Post](
               ref = pointerFromAddress.ref,
               args = Seq(newValue, dispatch(typeSize)),
