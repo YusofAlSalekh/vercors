@@ -13,7 +13,10 @@ import scala.collection.mutable
 
 case object ImportPointer extends ImportADTBuilder("pointer") {
   private def PointerField(t: Type[_], uniqueId: Option[BigInt]): Origin =
-    Origin(Seq(PreferredName(Seq(typeText(t) + uniqueId.map(_.toString).getOrElse(""))), LabelContext("pointer field")))
+    Origin(Seq(
+      PreferredName(Seq(typeText(t) + uniqueId.map(_.toString).getOrElse(""))),
+      LabelContext("pointer field"),
+    ))
 
   private val PointerCreationOrigin: Origin = Origin(
     Seq(LabelContext("adtPointer, pointer creation method"))
@@ -98,7 +101,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     "ptr_from_address",
   )
 
-  private val pointerField: mutable.Map[(Type[Post], Option[BigInt]), SilverField[Post]] = mutable.Map()
+  private val pointerField
+      : mutable.Map[(Type[Post], Option[BigInt]), SilverField[Post]] = mutable
+    .Map()
 
   private val pointerCreationMethods
       : SuccessionMap[TNonNullPointer[Pre], Procedure[Post]] = SuccessionMap()
@@ -171,8 +176,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               field =
                 pointerField.getOrElseUpdate(
                   (newT, pointerT.unique), {
-                    globalDeclarations
-                      .declare(new SilverField(newT)(PointerField(newT, pointerT.unique)))
+                    globalDeclarations.declare(new SilverField(newT)(
+                      PointerField(newT, pointerT.unique)
+                    ))
                   },
                 ).ref,
             ),
@@ -188,8 +194,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     val tElement = dispatch(ptrT.element)
     pointerField.getOrElseUpdate(
       (tElement, ptrT.unique), {
-        globalDeclarations
-          .declare(new SilverField(tElement)(PointerField(tElement, ptrT.unique)))
+        globalDeclarations.declare(new SilverField(tElement)(
+          PointerField(tElement, ptrT.unique)
+        ))
       },
     ).ref
   }
@@ -386,6 +393,22 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   ): Expr[Post] = {
     implicit val o: Origin = e.o
     e match {
+      case add @ PointerAdd(pointer, offset) =>
+        FunctionInvocation[Post](
+          ref = pointerDeref.ref,
+          args = Seq(
+            FunctionInvocation[Post](
+              ref = pointerAdd.ref,
+              args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
+              typeArgs = Nil,
+              Nil,
+              Nil,
+            )(NoContext(PointerBoundsPreconditionFailed(add.blame, offset)))
+          ),
+          typeArgs = Nil,
+          Nil,
+          Nil,
+        )(PanicBlame("ptr_deref requires nothing."))
       case sub @ PointerSubscript(pointer, index) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,
@@ -533,7 +556,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
         val newValue = dispatch(value)
         (targetType, value.t) match {
-          case (target: PointerType[Pre], value: PointerType[Pre]) if target.unique != value.unique =>
+          case (target: PointerType[Pre], value: PointerType[Pre])
+              if target.unique != value.unique =>
             // Should not occur
             ???
           case (TPointer(innerType, _), TPointer(_, _)) =>
