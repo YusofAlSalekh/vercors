@@ -45,7 +45,8 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   case class Normal() extends PointerSort
   case class Const() extends PointerSort
 
-  val addressedSet: mutable.Map[Node[Pre], PointerSort] = new mutable.HashMap[Node[Pre], PointerSort]()
+  val addressedSet: mutable.Map[Node[Pre], PointerSort] =
+    new mutable.HashMap[Node[Pre], PointerSort]()
   val heapVariableMap: SuccessionMap[HeapVariable[Pre], HeapVariable[Post]] =
     SuccessionMap()
   val variableMap: SuccessionMap[Variable[Pre], Variable[Post]] =
@@ -53,38 +54,54 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   val noTransform: ScopedStack[scala.collection.Set[Variable[Pre]]] =
     ScopedStack()
 
-  def getPointerSort(isConst: Boolean): PointerSort = if(!isConst) Normal() else Const()
+  def getPointerSort(isConst: Boolean): PointerSort =
+    if (!isConst)
+      Normal()
+    else
+      Const()
 
-  def makePointer(innerType: Type[Post], pt: PointerSort): PointerType[Post] = pt match {
-    case Normal() => TNonNullPointer[Post](innerType, None)
-    case Const() => TNonNullConstPointer[Post](innerType)
-  }
+  def makePointer(innerType: Type[Post], pt: PointerSort): PointerType[Post] =
+    pt match {
+      case Normal() => TNonNullPointer[Post](innerType, None)
+      case Const() => TNonNullConstPointer[Post](innerType)
+    }
 
-  def isConstPointer(pt: PointerSort) = pt match {
-    case Const() => true
-    case _ => false
-  }
+  def isConstPointer(pt: PointerSort) =
+    pt match {
+      case Const() => true
+      case _ => false
+    }
 
-  def makeNewPointerArray(t: Type[Post])(implicit o: Origin): NewPointer[Post] = t match {
-    case TNonNullPointer(innerType, None) =>
-      NewNonNullPointerArray[Post](innerType, const(1), None)(PanicBlame("Size is > 0"))
-    case TNonNullConstPointer(innerType) =>
-      NewNonNullConstPointerArray[Post](innerType, const(1))(PanicBlame("Size is > 0"))
-  }
-
+  def makeNewPointerArray(t: Type[Post])(implicit o: Origin): NewPointer[Post] =
+    t match {
+      case TNonNullPointer(innerType, None) =>
+        NewNonNullPointerArray[Post](innerType, const(1), None)(PanicBlame(
+          "Size is > 0"
+        ))
+      case TNonNullConstPointer(innerType) =>
+        NewNonNullConstPointerArray[Post](innerType, const(1))(PanicBlame(
+          "Size is > 0"
+        ))
+    }
 
   // TODO: Replace the asByReferenceClass checks with something that more clearly communicates that we want to exclude all reference types
-  def getAddresses(e: Node[Pre], isConst: Boolean = false): Option[(Node[Pre], PointerSort)] = e match {
-    case Local(Ref(v)) if v.t.asByReferenceClass.isEmpty => Some(v, getPointerSort(isConst))
-    case DerefHeapVariable(Ref(v)) if v.t.asByReferenceClass.isEmpty => Some(v, getPointerSort(isConst))
-    case AddrOfConstCast(e) => getAddresses(e, isConst=true)
-    case _ => None
-  }
+  def getAddresses(
+      e: Node[Pre],
+      isConst: Boolean = false,
+  ): Option[(Node[Pre], PointerSort)] =
+    e match {
+      case Local(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
+        Some(v, getPointerSort(isConst))
+      case DerefHeapVariable(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
+        Some(v, getPointerSort(isConst))
+      case AddrOfConstCast(e) => getAddresses(e, isConst = true)
+      case _ => None
+    }
 
   override def dispatch(program: Program[Pre]): Program[Rewritten[Pre]] = {
     // TODO: Replace the asByReferenceClass checks with something that more clearly communicates that we want to exclude all reference types
-    addressedSet.addAll(program.collect {
-      case AddrOf(Local(Ref(v))) if v.t.asByReferenceClass.isEmpty => v
+    addressedSet.addAll(program.flatCollect { case AddrOf(e) =>
+      getAddresses(e)
     })
     super.dispatch(program)
   }
@@ -98,7 +115,8 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
       }
       case proc: Procedure[Pre] => {
         val skipVars = mutable.Set[Variable[Pre]]()
-        val extraVars = mutable.ArrayBuffer[(Variable[Post], Variable[Post], PointerSort)]()
+        val extraVars = mutable
+          .ArrayBuffer[(Variable[Post], Variable[Post], PointerSort)]()
         // Relies on args being evaluated before body
         allScopes.anySucceed(
           proc,
@@ -109,7 +127,9 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                   val newV = variables.succeed(v, v.rewriteDefault())
                   if (addressedSet.contains(v)) {
                     variableMap(v) =
-                      new Variable[Post](makePointer(dispatch(v.t), addressedSet(v)))(v.o)
+                      new Variable[Post](
+                        makePointer(dispatch(v.t), addressedSet(v))
+                      )(v.o)
                     skipVars += v
                     extraVars += ((newV, variableMap(v), addressedSet(v)))
                   }
@@ -139,9 +159,11 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                         case (normal, pointer, Const()) =>
                           implicit val o: Origin = normal.o
                           // Const pointers are sequences, so we need to assume their values
-                          Assume(DerefPointer(pointer.get)(PanicBlame(
-                            "Non-null pointer should always be initialized successfully"
-                          )) === normal.get)
+                          Assume(
+                            DerefPointer(pointer.get)(PanicBlame(
+                              "Non-null pointer should always be initialized successfully"
+                            )) === normal.get
+                          )
                       }.toSeq :+ dispatch(proc.body.get))(proc.o)
                     Some(Scope(locals, block)(proc.o))
                   }
@@ -155,28 +177,39 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
         )
       }
       case v: HeapVariable[Pre] if addressedSet.contains(v) =>
-        heapVariableMap(v) = globalDeclarations
-          .succeed(v, new HeapVariable(makePointer(dispatch(v.t), addressedSet(v)), None)(v.o))
+        heapVariableMap(v) = globalDeclarations.succeed(
+          v,
+          new HeapVariable(makePointer(dispatch(v.t), addressedSet(v)), None)(
+            v.o
+          ),
+        )
       case v: Variable[Pre] if addressedSet.contains(v) =>
-        variableMap(v) = variables
-          .succeed(v, new Variable(makePointer(dispatch(v.t), addressedSet(v)))(v.o))
+        variableMap(v) = variables.succeed(
+          v,
+          new Variable(makePointer(dispatch(v.t), addressedSet(v)))(v.o),
+        )
       case other => allScopes.anySucceed(other, other.rewriteDefault())
     }
 
-  def assignToConst(target: Expr[Pre]): Boolean = target match {
-    case Local(v) if addressedSet.contains(v.decl) && isConstPointer(addressedSet(v.decl))=> true
-    case HeapLocal(v) if addressedSet.contains(v.decl) && isConstPointer(addressedSet(v.decl))=> true
-    case _ => false
-  }
+  def assignToConst(target: Expr[Pre]): Boolean =
+    target match {
+      case Local(v)
+          if addressedSet.contains(v.decl) &&
+            isConstPointer(addressedSet(v.decl)) =>
+        true
+      case HeapLocal(v)
+          if addressedSet.contains(v.decl) &&
+            isConstPointer(addressedSet(v.decl)) =>
+        true
+      case _ => false
+    }
 
   override def dispatch(stat: Statement[Pre]): Statement[Post] = {
     implicit val o: Origin = stat.o
     stat match {
       case assign @ Assign(target, value) if assignToConst(target) =>
         // We cannot assign towards a const pointer, since it is modelled as sequence. So we have to assume its value
-        Assume[Post](
-          dispatch(target) === dispatch(value)
-        )
+        Assume[Post](dispatch(target) === dispatch(value))
       case s: Scope[Pre] =>
         s.rewrite(
           locals = variables.dispatch(s.locals),
@@ -185,7 +218,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
               implicit val o: Origin = local.o
               Assign(
                 Local[Post](variableMap.ref(local)),
-                makeNewPointerArray(variableMap(local).t)
+                makeNewPointerArray(variableMap(local).t),
               )(PanicBlame("Initialisation should always succeed"))
             } ++ Seq(dispatch(s.body))),
         )
@@ -252,7 +285,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
             ))(PanicBlame("cannot be null"))
           ),
         )
-      case a@AddrOf(AddrOfConstCast(e)) => a.rewrite(e=dispatch(e))
+      case a @ AddrOf(AddrOfConstCast(e)) => a.rewrite(e = dispatch(e))
       case other => other.rewriteDefault()
     }
   }

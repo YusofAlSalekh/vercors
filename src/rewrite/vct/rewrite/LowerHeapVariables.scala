@@ -30,7 +30,7 @@ case object LowerHeapVariables extends RewriterBuilder {
   override def key: String = "lowerHeapVariables"
 
   override def desc: String =
-    "Lower LocalHeapVariables to Variables if their address is never taken"
+    "Lower pointer HeapVariables to plain HeapVariables and LocalHeapVariables to Variables if their address is never taken"
 }
 
 case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
@@ -80,14 +80,18 @@ case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
             v
         }.foreach(v =>
           globalStripped(v) =
-            new HeapVariable[Post](dispatch(v.t.asPointer.get.element))(v.o)
+            new HeapVariable[Post](
+              dispatch(v.t.asPointer.get.element),
+              v.init.map(dispatch),
+            )(v.o)
         )
         globalDeclarations.collect {
           program.declarations.foreach {
             case v: HeapVariable[Pre] if globalStripped.contains(v) =>
               globalDeclarations.succeed(v, globalStripped(v))
             case v: HeapVariable[Pre] =>
-              globalLowered(v) = new HeapVariable[Post](dispatch(v.t))(v.o)
+              globalLowered(v) =
+                new HeapVariable[Post](dispatch(v.t), v.init.map(dispatch))(v.o)
               globalDeclarations.succeed(v, globalLowered(v))
             case decl => dispatch(decl)
           }
