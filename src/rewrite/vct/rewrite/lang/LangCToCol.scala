@@ -436,9 +436,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def sizeOf(t: Type[Pre], sizeOfOrigin: Origin): Expr[Post] = {
     implicit val o: Origin = t.o
-    t.bits match {
+    rw.dispatch(t).bits match {
       case TypeSize.Exact(size) => c_const(size / 8)(sizeOfOrigin)
-      case TypeSize.Unknown() | TypeSize.Minimally(_) =>
+      case b @ (TypeSize.Unknown() | TypeSize.Minimally(_)) =>
         functionInvocation(
           TrueSatisfiable,
           sizeOfFunctions.getOrElseUpdate(
@@ -448,7 +448,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                   AbstractApplicable,
                   TrueSatisfiable,
                   TCInt(),
-                  ensures = UnitAccountedPredicate(t.bits match {
+                  ensures = UnitAccountedPredicate(b match {
                     case TypeSize.Unknown() => tt
                     case TypeSize.Minimally(size) => result >= c_const(size / 8)
                   }),

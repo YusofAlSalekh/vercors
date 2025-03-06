@@ -587,18 +587,24 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               Nil,
             )(PanicBlame("Stride > 0"))
           case (TPointer(_, None), TInt() | TBoundedInt(_, _)) =>
-            Select[Post](
-              newValue === const(0),
-              OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
-              OptSome(
-                FunctionInvocation[Post](
-                  ref = pointerFromAddress.ref,
-                  args = Seq(newValue, dispatch(typeSize)),
-                  typeArgs = Nil,
-                  Nil,
-                  Nil,
-                )(PanicBlame("Stride > 0"))
-              ),
+            let(
+              dispatch(value.t),
+              newValue,
+              { v =>
+                Select[Post](
+                  v === const(0),
+                  OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
+                  OptSome(
+                    FunctionInvocation[Post](
+                      ref = pointerFromAddress.ref,
+                      args = Seq(v, dispatch(typeSize)),
+                      typeArgs = Nil,
+                      Nil,
+                      Nil,
+                    )(PanicBlame("Stride > 0"))
+                  ),
+                )
+              },
             )
           case (TNonNullPointer(_, None), TInt() | TBoundedInt(_, _)) =>
             FunctionInvocation[Post](
