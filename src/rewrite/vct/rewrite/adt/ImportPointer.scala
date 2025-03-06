@@ -395,20 +395,12 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     e match {
       case add @ PointerAdd(pointer, offset) =>
         FunctionInvocation[Post](
-          ref = pointerDeref.ref,
-          args = Seq(
-            FunctionInvocation[Post](
-              ref = pointerAdd.ref,
-              args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
-              typeArgs = Nil,
-              Nil,
-              Nil,
-            )(NoContext(PointerBoundsPreconditionFailed(add.blame, offset)))
-          ),
+          ref = pointerAdd.ref,
+          args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
           typeArgs = Nil,
           Nil,
           Nil,
-        )(PanicBlame("ptr_deref requires nothing."))
+        )(NoContext(PointerBoundsPreconditionFailed(add.blame, pointer)))
       case sub @ PointerSubscript(pointer, index) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,
