@@ -1,6 +1,14 @@
 package vct.col.rewrite
 
 import com.typesafe.scalalogging.LazyLogging
+import org.sosy_lab.common.{NativeLibraries, ShutdownNotifier}
+import org.sosy_lab.common.configuration.Configuration
+import org.sosy_lab.common.log.LogManager
+import org.sosy_lab.java_smt.SolverContextFactory
+import org.sosy_lab.java_smt.SolverContextFactory.Solvers
+import org.sosy_lab.java_smt.api.BooleanFormula
+import org.sosy_lab.java_smt.api.NumeralFormula.IntegerFormula
+import org.sosy_lab.java_smt.api.SolverContext.ProverOptions
 import vct.col.ast._
 import vct.col.ast.util.ExpressionEqualityCheck.{Neg, Pos}
 import vct.col.ast.util.{AnnotationVariableInfoGetter, ExpressionEqualityCheck}
@@ -16,6 +24,7 @@ import vct.col.origin.{
 }
 import vct.col.ref.Ref
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
+import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers._
 import vct.col.util.{AstBuildHelpers, Substitute}
 import vct.result.VerificationError.Unreachable
@@ -23,6 +32,7 @@ import vct.result.VerificationError.Unreachable
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.annotation.nowarn
+import scala.util.Using
 
 /** This rewrite pass simplifies expressions of roughly this form: forall(i,j:
   * Int . 0 <= i < i_max && 0 <= j < j_max; xs[a*(i_max*j + i) + b]) and
@@ -279,6 +289,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       ]],
       var independentConditions: ArrayBuffer[Expr[Pre]],
       val dependentConditions: ArrayBuffer[Expr[Pre]],
+      var constraints: ArrayBuffer[Expr[Pre]],
       var body: Expr[Pre],
       val originalBinder: Binder[Pre],
       val mainRewriter: SimplifyNestedQuantifiers[Pre],
@@ -298,6 +309,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           .to(mutable.Map),
         ArrayBuffer[Expr[Pre]](),
         ArrayBuffer[Expr[Pre]](),
+        ArrayBuffer[Expr[Pre]](),
         originalBody,
         originalBinder,
         rewriter,
@@ -314,6 +326,18 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         .partition(indepOf(bindings, _))
       independentConditions.addAll(newIndependentConditions)
       getBounds(potentialBounds)
+
+      for (v <- bindings) {
+        val vl: Local[Pre] = Local(v.ref)
+        for (l <- lowerBounds(v)) {
+          constraints = constraints.appended(l <= vl)
+        }
+        for (u <- upperExclusiveBounds(v)) {
+          constraints = constraints.appended(vl < u)
+        }
+      }
+      for (e <- dependentConditions) { constraints = constraints.appended(e) }
+      constraints = constraints ++ equalityChecker.usefullConditions()
     }
 
     def unfoldBody(
@@ -852,15 +876,17 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               linearExpressions.contains(v) &&
                 // must have lower bound
                 quantifierData.upperExclusiveBounds.contains(v) &&
-                quantifierData.upperExclusiveBounds(v).nonEmpty &&
-                // the a_i must be non zero
-                equalityChecker.isNonZero(linearExpressions(v)).getOrElse(false)
+                quantifierData.upperExclusiveBounds(v).nonEmpty
             )
           ) { return None }
         }
 
-        def sortVar(v: Variable[Pre]): Option[BigInt] =
-          equalityChecker.isConstantInt(linearExpressions(v))
+        for (v <- linearExpressions.keys) {
+          linearExpressions(v) = simplify(linearExpressions(v))
+        }
+
+        def sortVar(v: Variable[Pre]): BigInt =
+          equalityChecker.isConstantInt(linearExpressions(v)).getOrElse(999999)
         val vars = quantifierData.bindings.toList.sortBy(sortVar)
 
         val res = vars.permutations.map(check_vars_list).collectFirst({
@@ -914,20 +940,32 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         var xPrev = x0
         var linLast: Expr[Pre] = IntegerValue(0)
         val sign = equalityChecker.getSign(a0)
+        // a0 always must be provable non zero
+        equalityChecker.isNonZero(a0).getOrElse(return None)
 
         val xmins: mutable.Map[Variable[Pre], Expr[Pre]] = mutable.Map()
         val remainingLowerBounds: mutable.Map[Variable[Pre], Set[Expr[Pre]]] =
           mutable.Map()
         val remainingUpperBounds: mutable.Map[Variable[Pre], Set[Expr[Pre]]] =
           mutable.Map()
+        var otherNeededBounds: Set[Expr[Pre]] = Set()
 
         for (x <- vars.tail) {
           findSuitableBound(x, xPrev, linLast, sign) match {
             case None => return None
-            case Some(FoundBound(lowerBounds, upperBounds, xmin, linExpr)) =>
+            case Some(
+                  FoundBound(
+                    lowerBounds,
+                    upperBounds,
+                    otherNeeded,
+                    xmin,
+                    linExpr,
+                  )
+                ) =>
               xmins(xPrev) = xmin
               remainingLowerBounds(xPrev) = lowerBounds
               remainingUpperBounds(xPrev) = upperBounds
+              otherNeededBounds ++= otherNeeded
               xPrev = x
               linLast = linExpr
           }
@@ -1045,6 +1083,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
             newBounds = And(Less(xNew, newGen(upperBound)), newBounds)
           }
         }
+        for (b <- otherNeededBounds) { newBounds = And(newGen(b), newBounds) }
 
         Some(SubstituteForall(
           newBounds,
@@ -1057,48 +1096,180 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       case class FoundBound(
           otherLowerBounds: Set[Expr[Pre]],
           otherUpperBounds: Set[Expr[Pre]],
+          otherNeededBounds: Set[Expr[Pre]],
           xMin: Expr[Pre],
           linExpr: Expr[Pre],
       )
+
+      def isBool(e: Expr[_]): Boolean = {
+        CoercionUtils.getCoercion(e.t, TBool()).isDefined
+      }
+
+      def isInt(e: Expr[_]): Boolean = {
+        CoercionUtils.getCoercion(e.t, TInt()).isDefined
+      }
+
+      case class askSMTSolver(
+          constraints: Iterable[Expr[Pre]],
+          test: Expr[Pre],
+      ) {
+        def check(): Boolean = {
+          val options = Configuration.builder()
+            .setOption("solver.nonLinearArithmetic", "APPROXIMATE_FALLBACK");
+          val config = options.build()
+          val logManager = LogManager.createNullLogManager
+          val shutDown = ShutdownNotifier.createDummy
+          var id = 0
+
+          Using(SolverContextFactory.createSolverContext(
+            config,
+            logManager,
+            shutDown,
+            Solvers.SMTINTERPOL,
+          )) { ctx =>
+            Using(ctx.newProverEnvironment()) { prover =>
+              val fmgr = ctx.getFormulaManager
+              val varIntMap: mutable.Map[Variable[Pre], IntegerFormula] =
+                mutable.Map()
+              val varBoolMap: mutable.Map[Variable[Pre], BooleanFormula] =
+                mutable.Map()
+              val bmgr = fmgr.getBooleanFormulaManager
+              val imgr = fmgr.getIntegerFormulaManager
+
+              def addConstraint(e: Expr[Pre]): Boolean = {
+                addBool(e) match {
+                  case Some(b1) => prover.addConstraint(b1); true
+                  case None => false
+                }
+              }
+
+              def addBool(e: Expr[Pre]): Option[BooleanFormula] = {
+                e match {
+                  case SeqMember(e1, Range(from, to)) =>
+                    for {
+                      i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
+                    } yield bmgr
+                      .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
+                  case SetMember(e1, RangeSet(from, to)) =>
+                    for {
+                      i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
+                    } yield bmgr
+                      .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
+                  case Or(e1, e2) =>
+                    for {
+                      b1 <- addBool(e1); b2 <- addBool(e2)
+                    } yield bmgr.or(b1, b2)
+                  case And(e1, e2) =>
+                    for {
+                      b1 <- addBool(e1); b2 <- addBool(e2)
+                    } yield bmgr.and(b1, b2)
+                  case Implies(e1, e2) =>
+                    for {
+                      b1 <- addBool(e1); b2 <- addBool(e2)
+                    } yield bmgr.implication(b1, b2)
+                  case Not(e1) => for { b1 <- addBool(e1) } yield bmgr.not(b1)
+                  case Eq(e1, e2) if isBool(e1) && isBool(e2) =>
+                    for {
+                      b1 <- addBool(e1); b2 <- addBool(e2)
+                    } yield bmgr.equivalence(b1, b2)
+                  case Eq(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield imgr.equal(b1, b2)
+                  case Neq(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield bmgr.not(imgr.equal(b1, b2))
+                  case Less(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield imgr.lessThan(b1, b2)
+                  case LessEq(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield imgr.lessOrEquals(b1, b2)
+                  case Greater(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield imgr.greaterThan(b1, b2)
+                  case GreaterEq(e1, e2) if isInt(e1) && isInt(e2) =>
+                    for {
+                      b1 <- addInt(e1); b2 <- addInt(e2)
+                    } yield imgr.greaterOrEquals(b1, b2)
+                  case BooleanValue(b) => Some(bmgr.makeBoolean(b))
+                  case Local(ref) if isBool(e) =>
+                    if (varBoolMap.contains(ref.decl))
+                      Some(varBoolMap(ref.decl))
+                    else {
+                      val x = bmgr.makeVariable(s"b$id")
+                      id += 1
+                      varBoolMap(ref.decl) = x
+                      Some(x)
+                    }
+                  case _ => None
+                }
+              }
+
+              def addInt(e: Expr[Pre]): Option[IntegerFormula] = {
+                e match {
+                  case Plus(e1, e2) =>
+                    for {
+                      i1 <- addInt(e1); i2 <- addInt(e2)
+                    } yield imgr.add(i1, i2)
+                  case Minus(e1, e2) =>
+                    for {
+                      i1 <- addInt(e1); i2 <- addInt(e2)
+                    } yield imgr.subtract(i1, i2)
+                  case Mult(e1, e2) =>
+                    for {
+                      i1 <- addInt(e1); i2 <- addInt(e2)
+                    } yield imgr.multiply(i1, i2)
+                  case FloorDiv(e1, e2) =>
+                    for {
+                      i1 <- addInt(e1); i2 <- addInt(e2)
+                    } yield imgr.divide(i1, i2)
+                  case Mod(e1, e2) =>
+                    for {
+                      i1 <- addInt(e1); i2 <- addInt(e2)
+                    } yield imgr.modulo(i1, i2)
+                  case UMinus(e1) =>
+                    for { i1 <- addInt(e1) } yield imgr.negate(i1)
+                  case IntegerValue(i) => Some(imgr.makeNumber(i.toInt))
+                  case Local(ref) if isInt(e) =>
+                    if (varIntMap.contains(ref.decl))
+                      Some(varIntMap(ref.decl))
+                    else {
+                      val x = imgr.makeVariable(s"i$id")
+                      id += 1
+                      varIntMap(ref.decl) = x
+                      Some(x)
+                    }
+                  case _ => None
+                }
+              }
+
+              for (c <- constraints) {
+                if (!addConstraint(c))
+                  return false
+              }
+              if (!addConstraint(!test))
+                return false
+
+              val isUnsat = prover.isUnsat()
+              isUnsat
+            }
+          }
+        }.get.get
+      }
 
       // Check in the other bounds if the specific expressions is present by a bound
       def isExprUpperBounded(
           e: Expr[Pre],
           boundRequired: Expr[Pre],
       ): Boolean = {
-        // Determine if l == e
-        // Then we know that e <= r (or e < r)
-        // Thus if r+1 <= boundRequired ( or r <= boundRequired )
-        // We know that e < boundRequired
-        def lessEqBound(l: Expr[Pre], r: Expr[Pre], eq: Boolean): Boolean = {
-          val checkedR =
-            if (eq)
-              simplifiedPlus(r, IntegerValue(1))
-            else
-              r
-          equalityChecker.equalExpressions(l, e) &&
-          equalityChecker.lessThenEq(checkedR, boundRequired).getOrElse(false)
-        }
-
-        for (c <- quantifierData.dependentConditions) {
-          c match {
-            case LessEq(l, r) =>
-              if (lessEqBound(l, r, eq = true))
-                return true
-            case Less(l, r) =>
-              if (lessEqBound(l, r, eq = false))
-                return true
-            case GreaterEq(l, r) =>
-              // We switch arguments around
-              if (lessEqBound(r, l, eq = true))
-                return true
-            case Greater(l, r) =>
-              if (lessEqBound(r, l, eq = false))
-                return true
-            case _ =>
-          }
-        }
-        false
+        // We are now officially desperate, so we are going to call the help of an SMT solver
+        val smt = askSMTSolver(quantifierData.constraints, e < boundRequired)
+        return smt.check()
       }
 
       /* We try to find a bound for x_{i-1} (xPrev). Thus a 'low' and 'up': low_{i-1} <= x_{i-1} < up_{i-1}
@@ -1141,6 +1312,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           quantifierData.upperExclusiveBounds(xPrev).toSet
         var otherLowerBounds: Set[Expr[Pre]] =
           quantifierData.lowerBounds(xPrev).toSet
+        var otherNeededBounds: Set[Expr[Pre]] = Set()
 
         for (up <- quantifierData.upperExclusiveBounds(xPrev)) {
           for (low <- quantifierData.lowerBounds(xPrev)) {
@@ -1149,12 +1321,14 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               .exists(_ > 0)
 
             // Check 1
-            if (
-              n_is_pos && equalityChecker.equalExpressions(
-                a,
-                simplifiedMult(aLast, nLastCandidate),
-              )
-            ) {
+            val rhs = simplifiedMult(aLast, nLastCandidate)
+            val smt = askSMTSolver(quantifierData.constraints, Eq(a, rhs))
+            if (equalityChecker.equalExpressions(a, rhs) || smt.check()) {
+              // For this check, it doesn't matter that n could be zero.
+              // But if it is possibly zero, we need to make sure the quantifier domain is empty
+              if (!n_is_pos) {
+                otherNeededBounds += (nLastCandidate > const(0))
+              }
               otherUpperBounds = otherUpperBounds - up
               otherLowerBounds = otherLowerBounds - low
 
@@ -1162,18 +1336,28 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 simplifiedMult(aLast, simplifiedMinus(Local(xPrev.ref), low)),
                 linExpr,
               )
-              return Some(
-                FoundBound(otherLowerBounds, otherUpperBounds, low, linLast)
-              )
+              return Some(FoundBound(
+                otherLowerBounds,
+                otherUpperBounds,
+                otherNeededBounds,
+                low,
+                linLast,
+              ))
             }
             // |a_{i-1}| * n_{i-1} <= |a_i|
             // Check 2
+            val right = simplifiedMult(abs(aLast, sign), nLastCandidate)
+            val left = abs(a, sign)
+            val smt2 = askSMTSolver(quantifierData.constraints, right <= left)
             if (
-              n_is_pos && hasSameSign && equalityChecker.lessThenEq(
-                simplifiedMult(abs(aLast, sign), nLastCandidate),
-                abs(a, sign),
-              ).getOrElse(false)
+              hasSameSign &&
+              (equalityChecker.lessThenEq(right, left).getOrElse(false) ||
+                smt2.check())
             ) {
+              // Same here
+              if (!n_is_pos) {
+                otherNeededBounds += (nLastCandidate > const(0))
+              }
               // This is also valid, we take a stride of a_i, but in that case it will stop earlier
               // So we do not remove the upperbound we found
               otherLowerBounds = otherLowerBounds - low
@@ -1181,16 +1365,24 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 simplifiedMult(aLast, simplifiedMinus(Local(xPrev.ref), low)),
                 linExpr,
               )
-              return Some(
-                FoundBound(otherLowerBounds, otherUpperBounds, low, linLast)
-              )
+              return Some(FoundBound(
+                otherLowerBounds,
+                otherUpperBounds,
+                otherNeededBounds,
+                low,
+                linLast,
+              ))
             }
           }
         }
 
         // Check 3
         // If we have something like f[8*z + 3*y + x] and the bound 3*y+x<8, we are valid as well
-        if (hasSameSign && sign.isDefined) {
+        // In this case we have to check that ai is not zero
+        if (
+          hasSameSign && sign.isDefined &&
+          equalityChecker.isNonZero(a).getOrElse(false)
+        ) {
           for (low <- quantifierData.lowerBounds(xPrev)) {
             val linLast = simplifiedPlus(
               simplifiedMult(aLast, simplifiedMinus(Local(xPrev.ref), low)),
@@ -1203,9 +1395,13 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 isExprUpperBounded(a, linLast))
             ) {
               otherLowerBounds = otherLowerBounds - low
-              return Some(
-                FoundBound(otherLowerBounds, otherUpperBounds, low, linLast)
-              )
+              return Some(FoundBound(
+                otherLowerBounds,
+                otherUpperBounds,
+                otherNeededBounds,
+                low,
+                linLast,
+              ))
             }
           }
         }
@@ -1226,6 +1422,27 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
             }
         }
       }
+
+      def getMults(e: Expr[Pre]): (Seq[Expr[Pre]], BigInt) = {
+        e match {
+          case Mult(e1, e2) =>
+            val (s1, i1) = getMults(e1)
+            val (s2, i2) = getMults(e2)
+            (s1 ++ s2, i1 * i2)
+          case e =>
+            equalityChecker.isConstantInt(e) match {
+              case Some(i) => (Seq(), i)
+              case None => (Seq(e), 1)
+            }
+        }
+      }
+
+      def simplifyMult(e: Expr[Pre]): Expr[Pre] =
+        getMults(e) match {
+          case (Seq(), i) => IntegerValue[Pre](i)
+          case (m, i) if i == 1 => m.reduce(Mult[Pre])
+          case (m, i) => Mult[Pre](IntegerValue[Pre](i), m.reduce(Mult[Pre]))
+        }
 
       def comparePlusses(
           lhs: Expr[Pre],
@@ -1318,6 +1535,17 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         else
           Mult(lhs, rhs)
       }
+
+      def simplify(e: Expr[Pre]): Expr[Pre] =
+        getPlusses(e) match {
+          case (Seq(), i) => IntegerValue[Pre](i)
+          case (plusses, i) =>
+            val res = plusses.map(simplifyMult).reduce(Plus[Pre])
+            if (i == 0)
+              res
+            else
+              Plus(IntegerValue[Pre](i), res)
+        }
 
       def isConstant(node: Expr[Pre]): Boolean =
         indepOf(quantifierData.bindings, node)

@@ -40,6 +40,13 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
   var replacerDepth = 0
   val max_depth = 100
 
+  def usefullConditions(): mutable.ArrayBuffer[Expr[G]] = {
+    info match {
+      case None => mutable.ArrayBuffer()
+      case Some(info) => info.usefullConditions
+    }
+  }
+
   def isConstantInt(e: Expr[G]): Option[BigInt] = {
     replacerDepth = 0
     isConstantIntRecurse(e)
@@ -201,16 +208,8 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
   private def getBound(e: Expr[G], isLower: Boolean): Option[BigInt] = {
     isConstantIntRecurse(e).foreach { i => return Some(i) }
 
-    val normalBound =
-      if (isLower)
-        lowerBound _
-      else
-        upperBound _
-    val reverseBound =
-      if (isLower)
-        upperBound _
-      else
-        lowerBound _
+    val normalBound = getBound(_, isLower)
+    val reverseBound = getBound(_, !isLower)
 
     e match {
       case v: Local[G] =>
@@ -262,7 +261,46 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
         }
       case Mod(e1, e2) if isLower => return Some(0)
       case Mod(e1, e2) => isConstantIntRecurse(e2)
-      // The other cases are to complicated, so we do not consider them
+      case FloorDiv(e1, e2) if isConstantIntRecurse(e2).isDefined =>
+        val divisor = isConstantIntRecurse(e2).get
+        if (divisor == 0)
+          return None
+        else if (divisor > 0) {
+          normalBound(e1) match {
+            case Some(num) if num >= 0 => return Some(num / divisor)
+            case Some(num) if num < 0 =>
+              // So we have something like -10/3 (FloorDiv = Eucledian division) The lower bound for this is: -4
+              // Since -10/3 gives back -3 in scala (uses truncated division) we should fix that
+              // So if num % divisor != 0, we have to subtract one extra
+              return Some(
+                num / divisor -
+                  (if (num % divisor != 0)
+                     1
+                   else
+                     0)
+              )
+            case None =>
+          }
+        } else if (divisor > 0) {
+          // dividing by negative number reverses the bound
+          reverseBound(e1) match {
+            case Some(num) if num >= 0 =>
+              // This goes alright, since something like 10/-3 is the same for both eucledian as truncated div
+              return Some(num / divisor)
+            case Some(num) if num < 0 =>
+              // So we have something like -10/-3 (FloorDiv = Eucledian division) The lower bound for this is: 4
+              // Since -10/-3 gives back 3 in scala (uses truncated division) we should fix that
+              // So if num % divisor != 0, we have to add one extra
+              return Some(
+                num / divisor +
+                  (if (num % divisor != 0)
+                     1
+                   else
+                     0)
+              )
+            case None =>
+          }
+        }
       case _ =>
     }
 
