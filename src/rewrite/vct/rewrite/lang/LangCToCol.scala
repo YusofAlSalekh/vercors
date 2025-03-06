@@ -1219,9 +1219,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             else { t }
           cGlobalNameSuccessor(RefCGlobalDeclaration(decl, idx)) = rw
             .globalDeclarations
-            .declare(new HeapVariable(TNonNullPointer(t, None))(
-              init.o.sourceName(info.name)
-            ))
+            .declare(new HeapVariable(TNonNullPointer(newT, None), init.init.map(rw.dispatch))(init.o.sourceName(info.name)))
       }
     }
   }
