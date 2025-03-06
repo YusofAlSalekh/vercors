@@ -16,6 +16,7 @@ case object EncodePointerComparison extends RewriterBuilder {
   private final case class InAxiom() extends Context
   private final case class InPrecondition() extends Context
   private final case class InPostcondition() extends Context
+  private final case class InContextEverywhere() extends Context
   private final case class InLoopInvariant() extends Context
   private final case class InAssertion() extends Context
   private final case class InExhale() extends Context
@@ -78,6 +79,22 @@ case class EncodePointerComparison[Pre <: Generation]() extends Rewriter[Pre] {
         assume.rewrite(assn = context.having(InInhale()) { dispatch(assn) })
       case _ => super.dispatch(stat)
     }
+
+  override def dispatch(par: ParRegion[Pre]): ParRegion[Post] = {
+    par match {
+      case par @ ParBlock(_, _, context_everywhere, requires, ensures, _) =>
+        // Assuming context everywhere has been propagated
+        par.rewrite(
+          context_everywhere =
+            context.having(InContextEverywhere()) {
+              dispatch(context_everywhere)
+            },
+          requires = context.having(InPrecondition()) { dispatch(requires) },
+          ensures = context.having(InPostcondition()) { dispatch(ensures) },
+        )
+      case _ => super.dispatch(par)
+    }
+  }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] = {
     implicit val o: Origin = e.o
@@ -234,8 +251,8 @@ case class EncodePointerComparison[Pre <: Generation]() extends Rewriter[Pre] {
             )
           case Some(
                 InAxiom() | InPrecondition() | InPostcondition() |
-                InLoopInvariant() | InAssertion() | InInhale() |
-                InExhale() | InQuantifier() | InPredicate()
+                InContextEverywhere() | InLoopInvariant() | InAssertion() |
+                InInhale() | InExhale() | InQuantifier() | InPredicate()
               ) =>
             if (compareAddress) { And(blockEq, addressComp(newL, newR)) }
             else { comp(newL, newR) }
