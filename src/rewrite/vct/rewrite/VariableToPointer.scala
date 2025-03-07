@@ -42,7 +42,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   import VariableToPointer._
 
   trait PointerSort
-  case class Normal() extends PointerSort
+  case class Normal(unique: Option[BigInt]) extends PointerSort
   case class Const() extends PointerSort
 
   val addressedSet: mutable.Map[Node[Pre], PointerSort] =
@@ -54,15 +54,15 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   val noTransform: ScopedStack[scala.collection.Set[Variable[Pre]]] =
     ScopedStack()
 
-  def getPointerSort(isConst: Boolean): PointerSort =
+  def getPointerSort(isConst: Boolean, unique: Option[BigInt]): PointerSort =
     if (!isConst)
-      Normal()
+      Normal(unique)
     else
       Const()
 
   def makePointer(innerType: Type[Post], pt: PointerSort): PointerType[Post] =
     pt match {
-      case Normal() => TNonNullPointer[Post](innerType, None)
+      case Normal(unique) => TNonNullPointer[Post](innerType, unique)
       case Const() => TNonNullConstPointer[Post](innerType)
     }
 
@@ -74,8 +74,8 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
 
   def makeNewPointerArray(t: Type[Post])(implicit o: Origin): NewPointer[Post] =
     t match {
-      case TNonNullPointer(innerType, None) =>
-        NewNonNullPointerArray[Post](innerType, const(1), None)(PanicBlame(
+      case TNonNullPointer(innerType, unique) =>
+        NewNonNullPointerArray[Post](innerType, const(1), unique)(PanicBlame(
           "Size is > 0"
         ))
       case TNonNullConstPointer(innerType) =>
@@ -91,10 +91,13 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   ): Option[(Node[Pre], PointerSort)] =
     e match {
       case Local(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
-        Some(v, getPointerSort(isConst))
+        Some(v, getPointerSort(isConst, None))
       case DerefHeapVariable(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
-        Some(v, getPointerSort(isConst))
+        Some(v, getPointerSort(isConst, None))
       case AddrOfConstCast(e) => getAddresses(e, isConst = true)
+      case AddrOfUniqueCast(Local(Ref(v)), unique) =>
+        Some(v, getPointerSort(isConst, Some(unique)))
+      case AddrOfUniqueCast(_, _) => ???
       case _ => None
     }
 
@@ -149,7 +152,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
                       }._1
                     val block =
                       Block(extraVars.map {
-                        case (normal, pointer, Normal()) =>
+                        case (normal, pointer, Normal(_)) =>
                           Assign(
                             DerefPointer(pointer.get(normal.o))(PanicBlame(
                               "Non-null pointer should always be initialized successfully"
@@ -286,6 +289,7 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
           ),
         )
       case a @ AddrOf(AddrOfConstCast(e)) => a.rewrite(e = dispatch(e))
+      case a @ AddrOf(AddrOfUniqueCast(e, _)) => a.rewrite(e = dispatch(e))
       case other => other.rewriteDefault()
     }
   }

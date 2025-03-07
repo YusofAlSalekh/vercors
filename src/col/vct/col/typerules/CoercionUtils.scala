@@ -260,6 +260,21 @@ case object CoercionUtils {
       case (TNonNullPointer(a, uniqueL), TNonNullPointer(b, uniqueR))
           if uniqueL == uniqueR && getAnyCoercion(a, b).isDefined =>
         CoerceIdentity(target)
+      case (TNonNullPointer(_, _), TNonNullPointer(TVoid(), _)) =>
+        CoerceIdentity(target)
+      case (TNonNullPointer(TVoid(), _), TNonNullPointer(_, _)) =>
+        CoerceIdentity(target)
+      // Below two cases are for AddrOf struct fields which return unique non-null pointers before the TUnique qualifier is removed by the TypeQualifierCoercion
+      case (
+            s @ TNonNullPointer(a, Some(uniqueA)),
+            t @ TPointer(TUnique(b, uniqueB), None),
+          ) if uniqueA == uniqueB =>
+        getPointerCoercion(s, t, a, b).getOrElse(return None)
+      case (
+            s @ TNonNullPointer(a, Some(uniqueA)),
+            t @ CTPointer(TUnique(b, uniqueB)),
+          ) if uniqueA == uniqueB =>
+        getPointerCoercion(s, t, a, b).getOrElse(return None)
       case (CTArray(_, innerType), t @ CTPointer(element)) =>
         if (element == innerType) { CoerceCArrayPointer(innerType) }
         else {

@@ -18,6 +18,7 @@ import vct.col.util.AstBuildHelpers._
 import vct.result.Message
 import vct.result.VerificationError.{Unreachable, UserError}
 
+import scala.annotation.tailrec
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
@@ -389,6 +390,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case _ => false
     }
 
+  @tailrec
   private def getBaseType[G](t: Type[G]): Type[G] =
     t match {
       case CPrimitiveType(specs) =>
@@ -398,6 +400,24 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case t @ TClassUnique(cls, _) => t.inner
       case CTStructUnique(it, _, _) => getBaseType(it)
       case _ => t
+    }
+
+  @tailrec
+  private def isConst[G](t: Type[G]): Boolean =
+    t match {
+      case CPrimitiveType(specs) =>
+        isConst(C.getPrimitiveType(specs, None, Some(t)))
+      case TConst(it) => true
+      case _ => false
+    }
+
+  @tailrec
+  private def getUnique[G](t: Type[G]): Option[BigInt] =
+    t match {
+      case CPrimitiveType(specs) =>
+        getUnique(C.getPrimitiveType(specs, None, Some(t)))
+      case TUnique(it, unique) => Some(unique)
+      case _ => None
     }
 
   private def getStructType[G](t: Type[G]): CType[G] =
@@ -1162,12 +1182,23 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
               Seq(x),
             ) = fieldDecl
             fieldDecl.drop()
-            val t =
+            val (t, unique) =
               specs.collectFirst { case t: CSpecificationType[Pre] =>
-                rw.dispatch(t.t)
+                t.t match {
+                  case TUnique(inner, unique) =>
+                    (rw.dispatch(inner), Some(unique))
+                  case inner => (rw.dispatch(inner), None)
+                }
               }.get
             cStructFieldsSuccessor((decl, fieldDecl)) =
-              new InstanceField(t = t, flags = Nil)(CStructFieldOrigin(x))
+              new InstanceField(
+                t = t,
+                flags =
+                  if (unique.isDefined)
+                    Seq(Unique[Post](unique.get)(CStructFieldOrigin(x)))
+                  else
+                    Nil,
+              )(CStructFieldOrigin(x))
             rw.classDeclarations
               .declare(cStructFieldsSuccessor((decl, fieldDecl)))
           }
@@ -1215,11 +1246,13 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           )
         case None =>
           val newT =
-            if (t.asByValueClass.isDefined) { TNonNullPointer(t, None) }
-            else { t }
+            if (isConst(t)) { t }
+            else { TNonNullPointer(t, getUnique(t)) }
           cGlobalNameSuccessor(RefCGlobalDeclaration(decl, idx)) = rw
             .globalDeclarations
-            .declare(new HeapVariable(TNonNullPointer(newT, None), init.init.map(rw.dispatch))(init.o.sourceName(info.name)))
+            .declare(new HeapVariable(newT, init.init.map(rw.dispatch))(
+              init.o.sourceName(info.name)
+            ))
       }
     }
   }
@@ -1550,17 +1583,12 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
               decl.decl.specs.collectFirst { case t: CSpecificationType[Pre] =>
                 t.t
               }.get
-//            if (t.isInstanceOf[CTStruct[Pre]]) {
-//              DerefPointer(
-//                DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
-//                  local.blame
-//                )
-//              )(local.blame)
-//            } else {
-            DerefPointer(DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
-              local.blame
-            ))(local.blame)
-//            }
+            val derefHeap =
+              DerefHeapVariable[Post](cGlobalNameSuccessor.ref(ref))(
+                local.blame
+              )
+            if (isConst(t)) { derefHeap }
+            else { DerefPointer(derefHeap)(local.blame) }
           case Some(_) =>
             // Is this ever possible? I.e. would it not be a RefCFunctionDefinition?
             throw NotAValue(local)

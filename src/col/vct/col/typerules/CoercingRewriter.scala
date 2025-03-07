@@ -382,14 +382,14 @@ abstract class CoercingRewriter[Pre <: Generation]()
   def postCoerce(decl: Declaration[Pre]): Unit =
     allScopes.anySucceed(decl, decl.rewriteDefault())
   override final def dispatch(decl: Declaration[Pre]): Unit = {
-    def rewrite() : Unit = {
+    def rewrite(): Unit = {
       val coercedDecl = coerce(preCoerce(decl))
       coercedDeclaration(decl) = coercedDecl
       postCoerce(coercedDecl)
     }
     decl match {
       case m: AbstractMethod[Pre] =>
-        resultType.having(m.returnType)({rewrite()})
+        resultType.having(m.returnType)({ rewrite() })
       case _ => rewrite()
     }
   }
@@ -781,6 +781,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case ActionPerm(loc, perm) => ActionPerm(loc, rat(perm))
       case AddrOf(e) => AddrOf(e)
       case AddrOfConstCast(e) => AddrOfConstCast(e)
+      case AddrOfUniqueCast(e, unique) => AddrOfUniqueCast(e, unique)
       case ADTFunctionInvocation(typeArgs, ref, args) =>
         typeArgs match {
           case Some((adt, typeArgs)) =>
@@ -2248,8 +2249,12 @@ abstract class CoercingRewriter[Pre <: Generation]()
     implicit val o: Origin = stat.o
     stat match {
       case a @ Assert(assn) => Assert(res(assn))(a.blame)
-      case a @ Assign(target, value) => Assign(target, coerce(value, target.t, canCDemote = true))(a.blame)
-      case a @ AssignInitial(target, value) => AssignInitial(target, coerce(value, target.t, canCDemote = true))(a.blame)
+      case a @ Assign(target, value) =>
+        Assign(target, coerce(value, target.t, canCDemote = true))(a.blame)
+      case a @ AssignInitial(target, value) =>
+        AssignInitial(target, coerce(value, target.t, canCDemote = true))(
+          a.blame
+        )
       case Assume(assn) => Assume(bool(assn))
       case Block(statements) => Block(statements)
       case Branch(branches) =>
@@ -2363,11 +2368,11 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case Recv(ref) => Recv(ref)
       case r @ Refute(assn) => Refute(res(assn))(r.blame)
       case Return(result) =>
-        if(resultType.nonEmpty){
-          Return(coerce(result, resultType.top)) // TODO coerce return, make AmbiguousReturn?
-        } else {
-          Return(result)
-        }
+        if (resultType.nonEmpty) {
+          Return(
+            coerce(result, resultType.top)
+          ) // TODO coerce return, make AmbiguousReturn?
+        } else { Return(result) }
       case Scope(locals, body) => Scope(locals, body)
       case send @ Send(decl, offset, resource) =>
         Send(decl, offset, res(resource))(send.blame)
@@ -2417,7 +2422,10 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case unit: CPPTranslationUnit[Pre] =>
         new CPPTranslationUnit(unit.declarations)
       case variable: HeapVariable[Pre] =>
-        new HeapVariable(variable.t, variable.init.map(i => coerce(i, variable.t)))
+        new HeapVariable(
+          variable.t,
+          variable.init.map(i => coerce(i, variable.t)),
+        )
       case rule: SimplificationRule[Pre] =>
         new SimplificationRule[Pre](bool(rule.axiom))
       case dataType: AxiomaticDataType[Pre] => dataType
@@ -2778,7 +2786,10 @@ abstract class CoercingRewriter[Pre <: Generation]()
 
   def coerce(node: FieldFlag[Pre]): FieldFlag[Pre] = {
     implicit val o: Origin = node.o
-    node match { case value: Final[_] => value }
+    node match {
+      case value: Final[_] => value
+      case value: Unique[_] => value
+    }
   }
 
   def coerce(node: Location[Pre]): Location[Pre] = {

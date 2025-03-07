@@ -582,14 +582,13 @@ case class LangSpecificToCol[Pre <: Generation](
       left: Expr[Pre],
       right: Expr[Pre],
   ): Int = {
-    (left.t, right.t) match {
-      case (l: BitwiseType[Pre], r: BitwiseType[Pre]) =>
-        (BinOperatorTypes.getBits(l), BinOperatorTypes.getBits(r)) match {
-          case (0, _) | (_, 0) => throw IndeterminableBitVectorSize(op)
-          case (l, r) if l > r => l
-          case (_, r) => r
-        }
-      case _ => throw IndeterminableBitVectorSize(op)
+    (
+      BinOperatorTypes.getBits(left.t),
+      BinOperatorTypes.getBits(right.t),
+    ) match {
+      case (0, _) | (_, 0) => throw IndeterminableBitVectorSize(op)
+      case (l, r) if l > r => l
+      case (_, r) => r
     }
   }
 
@@ -600,6 +599,15 @@ case class LangSpecificToCol[Pre <: Generation](
   ): Boolean = {
     (left.t, right.t) match {
       case (l: BitwiseType[Pre], r: BitwiseType[Pre]) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (TUnique(l: BitwiseType[Pre], _), TUnique(r: BitwiseType[Pre], _)) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (l: BitwiseType[Pre], TUnique(r: BitwiseType[Pre], _)) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (TUnique(l: BitwiseType[Pre], _), r: BitwiseType[Pre]) =>
         if (l.signed == r.signed) { l.signed }
         else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
       case _ => throw IndeterminableBitVectorSign(op)
