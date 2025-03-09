@@ -3,6 +3,13 @@
 
 # define M_PI           3.14159265358979323846  /* pi */
 
+
+// We model a NAN/Infinity as an abstract value, such that you can never use it to prove a specific property when used
+/*@ pure @*/ float vercors_NAN();
+/*@ pure @*/ float vercors_INFINITY();
+
+# define NAN vercors_NAN()
+# define INFINITY vercors_INFINITY()
 /*@
   decreases;
 pure double M_PI() = 3.14159265358979323846;
