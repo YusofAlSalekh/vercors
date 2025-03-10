@@ -562,21 +562,27 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val newValue = dispatch(value)
         (targetType, value.t) match {
           case (TInt() | TBoundedInt(_, _), TPointer(_, None)) =>
-            Select[Post](
-              OptEmpty(newValue),
-              const(0),
-              FunctionInvocation[Post](
-                ref = pointerAddress.ref,
-                args = Seq(
-                  OptGet(newValue)(PanicBlame(
-                    "Can never be null since this is ensured in the conditional expression"
-                  )),
-                  dispatch(typeSize),
-                ),
-                typeArgs = Nil,
-                Nil,
-                Nil,
-              )(PanicBlame("Stride > 0")),
+            letIfNonTrivial(
+              dispatch(value.t),
+              newValue,
+              { v =>
+                Select[Post](
+                  OptEmpty(v),
+                  const(0),
+                  FunctionInvocation[Post](
+                    ref = pointerAddress.ref,
+                    args = Seq(
+                      OptGet(v)(PanicBlame(
+                        "Can never be null since this is ensured in the conditional expression"
+                      )),
+                      dispatch(typeSize),
+                    ),
+                    typeArgs = Nil,
+                    Nil,
+                    Nil,
+                  )(PanicBlame("Stride > 0")),
+                )
+              },
             )
           case (TInt() | TBoundedInt(_, _), TNonNullPointer(_, _)) =>
             FunctionInvocation[Post](
@@ -587,7 +593,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               Nil,
             )(PanicBlame("Stride > 0"))
           case (TPointer(_, None), TInt() | TBoundedInt(_, _)) =>
-            let(
+            letIfNonTrivial(
               dispatch(value.t),
               newValue,
               { v =>

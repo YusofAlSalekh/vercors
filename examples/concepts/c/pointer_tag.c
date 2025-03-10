@@ -36,7 +36,7 @@ void *tag(void *p, unsigned char t) {
     uintptr_t i = (uintptr_t) p;
     uintptr_t new_i = (i & ~TAG_MASK) | (uintptr_t)t;
     void *q = (void *) new_i;
-    //@ assert new_i == (unsigned long long)q;
+    //@ ghost if(new_i == 0) { assert new_i == (unsigned long long)q; } else { assert new_i == (unsigned long long)q; }
     //@ ghost lemma_tag_recoverable(i, new_i, t);
     //@ fold has_tag(q, t);
     if (is_aligned(p)) {
