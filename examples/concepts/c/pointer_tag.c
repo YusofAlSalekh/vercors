@@ -57,15 +57,24 @@ void *tag(void *p, unsigned char t) {
 void *untag(void *p) {
     //@ unfold tagged(originalP, p);
     //@ fold tagged(originalP, p);
-    return tag(p, 0);
+    void *res = tag(p, 0);
+    lemma_easy((unsigned long long)p, (unsigned long long)res);
+    return res;
 }
 
 #include <stddef.h>
 
+
+//@ requires 0 <= a && a <= 18446744073709551615;
+//@ requires 0 <= b && b <= 18446744073709551615;
+//@ requires b == ((a & ~((1ULL << 3ULL) - 1ULL)) | 0ULL);
+//@ ensures b == (a & ~((1ULL << 3ULL) - 1ULL));
+void lemma_easy(unsigned long long a, unsigned long long b){}
+
 //@ requires 0 <= a && a <= 18446744073709551615;
 //@ requires 0 <= b && b <= 18446744073709551615;
 //@ requires 0 <= t && t <= 7;
-//@ ensures b == ((a & ~7ULL) | (unsigned long long)t);
+//@ requires b == ((a & ~7ULL) | (unsigned long long)t);
 //@ ensures (b & 7ULL) == t;
 void lemma_tag_recoverable(unsigned long long a, unsigned long long b, unsigned char t);
 
