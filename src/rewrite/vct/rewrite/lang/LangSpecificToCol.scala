@@ -335,10 +335,14 @@ case class LangSpecificToCol[Pre <: Generation](
       case load: LLVMLoad[Pre] => llvm.rewriteLoad(load)
       case store: LLVMStore[Pre] => llvm.rewriteStore(store)
       case alloc: LLVMAllocA[Pre] => llvm.rewriteAllocA(alloc)
+      case memset: LLVMMemset[Pre] => llvm.rewriteMemset(memset)
       case block: LLVMBasicBlock[Pre] => llvm.rewriteBasicBlock(block)
       case unreachable: LLVMBranchUnreachable[Pre] =>
         llvm.rewriteUnreachable(unreachable)
       case fracOf: LLVMFracOf[Pre] => llvm.rewriteFracOf(fracOf)
+      case add: LLVMAddWithOverflow[Pre] => llvm.rewriteAddWithOverflow(add)
+      case sub: LLVMSubWithOverflow[Pre] => llvm.rewriteSubWithOverflow(sub)
+      case mult: LLVMMultWithOverflow[Pre] => llvm.rewriteMultWithOverflow(mult)
       case other => other.rewriteDefault()
     }
 
@@ -449,6 +453,7 @@ case class LangSpecificToCol[Pre <: Generation](
         llvm.rewriteFunctionPointer(pointer)
       case pointer: LLVMPointerValue[Pre] => llvm.rewritePointerValue(pointer)
       case gep: LLVMGetElementPointer[Pre] => llvm.rewriteGetElementPointer(gep)
+      case extrVal: LLVMExtractValue[Pre] => llvm.rewriteExtractValue(extrVal)
       case int: LLVMIntegerValue[Pre] => IntegerValue(int.value)(int.o)
       case float: LLVMFloatValue[Pre] =>
         FloatValue(float.bigDecimalValue, dispatch(float.t))(float.o)

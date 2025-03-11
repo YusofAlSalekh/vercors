@@ -46,7 +46,9 @@ case object ExampleFiles {
     "examples/concepts/llvm/pallas/pallas_c_multiply.c",
     "examples/concepts/llvm/pallas/pallas_c_lower_bound.c",
     "examples/concepts/llvm/pallas/pallas_c_square_fail.c",
-    "examples/concepts/llvm/pallas/pallas_c_fibonacci.c"
+    "examples/concepts/llvm/pallas/pallas_c_fibonacci.c",
+    "examples/concepts/llvm/pallas/pallas_swift_fib.swift",
+    "examples/concepts/llvm/pallas/pallas_swift_fib_fail.swift",
   ).map(_.replaceAll("/", File.separator))
 
   val EXCLUSIONS: Seq[Path => Boolean] = Seq(

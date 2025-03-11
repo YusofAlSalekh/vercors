@@ -3842,6 +3842,14 @@ final case class LLVMStore[G](
 )(val blame: Blame[VerificationFailure])(implicit val o: Origin)
     extends LLVMStatement[G] with LLVMStoreImpl[G]
 
+final case class LLVMMemset[G](
+    dest: Expr[G],
+    value: Expr[G],
+    len: Expr[G],
+    volatile: Expr[G],
+)(val blame: Blame[VerificationFailure])(implicit val o: Origin)
+    extends LLVMStatement[G] with LLVMMemsetImpl[G]
+
 final case class LLVMBranchUnreachable[G]()(
     val blame: Blame[UnreachableReachedError]
 )(implicit val o: Origin)
@@ -3854,6 +3862,14 @@ final case class LLVMGetElementPointer[G](
     indices: Seq[Expr[G]],
 )(implicit val o: Origin)
     extends LLVMExpr[G] with LLVMGetElementPointerImpl[G]
+
+final case class LLVMExtractValue[G](
+    aggregateType: Type[G],
+    resultType: Type[G],
+    value: Expr[G],
+    indices: Seq[Int],
+)(implicit val o: Origin)
+    extends LLVMExpr[G] with LLVMExtractValueImpl[G]
 
 final case class LLVMSignExtend[G](
     inputType: Type[G],
@@ -3882,6 +3898,33 @@ final case class LLVMFloatExtend[G](
     value: Expr[G],
 )(implicit val o: Origin)
     extends LLVMExpr[G] with LLVMFloatExtendImpl[G]
+
+sealed trait LLVMArithOpWithOverflow[G]
+    extends LLVMStatement[G] with LLVMArithOpWithOverflowImpl[G]
+
+final case class LLVMAddWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMAddWithOverflowImpl[G]
+
+final case class LLVMSubWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMSubWithOverflowImpl[G]
+
+final case class LLVMMultWithOverflow[G](
+    target: Expr[G],
+    left: Expr[G],
+    right: Expr[G],
+    signed: Boolean,
+)(val blame: Blame[AssignFailed])(implicit val o: Origin)
+    extends LLVMArithOpWithOverflow[G] with LLVMMultWithOverflowImpl[G]
 
 final class LLVMGlobalSpecification[G](val value: String)(
     implicit val o: Origin

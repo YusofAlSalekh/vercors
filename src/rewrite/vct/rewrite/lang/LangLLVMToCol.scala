@@ -73,6 +73,22 @@ case object LangLLVMToCol {
       )
   }
 
+  private final case class UnsupportedExtractValueType(o: Origin)
+      extends UserError {
+    override def code: String = "unsupportedExtractValueType"
+
+    override def text: String =
+      o.messageInContext(s"Unsupported aggregate-type used in extractvalue")
+  }
+
+  private final case class UnsupportedMemset(memset: LLVMMemset[_])
+      extends UserError {
+    override def code: String = "unsupportedMemset"
+
+    override def text: String =
+      memset.o.messageInContext(s"Unsupported memset operation")
+  }
+
   private final case class UnreachableReached(
       unreachable: LLVMBranchUnreachable[_]
   ) extends Blame[AssertFailed] {
@@ -80,13 +96,24 @@ case object LangLLVMToCol {
       unreachable.blame.blame(UnreachableReachedError(unreachable))
   }
 
-  val pallasResArgPermOrigin: Origin = Origin(Seq(
+  private val pallasResArgPermOrigin: Origin = Origin(Seq(
     PreferredName(Seq("resArg context")),
     LabelContext("Generated context for resArg"),
   ))
 
+  private val overflowOpInitializerOrigin: Origin = Origin(Seq(
+    PreferredName(Seq("initTuple")),
+    LabelContext("Generated initializer for arith-op with overflow"),
+  ))
+
+  private val nondetValueOrigin: Origin = Origin(Seq(
+    LabelContext("Getter for nondeterministic value"),
+    PreferredName(Seq("getNondet")),
+  ))
+
   // TODO: This should be replaced with the correct blames!
-  object InvalidGEP extends PanicBlame("Invalid use of getelementpointer!")
+  private object InvalidGEP
+      extends PanicBlame("Invalid use of getelementpointer!")
 }
 
 case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
@@ -139,6 +166,19 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val assignedInLoop: ScopedStack[mutable.Set[Variable[Pre]]] =
     ScopedStack()
 
+  // Initializer-functions for the tuples that are returned by the llvm intrinsics
+  // for arithmetic operaitons with overflows.
+  private val overflowOpInitializers
+      : mutable.Map[LLVMTStruct[Pre], Procedure[Post]] = mutable.Map()
+
+  // Functions that are used to get a nondeterministic value of a given type.
+  // Used to encode the unreachable-instruction.
+  private val nondetGetters: mutable.Map[Type[Post], Function[Post]] = mutable
+    .Map()
+
+  // Return type of the LLVMFunction that is currently rewritten
+  private val funcRetType: ScopedStack[Type[Post]] = ScopedStack()
+
   def gatherPallasTypeSubst(program: Program[Pre]): Unit = {
     // Get all variables that are assigned a new type directly
     program.collect {
@@ -152,6 +192,17 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       // Rational
       case LLVMFracOf(Ref(v), _, _) => typeSubstitutions(v) = TRational()
       case LLVMPerm(_, Ref(v)) => typeSubstitutions(v) = TRational()
+      // Tuples
+      case op: LLVMArithOpWithOverflow[Pre] =>
+        op.target match {
+          case Local(Ref(v)) =>
+            v.t match {
+              case sT: LLVMTStruct[Pre] =>
+                typeSubstitutions(v) = TTuple(
+                  Seq(sT.elements(0), sT.elements(1))
+                )
+            }
+        }
     }
 
     // Propagate the new types across trivial assignments.
@@ -449,7 +500,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def rewriteLocalVariable(v: Variable[Pre]): Unit = {
-    implicit val o: Origin = v.o;
+    implicit val o: Origin = v.o
     rw.variables.succeed(v, new Variable[Post](rw.dispatch(getLocalVarType(v))))
   }
 
@@ -476,43 +527,45 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             case None => None
           }
         val isWrapper = func.pallasExprWrapperFor.isDefined
-        rw.globalDeclarations.declare(
-          new Procedure[Post](
-            returnType =
-              if (isWrapper) { TResource() }
-              else {
-                rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
-              },
-            args = argList,
-            outArgs = Nil,
-            typeArgs = Nil,
-            body =
-              inWrapperFunction.having(isWrapper) {
-                func.functionBody match {
-                  case None => None
-                  case Some(functionBody) =>
-                    if (func.pure)
-                      Some(GotoEliminator(functionBody match {
-                        case scope: Scope[Pre] => scope;
-                        case other => throw UnexpectedLLVMNode(other)
-                      }).eliminate())
-                    else
-                      Some(rw.dispatch(functionBody))
-                }
-              },
-            contract =
-              func.contract match {
-                case contract: VCLLVMFunctionContract[Pre] =>
-                  rw.dispatch(contract.data.get)
-                case contract: PallasFunctionContract[Pre] =>
-                  extendContractWithSretPerm(contract.content, cRetArg)
-              },
-            pure = func.pure,
-            pallasWrapper = isWrapper,
-            pallasFunction = true,
-          )(func.blame)
-        )
-
+        val returnT =
+          if (isWrapper) { TResource[Post]() }
+          else {
+            rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
+          }
+        funcRetType.having(returnT) {
+          rw.globalDeclarations.declare(
+            new Procedure[Post](
+              returnType = returnT,
+              args = argList,
+              outArgs = Nil,
+              typeArgs = Nil,
+              body =
+                inWrapperFunction.having(isWrapper) {
+                  func.functionBody match {
+                    case None => None
+                    case Some(functionBody) =>
+                      if (func.pure)
+                        Some(GotoEliminator(functionBody match {
+                          case scope: Scope[Pre] => scope;
+                          case other => throw UnexpectedLLVMNode(other)
+                        }).eliminate())
+                      else
+                        Some(rw.dispatch(functionBody))
+                  }
+                },
+              contract =
+                func.contract match {
+                  case contract: VCLLVMFunctionContract[Pre] =>
+                    rw.dispatch(contract.data.get)
+                  case contract: PallasFunctionContract[Pre] =>
+                    extendContractWithSretPerm(contract.content, cRetArg)
+                },
+              pure = func.pure,
+              pallasWrapper = isWrapper,
+              pallasFunction = true,
+            )(func.blame)
+          )
+        }
       }
     }
     llvmFunctionMap.update(func, procedure)
@@ -669,7 +722,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     // TODO: Handle the initializer
     // TODO: Include array and vector bounds somehow
     globalVariableInferredType.getOrElse(decl, decl.variableType) match {
-      case struct: LLVMTStruct[Pre] => {
+      case struct: LLVMTStruct[Pre] =>
         rewriteStruct(struct)
         globalVariableMap.update(
           decl,
@@ -680,36 +733,41 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                   new DirectRef[Post, Class[Post]](structMap(struct)),
                   Seq(),
                 )(struct.o),
-                None
+                None,
               )(struct.o),
-              decl.value.map(rw.dispatch)
+              decl.value.map(rw.dispatch),
             )(decl.o)
           ),
         )
-      }
-      case array: LLVMTArray[Pre] => {
+      case array: LLVMTArray[Pre] =>
         globalVariableMap.update(
           decl,
           rw.globalDeclarations.declare(
             new HeapVariable[Post](
               new TPointer[Post](rw.dispatch(array.elementType), None)(array.o),
-              None
+              None,
             )(decl.o)
           ),
         )
-      }
-      case vector: LLVMTVector[Pre] => {
+      case vector: LLVMTVector[Pre] =>
         globalVariableMap.update(
           decl,
           rw.globalDeclarations.declare(
             new HeapVariable[Post](
-              new TPointer[Post](rw.dispatch(vector.elementType), None)(vector.o),
-              None
+              new TPointer[Post](rw.dispatch(vector.elementType), None)(
+                vector.o
+              ),
+              None,
             )(decl.o)
           ),
         )
-      }
-      case _ => { ??? }
+      case int: LLVMTInt[Pre] =>
+        globalVariableMap.update(
+          decl,
+          rw.globalDeclarations
+            .declare(new HeapVariable[Post](rw.dispatch(int), None)(decl.o)),
+        )
+      case _ => ???
     }
   }
 
@@ -909,6 +967,41 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     // Deref might not be the correct thing to use here since technically the pointer is only dereferenced in the load or store instruction
   }
 
+  def derefStructIndexChain(value: Expr[Post], t: Type[Pre], indices: Seq[Int])(
+      implicit o: Origin
+  ): Expr[Post] = {
+    if (indices.isEmpty) { return value }
+    t match {
+      case struct: LLVMTStruct[Pre] =>
+        if (!structMap.contains(struct)) { rewriteStruct(struct) }
+        val idx = indices.head
+        derefStructIndexChain(
+          Deref[Post](value, structFieldMap.ref((struct, idx)))(InvalidGEP),
+          struct.elements(idx),
+          indices.tail,
+        )
+      case _ => throw UnsupportedExtractValueType(o)
+    }
+  }
+
+  def rewriteExtractValue(extrVal: LLVMExtractValue[Pre]): Expr[Post] = {
+    implicit val o: Origin = extrVal.o
+
+    extrVal.value match {
+      case Local(Ref(v))
+          if getLocalVarType(v).isInstanceOf[TTuple[Pre]] &&
+            extrVal.indices.size == 1 =>
+        // Special case for results of arithmetic ops with overflow-flag (encoded as tuple)
+        TupGet[Post](rw.dispatch(extrVal.value), extrVal.indices.head)
+      case _ =>
+        derefStructIndexChain(
+          rw.dispatch(extrVal.value),
+          extrVal.aggregateType,
+          extrVal.indices,
+        )
+    }
+  }
+
   def rewriteSignExtend(sext: LLVMSignExtend[Pre]): Expr[Post] = {
     implicit val o: Origin = sext.o
     // As long as we don't support integers as bitvectors this is mostly a no-op
@@ -951,11 +1044,111 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     CastFloat(rw.dispatch(fpext.value), rw.dispatch(fpext.t))
   }
 
+  private def getInitializerForArithOpWithOverflow(
+      structT: LLVMTStruct[Pre]
+  ): Procedure[Post] = {
+    if (!overflowOpInitializers.contains(structT)) {
+      implicit val o: Origin = overflowOpInitializerOrigin
+      val (resT, flagT) =
+        structT match {
+          case LLVMTStruct(_, _, Seq(res: LLVMTInt[Pre], flag: TBool[Pre])) =>
+            (res, flag)
+        }
+      val resArg =
+        new Variable[Post](rw.dispatch(resT))(o.where(name = "resArg"))
+      val flagArg =
+        new Variable[Post](rw.dispatch(flagT))(o.where(name = "flagArg"))
+      val tupleT = TTuple(Seq(resT, flagT))
+
+      val initializer = rw.globalDeclarations.declare {
+        withResult((result: Result[Post]) => {
+          val ensuresClauses = Seq(
+            TupGet[Post](result, 0) === Local(resArg.ref),
+            TupGet[Post](result, 1) === Local(flagArg.ref),
+          )
+
+          new Procedure[Post](
+            returnType = rw.dispatch(tupleT),
+            args = Seq(resArg, flagArg),
+            outArgs = Nil,
+            typeArgs = Nil,
+            body = None,
+            contract = contract[Post](
+              blame = AbstractApplicable,
+              ensures = UnitAccountedPredicate(foldStar(ensuresClauses)),
+            ),
+            pure = true,
+          )(PanicBlame("Generated initializer does not raise errors"))
+        })
+      }
+      overflowOpInitializers(structT) = initializer
+    }
+    overflowOpInitializers(structT)
+  }
+
+  private def rewriteArithOpWithOverflow(
+      instr: LLVMArithOpWithOverflow[Pre],
+      op: (Expr[Post], Expr[Post]) => Expr[Post],
+  ): Statement[Post] = {
+    implicit val o: Origin = instr.o
+    // TODO: Do not ignore the signedness
+    val targetStructT = instr.target.t match { case s: LLVMTStruct[Pre] => s }
+    val initFunc = getInitializerForArithOpWithOverflow(targetStructT)
+    val initCall = procedureInvocation[Post](
+      blame = PanicBlame("Generated initializer does not fail"),
+      ref = initFunc.ref,
+      args = Seq(op(rw.dispatch(instr.left), rw.dispatch(instr.right)), ff),
+    )
+    val assign = Assign(rw.dispatch(instr.target), initCall)(instr.blame)
+    assign
+  }
+
+  def rewriteAddWithOverflow(add: LLVMAddWithOverflow[Pre]): Statement[Post] = {
+    implicit val o: Origin = add.o
+    rewriteArithOpWithOverflow(add, (l, r) => l + r)
+  }
+
+  def rewriteSubWithOverflow(sub: LLVMSubWithOverflow[Pre]): Statement[Post] = {
+    implicit val o: Origin = sub.o
+    rewriteArithOpWithOverflow(sub, (l, r) => l - r)
+  }
+
+  def rewriteMultWithOverflow(
+      mult: LLVMMultWithOverflow[Pre]
+  ): Statement[Post] = {
+    implicit val o: Origin = mult.o
+    rewriteArithOpWithOverflow(mult, (l, r) => l * r)
+  }
+
   def rewriteUnreachable(
       unreachable: LLVMBranchUnreachable[Pre]
   ): Statement[Post] = {
     implicit val o: Origin = unreachable.o
-    Assert[Post](ff)(UnreachableReached(unreachable))
+    val a = Assert[Post](ff)(UnreachableReached(unreachable))
+    // If we are in a wrapper-function, the type needs to be set to bool.
+    // The default-type of Resource causes isses in the col->viper conversion
+    val t =
+      if (!inWrapperFunction.isEmpty && inWrapperFunction.top) { TBool[Post]() }
+      else { funcRetType.top }
+    val nondetGetter = getNondetValFunc(t)
+    val r = Return[Post](
+      functionInvocation[Post](blame = TrueSatisfiable, ref = nondetGetter.ref)
+    )
+    Block(Seq(a, r))
+  }
+
+  private def getNondetValFunc(t: Type[Post]): Function[Post] = {
+    if (!nondetGetters.contains(t)) {
+      val getterFunc = rw.globalDeclarations.declare(
+        function[Post](
+          blame = AbstractApplicable,
+          contractBlame = TrueSatisfiable,
+          returnType = t,
+        )(nondetValueOrigin)
+      )
+      nondetGetters(t) = getterFunc
+    }
+    nondetGetters(t)
   }
 
   private def getInferredType(e: Expr[Pre]): Type[Pre] =
@@ -1089,6 +1282,57 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  def rewriteMemset(memset: LLVMMemset[Pre]): Statement[Post] = {
+    implicit val o: Origin = memset.o
+    // Curently only memset with constant value of 0 is supported
+    memset.value match {
+      case LLVMIntegerValue(v, _) if v.intValue == 0 =>
+      case _ => throw UnsupportedMemset(memset)
+    }
+    // TODO: Make this more more generic
+    //  Currently, only very basic type-wrapper structs are supported (i.e. a packed struct with one integer value)
+    val numBytes =
+      memset.len match {
+        case LLVMIntegerValue(bytes, _) => bytes
+        case _ => throw UnsupportedMemset(memset)
+      }
+    val structType =
+      memset.dest match {
+        case Local(Ref(v)) =>
+          v.t match {
+            case LLVMTPointer(Some(s: LLVMTStruct[Pre])) => s
+            case _ => throw throw UnsupportedMemset(memset)
+          }
+        case _ => throw UnsupportedMemset(memset)
+      }
+    if (!structType.packed || !(structType.elements.size == 1)) {
+      throw UnsupportedMemset(memset)
+    }
+    structType.elements.head match {
+      case LLVMTInt(bits) if (bits / 8) == numBytes =>
+      case _ => throw UnsupportedMemset(memset)
+    }
+
+    // Assign new value to the struct
+    val newCls = structMap.get(structType).get
+    val assignStruct =
+      Assign(
+        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+        new NewObject[Post](newCls.ref),
+      )(memset.blame)
+    // Set field of the struct to 0
+    val structField = structFieldMap((structType, 0))
+    val assignField =
+      Assign[Post](
+        Deref[Post](
+          DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+          structField.ref,
+        )(memset.blame),
+        rw.dispatch(memset.value),
+      )(memset.blame)
+    Block(Seq(assignStruct, assignField))
+  }
+
   def rewritePointerValue(pointer: LLVMPointerValue[Pre]): Expr[Post] = {
     implicit val o: Origin = pointer.o
     // Will be transformed by VariableToPointer pass
@@ -1205,13 +1449,13 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       implicit o: Origin
   ): Expr[Post] = Result[Post](llvmFunctionMap.ref(ref.decl))
 
-  def phiTmpVarOrigin() =
+  private def phiTmpVarOrigin() =
     Origin(Seq(
       PreferredName(Seq("phiTmp")),
       LabelContext(s"Generated tmp-var for phi-assignment"),
     ))
 
-  def phiTmpVarAssignOrigin() =
+  private def phiTmpVarAssignOrigin() =
     Origin(Seq(LabelContext(s"Generated assignment to tmp-var for phi-node")))
 
   private def buildPhiAssignments(
@@ -1331,8 +1575,8 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   Loop restructuring should be handled by Pallas as it has much more analytical and contextual information about
   the program.
    */
-  case class GotoEliminator(bodyScope: Scope[Pre]) extends LazyLogging {
-    val labelDeclMap: Map[LabelDecl[Pre], LLVMBasicBlock[Pre]] =
+  private case class GotoEliminator(bodyScope: Scope[Pre]) extends LazyLogging {
+    private val labelDeclMap: Map[LabelDecl[Pre], LLVMBasicBlock[Pre]] =
       bodyScope.body match {
         case block: Block[Pre] =>
           block.statements.map {
@@ -1360,7 +1604,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }
     }
 
-    def eliminate(bb: LLVMBasicBlock[Pre]): Block[Post] = {
+    private def eliminate(bb: LLVMBasicBlock[Pre]): Block[Post] = {
       implicit val o: Origin = bb.o
       bb.terminator match {
         case goto: Goto[Pre] =>
@@ -1378,11 +1622,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             buildPhiAssignments(bb),
             eliminate(branch),
           ))
+        case unr: LLVMBranchUnreachable[Pre] =>
+          Block[Post](
+            Seq(rw.dispatch(bb.body), buildPhiAssignments(bb), rw.dispatch(unr))
+          )
         case other => throw UnexpectedLLVMNode(other)
       }
     }
 
-    def eliminate(branch: Branch[Pre]): Branch[Post] = {
+    private def eliminate(branch: Branch[Pre]): Branch[Post] = {
       implicit val o: Origin = branch.o
       Branch[Post](branch.branches.map(bs =>
         (
@@ -1403,6 +1651,12 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def structType(t: LLVMTStruct[Pre]): Type[Post] = {
+    // TODO: Remove this. The check for the golbalDeclarations is required because
+    //  the function-type is called in the post-comparisson in derefUntil, outside of
+    //  a scope. Once that is removed, this should no longe be required.
+    if (!rw.globalDeclarations.isEmpty) { // <--
+      if (!structMap.contains(t)) { rewriteStruct(t) }
+    }
     val targetClass = new LazyRef[Post, Class[Post]](structMap(t))
     TByValueClass[Post](targetClass, Seq())(t.o)
   }
