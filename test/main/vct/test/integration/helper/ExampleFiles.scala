@@ -49,6 +49,7 @@ case object ExampleFiles {
     "examples/concepts/llvm/pallas/pallas_c_fibonacci.c",
     "examples/concepts/llvm/pallas/pallas_swift_fib.swift",
     "examples/concepts/llvm/pallas/pallas_swift_fib_fail.swift",
+    "examples/concepts/llvm/pallas/pallas_loop_goto.c",
   ).map(_.replaceAll("/", File.separator))
 
   val EXCLUSIONS: Seq[Path => Boolean] = Seq(
