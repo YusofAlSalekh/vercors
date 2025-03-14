@@ -23,6 +23,15 @@ case object LangLLVMToCol {
         )
   }
 
+  private final case class UnsupportedLoopForm(loop: LLVMLoop[_])
+      extends SystemError {
+    override def text: String =
+      context[CurrentProgramContext].map(_.highlight(loop)).getOrElse(loop.o)
+        .messageInContext(
+          "VerCors assumes that LLVM-loops only have one backedge."
+        )
+  }
+
   private final case class NonConstantStructIndex(origin: Origin)
       extends UserError {
     override def code: String = "nonConstantStructIndex"
@@ -1499,16 +1508,29 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     Scope[Post](tmpVars, newBlock)
   }
 
-  private def blockToLabel(block: LLVMBasicBlock[Pre]): Statement[Post] = {
+  private def blockToLabel(
+      block: LLVMBasicBlock[Pre],
+      isLoopLatch: Boolean = false,
+  ): Statement[Post] = {
     implicit val o: Origin = block.o
-    val newBody = Block[Post](Seq(
-      rw.dispatch(block.body),
-      buildPhiAssignments(block),
-      rw.dispatch(block.terminator),
-    ))
+    var bodyStmnts = Seq(rw.dispatch(block.body), buildPhiAssignments(block))
+    // If the block is a loop-latch, we ignore the terminating goto, as this is implicitly included in the Loop
+    if (!isLoopLatch) {
+      bodyStmnts = bodyStmnts :+ rw.dispatch(block.terminator)
+    }
+    val newBody = Block[Post](bodyStmnts)
 
     if (elidedBackEdges.contains(block.label)) { newBody }
     else { Label(rw.labelDecls.dispatch(block.label), newBody)(block.o) }
+  }
+
+  private def countBackedges(loop: LLVMLoop[Pre]): Int = {
+    loop.blocks.get.map(b =>
+      b.collect {
+        case Goto(Ref(lbl)) if lbl == loop.header.decl => 1
+        case _ => 0
+      }.sum
+    ).sum
   }
 
   def rewriteBasicBlock(block: LLVMBasicBlock[Pre]): Statement[Post] = {
@@ -1517,6 +1539,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     if (block.loop.isEmpty) { blockToLabel(block) }
     else {
       val loop = block.loop.get
+      if (countBackedges(loop) != 1) { throw UnsupportedLoopForm(loop) }
       loopBlocks.addAll(loop.blocks.get)
       // Determine which variables are assigned using store-instructions
       val assignedVars = mutable.Set[Variable[Pre]]()
@@ -1525,14 +1548,20 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           assignedVars.add(v)
         }
       }
-      Loop(
-        Block(Nil)(block.o),
-        tt[Post],
-        Block(Nil)(block.o),
-        assignedInLoop.having(assignedVars) { rw.dispatch(loop.contract) },
-        Block(blockToLabel(loop.headerBlock.get) +: loop.blocks.get.filterNot {
-          b => b == loop.headerBlock.get || b == loop.latchBlock.get
-        }.map(blockToLabel) :+ blockToLabel(loop.latchBlock.get))(block.o),
+      Label(
+        rw.labelDecls.dispatch(block.label),
+        Loop(
+          Block(Nil)(block.o),
+          tt[Post],
+          Block(Nil)(block.o),
+          assignedInLoop.having(assignedVars) { rw.dispatch(loop.contract) },
+          Block(
+            blockToLabel(loop.headerBlock.get) +: loop.blocks.get.filterNot {
+              b => b == loop.headerBlock.get || b == loop.latchBlock.get
+            }.map(b => blockToLabel(b)) :+
+              blockToLabel(loop.latchBlock.get, true)
+          )(block.o),
+        )(block.o),
       )(block.o)
     }
   }
@@ -1558,13 +1587,6 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         ) &* extendedInv
     }
     LoopInvariant[Post](extendedInv, None)(llvmContract.blame)
-  }
-
-  def rewriteGoto(goto: Goto[Pre]): Statement[Post] = {
-    if (elidedBackEdges.contains(goto.lbl.decl)) {
-      // TODO: Verify that the correct block always follows this one
-      Block(Nil)(goto.o)
-    } else { goto.rewriteDefault() }
   }
 
   /*

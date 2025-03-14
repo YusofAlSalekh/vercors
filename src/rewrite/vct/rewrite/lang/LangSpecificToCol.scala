@@ -319,7 +319,6 @@ case class LangSpecificToCol[Pre <: Generation](
       case CPPDeclarationStatement(decl) => cpp.rewriteLocalDecl(decl)
       case scope: CPPLifetimeScope[Pre] => cpp.rewriteLifetimeScope(scope)
       case goto: CGoto[Pre] => c.rewriteGoto(goto)
-      case goto: Goto[Pre] => llvm.rewriteGoto(goto)
       case barrier: GpgpuBarrier[Pre] => c.gpuBarrier(barrier)
 
       case eval @ Eval(CPPInvocation(_, _, _, _)) =>
