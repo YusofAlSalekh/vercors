@@ -14,7 +14,8 @@ namespace pallas::utils {
 /**
  * Function that attempts to map a given DIVariable to a corresponding
  * llvm-value.
- * The mapping-process uses the following steps:
+ * The mapping assumes that the resulting value will be used in a loop
+ * invariant. The mapping-process uses the following steps:
  * - Try to map the DIVariable to a value through a unique dbg.declare
  *   intrinsic. If this succeeds, return.
  * - Try to map the DIVariable to a value through a unique dbg.value intrinsic.

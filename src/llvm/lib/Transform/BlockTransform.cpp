@@ -53,7 +53,8 @@ void llvm2col::transformInstruction(pallas::FunctionCursor &funcCursor,
     // Check if a block of specification-statements is attached
     if (llvm::MDNode *specMD = llvmInstruction.getMetadata(
             pallas::constants::PALLAS_SPEC_STMNT_BLOCK)) {
-        llvm2col::transformSpecStmntBlock(*specMD, colBodyBlock, funcCursor);
+        llvm2col::transformSpecStmntBlock(*specMD, llvmInstruction,
+                                          colBodyBlock, funcCursor);
     }
 
     u_int32_t opCode = llvmInstruction.getOpcode();

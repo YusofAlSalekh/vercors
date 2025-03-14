@@ -68,12 +68,9 @@ bool isConstantInt(llvm::Metadata *md) {
     return false;
 }
 
-llvm::Function *getWrapperFromLoopInv(const llvm::MDNode &invMD) {
-    if (invMD.getNumOperands() < 2) {
-        return nullptr;
-    }
-    auto *wFuncMD = llvm::dyn_cast_if_present<llvm::ValueAsMetadata>(
-        invMD.getOperand(1).get());
+llvm::Function *getWrapperFunc(const llvm::MDOperand &mdOp) {
+    auto *wFuncMD =
+        llvm::dyn_cast_if_present<llvm::ValueAsMetadata>(mdOp.get());
     if (wFuncMD == nullptr) {
         return nullptr;
     }
@@ -83,6 +80,13 @@ llvm::Function *getWrapperFromLoopInv(const llvm::MDNode &invMD) {
         return nullptr;
     }
     return wFunc;
+}
+
+llvm::Function *getWrapperFromLoopInv(const llvm::MDNode &invMD) {
+    if (invMD.getNumOperands() < 2) {
+        return nullptr;
+    }
+    return getWrapperFunc(invMD.getOperand(1));
 }
 
 llvm::MDNode *getPallasLoopContract(const llvm::Loop &llvmLoop) {
