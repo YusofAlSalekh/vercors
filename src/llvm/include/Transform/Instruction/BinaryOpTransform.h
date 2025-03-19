@@ -10,5 +10,9 @@ void transformBinaryOp(llvm::Instruction &llvmInstruction,
                        col::LlvmBasicBlock &colBlock,
                        pallas::FunctionCursor &funcCursor);
 
+void transformBitwiseXor(llvm::Instruction &llvmInstruction,
+                         col::Assign &assignment,
+                         pallas::FunctionCursor &funcCursor);
+
 } // namespace llvm2col
 #endif // PALLAS_BINARYOPTRANSFORM_H

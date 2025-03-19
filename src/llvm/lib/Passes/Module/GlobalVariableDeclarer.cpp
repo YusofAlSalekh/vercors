@@ -1,6 +1,7 @@
 #include "Passes/Module/GlobalVariableDeclarer.h"
 #include "Passes/Module/RootContainer.h"
 #include "Transform/Transform.h"
+#include "Util/Constants.h"
 
 namespace pallas {
 const std::string SOURCE_LOC = "Passes::Module::GlobalVariableDeclarer";
@@ -19,13 +20,16 @@ PreservedAnalyses GlobalVariableDeclarerPass::run(Module &M,
         llvm2col::transformAndSetType(*global.getType(),
                                       *colGlobal->mutable_variable_type());
         if (global.hasInitializer()) {
-            llvm2col::transformAndSetConstExpr(
-                MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
-                    .getManager(),
-                llvm2col::generateGlobalVariableInitializerOrigin(
-                    M, global, *global.getInitializer()),
-                *global.getInitializer(), *colGlobal->mutable_value());
-
+            // Skip the entry-point global from swift, as it contains currently
+            // unsupported poitner-casting and is not needed for verification.
+            if (global.getSection().str() != constants::SWIFT_ENTRY_SECTION) {
+                llvm2col::transformAndSetConstExpr(
+                    MAM.getResult<FunctionAnalysisManagerModuleProxy>(M)
+                        .getManager(),
+                    llvm2col::generateGlobalVariableInitializerOrigin(
+                        M, global, *global.getInitializer()),
+                    *global.getInitializer(), *colGlobal->mutable_value());
+            }
             llvm2col::transformAndSetType(*global.getInitializer()->getType(),
                                           *colGlobal->mutable_variable_type());
         } else {
