@@ -33,6 +33,10 @@ void transformICmp(llvm::ICmpInst &icmpInstruction,
 void transformCmpExpr(llvm::CmpInst &cmpInstruction, auto &colCompareExpr,
                       pallas::FunctionCursor &funcCursor);
 
+void transformExtractValueInst(llvm::ExtractValueInst &llvmInstruction,
+                               col::LlvmBasicBlock &colBlock,
+                               pallas::FunctionCursor &funcCursor);
+
 void transformCallExpr(llvm::CallInst &callInstruction,
                        col::LlvmBasicBlock &colBlock,
                        pallas::FunctionCursor &funcCursor);

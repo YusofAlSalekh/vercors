@@ -1,6 +1,9 @@
 #ifndef PALLAS_TRANSFORM_H
 #define PALLAS_TRANSFORM_H
 
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/Casting.h>
+
 #include "Origin/OriginProvider.h"
 #include "Passes/Function/FunctionBodyTransformer.h"
 
@@ -69,6 +72,18 @@ void transformBinExpr(llvm::Instruction &llvmInstruction,
     col::Expr *rExpr = colBinExpr.mutable_right();
     llvm2col::transformAndSetExpr(funcCursor, llvmInstruction,
                                   *llvmInstruction.getOperand(1), *rExpr);
+}
+template <class ColBinBitExpr>
+void transformBitwiseBinExpr(llvm::Instruction &llvmInstruction,
+                             ColBinBitExpr &colBinBitExpr,
+                             pallas::FunctionCursor &funcCursor) {
+    llvm::IntegerType *ty =
+        llvm::cast<llvm::IntegerType>(llvmInstruction.getType());
+    transformBinExpr(llvmInstruction, colBinBitExpr, funcCursor);
+    colBinBitExpr.set_allocated_blame(new col::Blame());
+    colBinBitExpr.set_bits(ty->getBitWidth());
+    colBinBitExpr.set_signed_(true);
+    // TODO: Figure out what to put for signed
 }
 
 template <class IDNode> int64_t setColNodeId(IDNode &idNode) {
