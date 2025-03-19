@@ -9,10 +9,10 @@ adt `block` {
   pure `block` addr_inv(int address);
 
   // block length is non-negative
-  axiom (\forall `block` b; block_length(b) >= 0);
+  axiom (\forall `block` b; {:block_length(b):} >= 0);
 
   // loc is injective: a (block, index) pair indicates a unique ref
-  axiom (∀ `block` b, int i; loc_inv_1({:loc(b, i):}) == b && loc_inv_2(loc(b, i)) == i);
+  axiom (∀ `block` b, int i; loc_inv_1({:loc(b, i):}) == b && loc_inv_2({:loc(b, i):}) == i);
 
   // a block must be based higher than 0
   axiom (∀ `block` b; {:block_address(b):} > 0);
@@ -29,8 +29,8 @@ adt `pointer` {
 
   // the block offset is valid wrt the length of the block
   axiom (∀ `pointer` p;
-    pointer_offset(p) >= 0 &&
-      pointer_offset(p) < `block`.block_length(pointer_block(p)));
+    {:pointer_offset(p):} >= 0 &&
+      {:pointer_offset(p):} < `block`.block_length(pointer_block(p)));
 
   // pointer_of is injective: a (block, offset) pair indicates a unique pointer value
   axiom (∀`block` b, int offset;
@@ -44,6 +44,8 @@ adt `pointer` {
   axiom (∀ `pointer` p1, `pointer` p2, int stride; stride > 0 && ({:ptr_address(p1, stride):} == {:ptr_address(p2, stride):} && {:pointer_block(p1):} == {:pointer_block(p2):}) ==> p1 == p2);
 
   axiom ptr_add_axiom();
+
+  axiom ptr_add_axiom2();
 }
 
 
@@ -54,6 +56,7 @@ pure ref ptr_deref(`pointer` p) =
 decreases;
 requires 0 <= `pointer`.pointer_offset(p) + offset;
 requires `pointer`.pointer_offset(p) + offset < `block`.block_length(`pointer`.pointer_block(p));
+// Assumed here for performance reasons (would verify without polarity_dependent)
 ensures \polarity_dependent(offset == 0 ==> \result == p, true);
 pure `pointer` ptr_add(`pointer` p, int offset) =
   `pointer`.pointer_of(
@@ -70,7 +73,16 @@ ensures (\forall `pointer` p1, int offset, int i;
 pure boolean ptr_add_axiom() = true;
 
 decreases;
-ensures stride > 0 ==> \result > 0;
+ensures (∀ `pointer` p, int i, int j;
+    0 <= `pointer`.pointer_offset(p) + i &&
+    `pointer`.pointer_offset(p) + i < `block`.block_length(`pointer`.pointer_block(p)) &&
+    0 <= `pointer`.pointer_offset(p) + j &&
+    `pointer`.pointer_offset(p) + j < `block`.block_length(`pointer`.pointer_block(p)); (i == j) == ({:ptr_add(p, i):} == {:ptr_add(p, j):}));
+pure boolean ptr_add_axiom2() = true;
+
+decreases;
+// Assumed here to allow verification with --disableNL
+ensures \polarity_dependent(stride > 0 ==> \result > 0, true);
 pure int ptr_address(`pointer` p, int stride) = `block`.block_address(`pointer`.pointer_block(p)) + (`pointer`.pointer_offset(p) * stride);
 
 decreases;
