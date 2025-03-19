@@ -92,8 +92,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   )
   private lazy val pointerDeref = find[Function[Post]](pointerFile, "ptr_deref")
   private lazy val pointerAdd = find[Function[Post]](pointerFile, "ptr_add")
-  private lazy val pointerAddress = find[Function[Post]](
-    pointerFile,
+  private lazy val pointerAddress = find[ADTFunction[Post]](
+    pointerAdt,
     "ptr_address",
   )
   private lazy val pointerFromAddress = find[Function[Post]](
@@ -254,44 +254,33 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           globalDeclarations.succeed(
             adt,
             adt.rewrite(decls = {
+              val adtSucc = succ[AxiomaticDataType[Post]](adt)
+              val addrSucc = succ[ADTFunction[Post]](adt.decls.collectFirst {
+                case f: ADTFunction[Pre]
+                    if f.o.find[SourceName].exists(_.name == "ptr_address") =>
+                  f
+              }.get)
               aDTDeclarations.collect {
                 adt.decls.foreach(dispatch)
-                casts.collect {
-                  // TODO: Should we be doing Pointer(TAny) here instead of Pointer(TVoid)?
-                  case (TVoid(), other) if other != TVoid[Pre]() => other
-                  case (other, TVoid()) if other != TVoid[Pre]() => other
-                }.foreach { t =>
-                  val adtSucc = succ[AxiomaticDataType[Post]](adt)
-                  val blockSucc = succ[ADTFunction[Post]](
-                    adt.decls.collectFirst {
-                      case f: ADTFunction[Pre]
-                          if f.o.find[SourceName]
-                            .exists(_.name == "pointer_block") =>
-                        f
-                    }.get
-                  )
-                }
+                aDTDeclarations.declare(new ADTAxiom[Post](foralls(
+                  Seq(TAxiomatic(adtSucc, Nil), TInt()),
+                  body = { case Seq(p, stride) =>
+                    // TODO: Stop hardcoding this number!
+                    LessEq(
+                      adtFunctionInvocation(addrSucc, args = Seq(p, stride)),
+                      const(BigInt("18446744073709551615")),
+                    )
+                  },
+                  triggers = { case Seq(p, stride) =>
+                    Seq(Seq(
+                      adtFunctionInvocation(addrSucc, args = Seq(p, stride))
+                    ))
+                  },
+                )))
               }._1
             }),
           )
         }
-      case func: Function[Pre]
-          if func.o.find[SourceName].exists(_.name == "ptr_address") =>
-        globalDeclarations.succeed(
-          func,
-          withResult((result: Result[Post]) =>
-            func.rewrite(contract =
-              func.contract.rewrite(ensures =
-                (dispatch(func.contract.ensures) &* PolarityDependent(
-                  LessEq(result, const(BigInt("18446744073709551615"))(func.o))(
-                    func.o
-                  ),
-                  tt,
-                )(func.o))(func.o)
-              )
-            )
-          )(func.o),
-        )
       case _ => super.postCoerce(decl)
     }
   }
@@ -569,7 +558,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 Select[Post](
                   OptEmpty(v),
                   const(0),
-                  FunctionInvocation[Post](
+                  adtFunctionInvocation[Post](
                     ref = pointerAddress.ref,
                     args = Seq(
                       OptGet(v)(PanicBlame(
@@ -577,21 +566,15 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                       )),
                       dispatch(typeSize),
                     ),
-                    typeArgs = Nil,
-                    Nil,
-                    Nil,
-                  )(PanicBlame("Stride > 0")),
+                  ),
                 )
               },
             )
           case (TInt() | TBoundedInt(_, _), TNonNullPointer(_, _)) =>
-            FunctionInvocation[Post](
+            adtFunctionInvocation[Post](
               ref = pointerAddress.ref,
               args = Seq(newValue, dispatch(typeSize)),
-              typeArgs = Nil,
-              Nil,
-              Nil,
-            )(PanicBlame("Stride > 0"))
+            )
           case (TPointer(_, None), TInt() | TBoundedInt(_, _)) =>
             letIfNonTrivial(
               dispatch(value.t),
@@ -628,13 +611,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           args = Seq(unwrapOption(p, blck.blame)),
         )
       case addr @ PointerAddress(p, elementSize) =>
-        FunctionInvocation[Post](
+        adtFunctionInvocation[Post](
           ref = pointerAddress.ref,
           args = Seq(unwrapOption(p, addr.blame), dispatch(elementSize)),
-          typeArgs = Nil,
-          Nil,
-          Nil,
-        )(TrueSatisfiable)
+        )
       case other => super.postCoerce(other)
     }
   }
