@@ -1,26 +1,15 @@
 package vct.col.rewrite
 
 import vct.col.ast._
-import vct.col.rewrite.DisambiguateLocation.NotALocation
-import vct.col.origin.{
-  Blame,
-  Origin,
-  PanicBlame,
-  PointerAddError,
-  PointerBounds,
-  PointerLocationError,
-  PointerNull,
-}
-import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
-import vct.col.util.AstBuildHelpers.const
+import vct.col.origin.{Blame, Origin, PointerLocationError, TypeName}
 import vct.result.VerificationError.UserError
 
 case object DisambiguateLocation extends RewriterBuilder {
 
-  case class NotALocation(expr: Expr[_]) extends UserError {
+  private case class NotALocation(expr: Expr[_]) extends UserError {
     override def code: String = "notALocation"
 
-    def hint: Option[String] =
+    private def hint: Option[String] =
       expr match {
         case PointerSubscript(_, _) =>
           Some(" (Hint: perhaps you meant to prepend `&`)")
@@ -35,15 +24,14 @@ case object DisambiguateLocation extends RewriterBuilder {
       )
   }
 
-  case class PointerAddRedirect(blame: Blame[PointerLocationError])
-      extends Blame[PointerAddError] {
-    override def blame(error: PointerAddError): Unit =
-      error match {
-        case nil: PointerNull => blame.blame(nil)
-        // It should not be possible to acquire an out-of-bounds pointer and pass it around
-        case bounds: PointerBounds =>
-          PanicBlame("Got location of pointer that was out of bounds")
-      }
+  private case class InvalidPatternLocation(expr: Expr[_], cls: Class[_])
+      extends UserError {
+    override def code: String = "byValueClassLocationPattern"
+
+    override def text: String =
+      expr.o.messageInContext(
+        s"A ${cls.o.find[TypeName].map(_.name).getOrElse("class")} value (which will be expanded to permissions for every field) is not allowed in a trigger pattern"
+      )
   }
 
   override def key: String = "disambiguateLocation"
@@ -55,7 +43,7 @@ case object DisambiguateLocation extends RewriterBuilder {
 case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
   import DisambiguateLocation._
 
-  def exprToLoc(expr: Expr[Pre], blame: Blame[PointerLocationError])(
+  private def exprToLoc(expr: Expr[Pre], blame: Blame[PointerLocationError])(
       implicit o: Origin
   ): Location[Post] =
     expr match {
@@ -72,6 +60,12 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
         ArrayLocation(dispatch(arr), dispatch(index))(expr.blame)
       case PredicateApplyExpr(inv) => PredicateLocation(dispatch(inv))
       case InlinePattern(inner, pattern, group) =>
+        if (inner.t.asByValueClass.isDefined) {
+          throw InvalidPatternLocation(
+            expr,
+            inner.t.asByValueClass.get.cls.decl,
+          )
+        }
         InLinePatternLocation(
           exprToLoc(inner, blame),
           InlinePattern(dispatch(inner), pattern, group)(expr.o),
@@ -84,6 +78,6 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
     loc match {
       case location @ AmbiguousLocation(expr) =>
         exprToLoc(expr, location.blame)(loc.o)
-      case other => rewriteDefault(other)
+      case other => super.dispatch(other)
     }
 }

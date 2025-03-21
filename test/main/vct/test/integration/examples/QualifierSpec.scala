@@ -90,7 +90,7 @@ int f() {
 }
 """
 
-  vercors should error withCode "disallowedQualifiedType" in "Cannot take address for unique pointer" c
+  vercors should verify using silicon in "Take address of local for unique pointer" c
     """
 int f() {
     /*@unique<1>@*/ int a = 0;
@@ -939,7 +939,7 @@ int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  v){
   }
 """
 
-  vercors should error withCode "disallowedQualifiedCoercion" in "Unique pointer of addr of struct field" c
+  vercors should error withCode "resolutionError:type" in "Unique pointer of addr of struct field" c
     """
 struct vec {
   int* xs;
@@ -951,7 +951,7 @@ int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  v){
   }
 """
 
-  vercors should error withCode "disallowedQualifiedType" in "Unique pointer of addr of unique param" c
+  vercors should verify using silicon in "Unique pointer of addr of unique param" c
     """
 struct vec {
   int* xs;
@@ -1002,6 +1002,20 @@ void f(){
 @*/
 void f(/*@unique<1>@*/ int* x){
   int* y = &(x[0]);
+}
+"""
+
+  vercors should verify using silicon in "Addr of unique field" c
+    """
+struct vec {
+    /*@ unique<1> */int * /*@ unique<2> */ xs;
+};
+
+//@ requires v != NULL ** Value(v) ** Value(*v);
+int f(struct vec*  v){
+    /*@ unique<1> @*/ int* xs2 = v->xs;
+    /*@ unique<1> */int * /*@ unique<2>*/ *xs3 = &v->xs;
+    /*@ unique<1> */int * /*@ unique<2>*/ *xs4 = &v->xs;
 }
 """
 
@@ -1112,3 +1126,4 @@ int f(/*@unique_pointer_field<host, 1>@*/ struct buf *out) {
 }
 """
 }
+

@@ -107,7 +107,7 @@ unaryOperator
     ;
 
 castExpression
-    : '(' typeName ')' castExpression
+    : {isTypedefName($ctx)}? '(' typeName ')' castExpression
     |   '__extension__' '(' typeName ')' castExpression
     | unaryExpression
     ;
@@ -508,15 +508,15 @@ staticAssertDeclaration
     ;
 
 statement
-    :   labeledStatement
+    :   valEmbedStatementBlock
+    |   {specLevel>0}? valStatement
+    |   labeledStatement
     |   compoundStatement
     |   expressionStatement
     |   selectionStatement
     |   iterationStatement
     |   jumpStatement
     |   ('__asm' | '__asm__') ('volatile' | '__volatile__') '(' logicalOrExpressionList? logicalOrExpressionListColonList ')' ';'
-    |   valEmbedStatementBlock
-    |   {specLevel>0}? valStatement
     |   gpgpuBarrier
     |   gpgpuAtomicBlock
     ;
