@@ -600,7 +600,7 @@ class CSpec extends VercorsSpec {
     }
 
     __kernel void test(__global bool* a) {
-        int y[1] = {0};Silicon
+        int y[1] = {0};
         int4 x = (int4)(alter_state(y), alter_state(y));
         //@ assert x.x == 1 && x.y == 1 && x.z == 2 && x.w == 2;
         return;
@@ -626,7 +626,7 @@ class CSpec extends VercorsSpec {
     """
   vercors should verify using silicon example "concepts/c/mismatched_provenance.c"
   vercors should verify using silicon example "concepts/c/ptr_comparisons.c"
-  vercors should verify using silicon flag "--target" flag "x86_64-linux-unknown" flag "--dev-no-sat" flag "--backend-option=--proverEnableResourceBounds" example "concepts/c/pointer_tag.c"
+  vercors should verify using silicon flag "--target" flag "x86_64-linux-unknown" flag "--dev-no-sat" example "concepts/c/pointer_tag.c"
   vercors should verify using silicon in "Pointer address correctly offset based on type size" c
     """
     #include <stdint.h>

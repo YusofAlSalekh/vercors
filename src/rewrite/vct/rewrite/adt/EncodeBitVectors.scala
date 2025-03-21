@@ -357,19 +357,17 @@ case class EncodeBitVectors[Pre <: Generation](opaque: Boolean)
         functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
     } else { (l, r, o) => SmtlibBvShr[Post](l, r)(o) }
   private lazy val not: (Expr[Post], Origin) => Expr[Post] =
-    if (opaque) { (e, o) =>
-      functionInvocation[Post](
-        TrueSatisfiable,
-        globalDeclarations.declare(
-          function[Post](
-            AbstractApplicable,
-            TrueSatisfiable,
-            TInt(),
-            args = Seq(new Variable(TInt())(BaseOrigin.where(name = "e"))),
-          )(BaseOrigin.where(name = "bvnot"))
-        ).ref,
-        args = Seq(e),
-      )(o)
+    if (opaque) {
+      val f = globalDeclarations.declare(
+        function[Post](
+          AbstractApplicable,
+          TrueSatisfiable,
+          TInt(),
+          args = Seq(new Variable(TInt())(BaseOrigin.where(name = "e"))),
+        )(BaseOrigin.where(name = "bvnot"))
+      )
+      (e, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(e))(o)
     } else { (e, o) => SmtlibBvNot[Post](e)(o) }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] = {
