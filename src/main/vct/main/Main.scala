@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory
 import scopt.OParser
 import vct.col.ast.Node
 import vct.debug.CrashReport
-import vct.main.modes.{CFG, Compile, Patcher, VeSUV, Verify, VeyMont}
+import vct.main.modes.{CFG, Compile, Patcher, VeSUV, Verify, VeyMont, LSP}
 import vct.main.stages.Transformation
 import vct.options.Options
 import vct.options.types.Mode
@@ -121,5 +121,6 @@ case object Main extends LazyLogging {
         CFG.runOptions(options)
       case Mode.Compile => Compile.runOptions(options)
       case Mode.Patcher => Patcher.runOptions(options)
+      case Mode.LSP => LSP.runOptions(options)
     }
 }
