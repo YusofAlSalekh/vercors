@@ -650,4 +650,66 @@ class CSpec extends VercorsSpec {
         int y = (test) 5.0;
     }
     """
+
+  vercors should verify using silicon in "Trigger specified for pointer with helper function" c
+  """
+/*@
+ghost
+  requires nx > 0 && ny > 0;
+  requires 0 <= x && x<nx;
+  requires 0 <= y && y<ny;
+  ensures \euclidean_mod(x + nx*y, nx) == x;
+  ensures \euclidean_div(x + nx*y, nx) == y;
+  ensures \result;
+  ensures 0 <= x + nx*y && x + nx*y < nx*ny;
+  decreases;
+pure bool get_facts(int x, int y, int nx, int ny);
+@*/
+
+/*@
+  requires nx > 0 && ny > 0;
+  requires 0 <= x && x<nx;
+  requires 0 <= y && y<ny;
+  ensures get_facts(x, y, nx, ny);
+  ensures 0 <= x + y*nx && x + y*nx < nx*ny;
+  decreases;
+@*/
+/*@ pure @*/ int a2d(int x, int y, int nx, int ny) {
+  return x + nx*y;
+}
+
+/*@
+  context_everywhere nx>0 && ny>0;
+  context_everywhere xs != NULL ** \pointer_length(xs) == nx*ny;
+  context_everywhere (\forall* int x, int y;
+    0 <= x && x < nx && 0 <= y && y < ny;
+    Perm({:&xs[a2d(x, y, nx, ny)]:}, 1\1));
+  ensures (\forall int x, int y;
+    0 <= x && x < nx && 0 <= y && y < ny;
+    {:xs[a2d(x, y, nx, ny)]:} == x + y);
+@*/
+void test(int* xs, int nx, int ny){
+  /*@
+  loop_invariant 0 <= y && y <= ny;
+  loop_invariant (\forall int x, int yf;
+    0 <= x && x < nx && 0 <= yf && yf < y;
+    {:xs[a2d(x, yf, nx, ny)]:} == x + yf);
+  @*/
+  for(int y = 0; y < ny; y++){
+    /*@
+    loop_invariant 0 <= x && x <= nx;
+    loop_invariant (\forall int x, int yf;
+      0 <= x && x < nx && 0 <= yf && yf < y;
+      {:xs[a2d(x, yf, nx, ny)]:} == x + yf);
+    loop_invariant (\forall int xf;
+      0 <= xf && xf < x;
+      {:xs[a2d(xf, y, nx, ny)]:} == xf + y);
+    @*/
+    for(int x = 0; x < nx; x++){
+      xs[a2d(x, y, nx, ny)] = x + y;
+    }
+    //@ assert (\forall int x; 0 <= x && x < nx; {:xs[a2d(x, y, nx, ny)]:} == x + y);
+  }
+}
+  """
 }

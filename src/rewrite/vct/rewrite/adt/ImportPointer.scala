@@ -368,6 +368,14 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   ): Expr[Post] = {
     implicit val o: Origin = e.o
     e match {
+      case add @ PointerAdd(pointer, offset) =>
+        FunctionInvocation[Post](
+          ref = pointerAdd.ref,
+          args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
+          typeArgs = Nil,
+          Nil,
+          Nil,
+        )(NoContext(PointerBoundsPreconditionFailed(add.blame, pointer)))
       case sub @ PointerSubscript(pointer, index) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,

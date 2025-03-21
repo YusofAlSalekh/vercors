@@ -6,6 +6,7 @@
 #include "Transform/BlockTransform.h"
 #include "Transform/Transform.h"
 #include "Util/BlockUtils.h"
+#include "Util/Constants.h"
 #include "Util/Exceptions.h"
 #include <llvm/Support/raw_ostream.h>
 
@@ -203,6 +204,16 @@ FunctionBodyTransformerPass::run(Function &F, FunctionAnalysisManager &FAM) {
         funcCursor.addVariableMapEntry(
             A, FAM.getResult<FunctionDeclarer>(F).getFuncArgMapEntry(A));
     }
+
+    // Skip the body of the fatalError-function from Swift
+    // (As it uses currently unsupported instructions). We generate an
+    // requires false; - contract instead.
+    if (F.getName().str() == constants::SWIFT_FATAL_ERROR) {
+        ErrorReporter::addWarning(SOURCE_LOC,
+                                  "Skipping body of swift fatalError", F);
+        return PreservedAnalyses::all();
+    }
+
     // start recursive block code gen with basic block
     llvm::BasicBlock &entryBlock = F.getEntryBlock();
     llvm2col::transformLLVMBlock(entryBlock, funcCursor);

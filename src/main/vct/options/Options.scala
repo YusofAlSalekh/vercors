@@ -398,6 +398,12 @@ case object Options {
           ),
       ),
       note(""),
+      note("Pallas options"),
+      opt[Unit]("pallas-sroa").action((_, c) => c.copy(pallasRunSroa = true))
+        .text(
+          "Apply the SROA-pass of LLVM to the loaded IR before processing it."
+        ),
+      note(""),
       note("Control flow graph"),
       opt[Unit]("build-cfg").action((_, c) => c.copy(mode = Mode.CFG)).text(
         "Instead of verifying a program, build its control flow graph for further analysis"
@@ -536,6 +542,9 @@ case class Options(
       EncodePermissionStratification.Mode.Wrap,
     veymontSkipChoreographyVerification: Boolean = false,
     veymontSkipImplementationVerification: Boolean = false,
+
+    // Pallas options
+    pallasRunSroa: Boolean = false,
 
     // VeSUV options
     vesuvOutput: Path = null,

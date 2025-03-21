@@ -6,12 +6,26 @@ import hre.progress.Progress
 import vct.col.ast.Node
 import vct.col.origin.AccountedDirection
 import vct.col.{ast => col, origin => blame}
-import vct.result.VerificationError.SystemError
+import vct.result.VerificationError.{SystemError, TimeOut}
 import viper.api.SilverTreeCompare
-import viper.api.transform.{ColToSilver, NodeInfo, NopViperReporter, SilverParserDummyFrontend}
+import viper.api.transform.{
+  ColToSilver,
+  NodeInfo,
+  NopViperReporter,
+  SilverParserDummyFrontend,
+}
 import viper.silver.ast.Infoed
 import viper.silver.plugin.SilverPluginManager
-import viper.silver.plugin.standard.termination.{FunctionTerminationError, LoopTerminationError, MethodTerminationError, TerminationConditionFalse, TupleBoundedFalse, TupleConditionFalse, TupleDecreasesFalse, TupleSimpleFalse}
+import viper.silver.plugin.standard.termination.{
+  FunctionTerminationError,
+  LoopTerminationError,
+  MethodTerminationError,
+  TerminationConditionFalse,
+  TupleBoundedFalse,
+  TupleConditionFalse,
+  TupleDecreasesFalse,
+  TupleSimpleFalse,
+}
 import viper.silver.reporter.Reporter
 import viper.silver.verifier._
 import viper.silver.verifier.errors._
@@ -280,12 +294,13 @@ trait SilverBackend
             node match {
               case silver.While(_, _, _) =>
                 val loop = get[col.Loop[_]](node)
-                loop.contract.asInstanceOf[col.LoopInvariant[_]].blame.blame(getDecreasesWhileBlame(loop, reason))
+                loop.contract.asInstanceOf[col.LoopInvariant[_]].blame
+                  .blame(getDecreasesWhileBlame(loop, reason))
               case _ =>
                 val apply = get[col.InvokingNode[_]](node)
                 apply.ref.decl.blame.blame(getDecreasesBlame(apply, reason))
             }
-          case err@LoopTerminationError(node: Infoed, reason, _) =>
+          case err @ LoopTerminationError(node: Infoed, reason, _) =>
             val decreases = get[col.DecreasesClause[_]](node)
             info(node).invariant.get.blame
               .blame(blame.LoopTerminationMeasureFailed(decreases))
@@ -359,6 +374,8 @@ trait SilverBackend
       case AbortedExceptionally(throwable) =>
         throwable.printStackTrace()
         throw ViperCrashed(s"Viper has crashed: $throwable")
+      case TimeoutOccurred(t, text) =>
+        throw TimeOut(s"Time out occurred after $t seconds")
       case other =>
         throw NotSupported(
           s"Viper returned an error that VerCors does not recognize: $other"
@@ -381,20 +398,27 @@ trait SilverBackend
       case r => throw new NotImplementedError("Missing: " + r)
     }
 
-  def getDecreasesWhileBlame(loop: col.Loop[_], reason: ErrorReason) : blame.LoopInvariantFailure = {
+  def getDecreasesWhileBlame(
+      loop: col.Loop[_],
+      reason: ErrorReason,
+  ): blame.LoopInvariantFailure = {
     blame.DecreaseTerminationMeasureFailedDueToWhile(loop)
   }
 
-  def getDecreasesBlame(invoking: col.InvokingNode[_], reason: ErrorReason) : blame.TerminationMeasureFailed = {
+  def getDecreasesBlame(
+      invoking: col.InvokingNode[_],
+      reason: ErrorReason,
+  ): blame.TerminationMeasureFailed = {
     reason match {
       case TerminationConditionFalse(node: Infoed) =>
         val procedure = get[col.ContractApplicable[_]](node)
         blame.CallTerminationMeasureFailed(invoking, procedure)
-      case _ => blame.DecreaseTerminationMeasureFailed(
-        invoking.ref.decl,
-        invoking,
-        getDecreasesClause(reason),
-      )
+      case _ =>
+        blame.DecreaseTerminationMeasureFailed(
+          invoking.ref.decl,
+          invoking,
+          getDecreasesClause(reason),
+        )
     }
   }
 

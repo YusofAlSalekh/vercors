@@ -15,6 +15,7 @@ import vct.result.VerificationError.UserError
 import hre.util.ScopedStack
 import vct.col.ref.LazyRef
 import vct.col.util.SuccessionMap
+import vct.result.Message
 
 import scala.collection.mutable
 
@@ -38,12 +39,28 @@ case class DisallowedQualifiedType(target: Node[_]) extends UserError {
     target.o.messageInContext("This qualified type is not allowed.")
 }
 
-case class DisallowedQualifiedMethodCoercion(calledOrigin: Origin)
-    extends UserError {
+case class DisallowedQualifiedMethodCoercion(
+    calledOrigin: Origin,
+    conflict: Type[_],
+) extends UserError {
   override def code: String = "disallowedQualifiedMethodCoercion"
   override def text: String =
     calledOrigin.messageInContext(
-      "The coercion of args with qualifiers for this method call is not allowed."
+      s"The coercion of args with qualifiers for this call is not allowed," +
+        s" because of type $conflict."
+    )
+}
+
+case class DisallowedQualifiedMethodCoercionNest(
+    calledOrigin: Origin,
+    conflict: Node[_],
+) extends UserError {
+  override def code: String = "disallowedQualifiedMethodCoercionNest"
+  override def text: String =
+    Message.messagesInContext(
+      calledOrigin -> "The qualifier coercion for this call is not allowed ...",
+      conflict.o ->
+        "... because we are already trying to coerce this declaration.",
     )
 }
 
@@ -331,22 +348,28 @@ case object MakeUniqueMethodCopies extends RewriterBuilder {
 }
 
 case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
-  val methodCopyTypes: ScopedStack[Map[Type[Pre], Type[Post]]] = ScopedStack()
+  val copyTypes
+      : ScopedStack[(Map[Type[Pre], Type[Post]], GlobalDeclaration[Pre])] =
+    ScopedStack()
 
   val seenClassConversions: ScopedStack[mutable.Set[(Type[Pre], Type[Pre])]] =
     ScopedStack()
   val seenClasses: ScopedStack[mutable.Set[Type[Pre]]] = ScopedStack()
 
-  val abstractFunction
+  val functionCopy
       : mutable.Map[(Function[Pre], Map[Type[Pre], Type[Post]]), Function[
         Post
       ]] = mutable.Map()
-  val abstractProcedure
+  val procedureCopy
       : mutable.Map[(Procedure[Pre], Map[Type[Pre], Type[Post]]), Procedure[
         Post
       ]] = mutable.Map()
+  val predicateAlternatives
+      : mutable.Map[(Predicate[Pre], Map[Type[Pre], Type[Post]]), Predicate[
+        Post
+      ]] = mutable.Map()
   def getCopyType(t: Type[Pre]): Option[Type[Post]] =
-    methodCopyTypes.topOption.flatMap(m => m.get(t))
+    copyTypes.topOption.flatMap(m => m._1.get(t))
 
   override def dispatch(t: Type[Pre]): Type[Post] =
     getCopyType(t).getOrElse(t.rewriteDefault())
@@ -397,14 +420,22 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
     })
 
   // Instead of the regular procedure, we create an abstract procedure, which is the same, but with different types
-  def createAbstractProcedureCopy(
+  def createProcedureCopy(
       original: Procedure[Pre],
       typeCoerced: Map[Type[Pre], Type[Post]],
   ): Procedure[Post] = {
-    methodCopyTypes.having(typeCoerced) {
+    copyTypes.having((typeCoerced, original)) {
       globalDeclarations.declare({
         // Subtle, need to create variable scope, otherwise variables are already 'succeeded' in different copies.
-        variables.scope({ original.rewrite(body = None) })
+        variables
+          .scope({ // If it is pure, it is converted to a function eventually so we need its body!
+            original.rewrite(body =
+              if (original.pure)
+                original.body.map(dispatch)
+              else
+                None
+            )
+          })
       })
     }
   }
@@ -414,14 +445,23 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
       original: Function[Pre],
       typeCoerced: Map[Type[Pre], Type[Post]],
   ): Function[Post] = {
-    methodCopyTypes.having(typeCoerced) {
+    copyTypes.having((typeCoerced, original)) {
       globalDeclarations.declare({
-        // Subtle, need to create variable scope, otherwise variables are already 'succeeded' in different copies.
         variables.scope({
           // We do copy body, otherwise functions could be different.
           original.rewrite()
         })
       })
+    }
+  }
+
+  // And same for predicates
+  def createPredicateCopy(
+      original: Predicate[Pre],
+      typeCoerced: Map[Type[Pre], Type[Post]],
+  ): Predicate[Post] = {
+    copyTypes.having((typeCoerced, original)) {
+      globalDeclarations.declare({ variables.scope({ original.rewrite() }) })
     }
   }
 
@@ -533,14 +573,18 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
                 if (l == r)
                   l
                 else
-                  throw DisallowedQualifiedMethodCoercion(calledOrigin)
+                  throw DisallowedQualifiedMethodCoercion(calledOrigin, l)
             )
         // If any nonCoercedPointer is in the coercion set, invocation is wrong
         if (m.keySet.intersect(nonCoercedPointers.toSet).nonEmpty)
-          throw DisallowedQualifiedMethodCoercion(calledOrigin)
+          throw DisallowedQualifiedMethodCoercion(
+            calledOrigin,
+            m.keySet.intersect(nonCoercedPointers.toSet).head,
+          )
         m
       }
     }
+
   }
 
   def rewriteProcedureInvocation(
@@ -563,11 +607,31 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
         Some(f.returnType),
       inv.o,
     )
-    // No coercions, so do nothing
-    if (m.isEmpty) { return inv.rewriteDefault() }
 
-    val newProc: Procedure[Post] = abstractProcedure
-      .getOrElseUpdate((f, m), createAbstractProcedureCopy(f, m))
+    if (m.isEmpty) {
+      if (copyTypes.nonEmpty) {
+        val map = copyTypes.top._1
+        // So we are already coercing. Let's see if we need to change anything.
+        if (
+          f.args.exists(v => map.contains(v.t)) || map.contains(f.returnType)
+        ) {
+          // So yes, we just use the same map we were already using
+          val newProcedure: Procedure[Post] = procedureCopy
+            .getOrElseUpdate((f, map), createProcedureCopy(f, map))
+          val newArgs = removeCoercions(inv.args)
+          return inv.rewrite(ref = newProcedure.ref, args = newArgs)
+        }
+      }
+      // Otherwise business as usual return inv.rewriteDefault() }
+      return inv.rewriteDefault()
+    }
+    // Coercing a call, whilst we are already coercing seems quite complicated.
+    // So let's not do that for now.
+    if (copyTypes.nonEmpty)
+      throw DisallowedQualifiedMethodCoercionNest(inv.o, copyTypes.top._2)
+
+    val newProc: Procedure[Post] = procedureCopy
+      .getOrElseUpdate((f, m), createProcedureCopy(f, m))
 
     val newArgs = removeCoercions(inv.args)
     val newOutArgs = removeCoercions(inv.outArgs)
@@ -606,14 +670,14 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
     // No coercions, but since it is a function invocation, this could take place whilst we are making a copy of a method
     // or function.
     if (m.isEmpty) {
-      if (methodCopyTypes.nonEmpty) {
-        val map = methodCopyTypes.top
+      if (copyTypes.nonEmpty) {
+        val map = copyTypes.top._1
         // So we are already coercing. Let's see if we need to change anything.
         if (
           f.args.exists(v => map.contains(v.t)) || map.contains(f.returnType)
         ) {
           // So yes, we just use the same map we were already using
-          val newFunc: Function[Post] = abstractFunction
+          val newFunc: Function[Post] = functionCopy
             .getOrElseUpdate((f, map), createFunctionCopy(f, map))
           val newArgs = removeCoercions(inv.args)
           return inv.rewrite(ref = newFunc.ref, args = newArgs)
@@ -625,13 +689,31 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
 
     // Coercing a function call, whilst we are already coercing seems quite complicated.
     // So let's not do that for now.
-    if (methodCopyTypes.nonEmpty)
-      throw DisallowedQualifiedMethodCoercion(inv.o)
+    if (copyTypes.nonEmpty)
+      throw DisallowedQualifiedMethodCoercionNest(inv.o, copyTypes.top._2)
 
-    val newFunc: Function[Post] = abstractFunction
+    val newFunc: Function[Post] = functionCopy
       .getOrElseUpdate((f, m), createFunctionCopy(f, m))
     val newArgs = removeCoercions(inv.args)
     inv.rewrite(ref = newFunc.ref, args = newArgs)
+  }
+
+  def rewritePredicateApply(inv: PredicateApply[Pre]): PredicateApply[Post] = {
+    val f = inv.ref.decl
+    val m = createMapAndCheck(Seq((f.args, inv.args)), None, None, inv.o)
+    // No coercions, so do nothing
+    if (m.isEmpty) { return inv.rewriteDefault() }
+
+    // Coercing a predicate call, whilst we are already coercing seems quite complicated.
+    // So let's not do that for now.
+    if (copyTypes.nonEmpty)
+      throw DisallowedQualifiedMethodCoercionNest(inv.o, copyTypes.top._2)
+
+    val newPred: Predicate[Post] = predicateAlternatives
+      .getOrElseUpdate((f, m), createPredicateCopy(f, m))
+
+    val newArgs = removeCoercions(inv.args)
+    inv.rewrite(ref = newPred.ref, args = newArgs)
   }
 
   // For AmbiguousSubscript / DerefPointer we do not care about how the return type is coerced
@@ -667,8 +749,8 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
       originalT: Type[Pre],
       originalField: InstanceField[Pre],
   ): Option[InstanceField[Post]] =
-    methodCopyTypes.topOption.flatMap(m =>
-      m.get(originalT).map(t => {
+    copyTypes.topOption.flatMap(m =>
+      m._1.get(originalT).map(t => {
         val idx = originalT.asClass.get.cls.decl.decls.indexOf(originalField)
         if (idx == -1)
           ???
@@ -682,6 +764,12 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
         val newField = getNewField(loc.obj.t, loc.field.decl)
         if (newField.isDefined) { loc.rewrite(field = newField.get.ref) }
         else { loc.rewriteDefault() }
+      case other => other.rewriteDefault()
+    }
+
+  override def dispatch(a: ApplyAnyPredicate[Pre]): ApplyAnyPredicate[Post] =
+    a match {
+      case inv: PredicateApply[Pre] => rewritePredicateApply(inv)
       case other => other.rewriteDefault()
     }
 
@@ -713,13 +801,13 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
         e.rewrite(pointer = rewriteAnyPointerReturn(p))
       // We store the coercion for the return type
       case u: UniquePointerCoercion[Pre] => rewriteCoerce(u.e, u.t)
-      case Result(ref) if methodCopyTypes.nonEmpty =>
-        val m = methodCopyTypes.top
+      case Result(ref) if copyTypes.nonEmpty =>
+        val m = copyTypes.top._1
         ref.decl match {
           case f: Function[Pre] =>
-            Result(new LazyRef(abstractFunction.get(f, m).get))
+            Result(new LazyRef(functionCopy.get(f, m).get))
           case p: Procedure[Pre] =>
-            Result(new LazyRef(abstractProcedure.get(p, m).get))
+            Result(new LazyRef(procedureCopy.get(p, m).get))
         }
       case c @ Cast(value, typeValue) =>
         val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
