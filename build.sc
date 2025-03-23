@@ -183,13 +183,8 @@ object vercors extends Module {
     }
   }
 
-
   object lsp extends VercorsModule {
     def key = "lsp"
-
-    /*override def resources = T.sources {
-      "resources"
-    }*/
 
     def deps = Agg(
       ivy"org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1",
@@ -200,6 +195,10 @@ object vercors extends Module {
 
     override def scalacOptions = T {
       Seq("-Xmixin-force-forwarders:false")
+    }
+
+    override def bareResourcePaths = T {
+      Seq(settings.src / "lsp" / "resources")
     }
   }
 
