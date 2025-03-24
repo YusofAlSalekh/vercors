@@ -549,8 +549,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     byValConsSucc(cls) = constructor
     byValClassSucc(cls) =
       new AxiomaticDataType[Post](
-        Seq(indexFunction, injectivityAxiom) ++ destructorAxioms ++
-          indexAxioms ++ fieldFunctions ++ fieldInverses ++ valueAsAxioms,
+        Seq(indexFunction) ++ destructorAxioms ++ indexAxioms ++
+          fieldFunctions ++ fieldInverses ++ valueAsAxioms,
         Nil,
       )
     globalDeclarations.succeed(cls, byValClassSucc(cls))
