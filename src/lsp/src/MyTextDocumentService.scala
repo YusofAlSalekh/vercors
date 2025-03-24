@@ -5,6 +5,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.TextDocumentService
 import org.eclipse.lsp4j.{CompletionItem, _}
 
+import java.util
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import scala.io.Source
@@ -85,5 +86,10 @@ class MyTextDocumentService extends TextDocumentService {
         println(s"Exception loading completions: ${e.getMessage}")
         Collections.emptyList()
     }
+  }
+
+  override def definition(params: DefinitionParams): CompletableFuture[Either[util.List[_ <: Location], util.List[_ <: LocationLink]]] = {
+    println(s"go to definition: ${params}")
+    null
   }
 }
