@@ -8,9 +8,6 @@ import lsp.MyLanguageServer
 
 object LSP extends LazyLogging {
   def runOptions(options: Options): Int = {
-    if (options.inputs.isEmpty) {
-      logger.warn("No inputs given, not running LSP server")
-    }
 
     logger.info("Starting LSP server...")
 
@@ -18,7 +15,8 @@ object LSP extends LazyLogging {
     val launcher = LSPLauncher.createServerLauncher(server, System.in, System.out)
 
     server.setClient(launcher.getRemoteProxy)
-    launcher.startListening()
+    val future = launcher.startListening()
+    future.get()
 
     Main.EXIT_CODE_SUCCESS
   }
