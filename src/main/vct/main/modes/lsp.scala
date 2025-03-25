@@ -9,7 +9,7 @@ import lsp.MyLanguageServer
 object LSP extends LazyLogging {
   def runOptions(options: Options): Int = {
 
-    logger.info("Starting LSP server...")
+    //logger.info("Starting LSP server...")
 
     val server = new MyLanguageServer()
     val launcher = LSPLauncher.createServerLauncher(server, System.in, System.out)
