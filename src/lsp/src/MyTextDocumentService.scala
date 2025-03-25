@@ -89,7 +89,13 @@ class MyTextDocumentService extends TextDocumentService {
   }
 
   override def definition(params: DefinitionParams): CompletableFuture[Either[util.List[_ <: Location], util.List[_ <: LocationLink]]] = {
-    println(s"go to definition: ${params}")
-    null
+    val uri = params.getTextDocument.getUri
+    println(s"Go to definition requested in file: $uri, at position: ${params.getPosition}")
+
+    val range = new Range(new Position(18, 0), new Position(18, 5))
+
+    val location = new Location(uri, range)
+
+    CompletableFuture.completedFuture(Either.forLeft(Collections.singletonList(location)))
   }
 }
