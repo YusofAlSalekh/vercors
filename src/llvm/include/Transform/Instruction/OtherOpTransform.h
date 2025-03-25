@@ -19,6 +19,10 @@ void transformOtherOp(llvm::Instruction &llvmInstruction,
 void transformPhi(llvm::PHINode &phiInstruction, col::LlvmBasicBlock &colBlock,
                   pallas::FunctionCursor &funcCursor);
 
+void transformSelect(llvm::SelectInst &selectInst,
+                     col::LlvmBasicBlock &colBlock,
+                     pallas::FunctionCursor &funcCursor);
+
 void transformICmp(llvm::ICmpInst &icmpInstruction,
                    col::LlvmBasicBlock &colBlock,
                    pallas::FunctionCursor &funcCursor);
