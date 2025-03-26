@@ -277,6 +277,31 @@ case class ImportVector[Pre <: Generation](importer: ImportADTImporter)
     )(blame)(o)
   }
 
+  private val nonDetFloatOrigin: Origin = Origin(
+    Seq(LabelContext("float to rational conversion"))
+  )
+
+  val nonDetFloat: mutable.Map[Unit, Function[Post]] = mutable.Map()
+
+  def getNonDetFloat(): Expr[Post] = {
+    val nondetFunc = nonDetFloat.getOrElseUpdate((), makeNondetFloatFunc())
+    FunctionInvocation[Post](nondetFunc.ref, Seq(), Nil, Nil, Nil)(
+      TrueSatisfiable
+    )(nonDetFloatOrigin)
+  }
+
+  def makeNondetFloatFunc(): Function[Post] = {
+    globalDeclarations.declare(
+      withResult((result: Result[Post]) =>
+        function[Post](
+          blame = AbstractApplicable,
+          contractBlame = TrueSatisfiable,
+          returnType = TRational(),
+        )(nonDetFloatOrigin.where(name = "nonDetFloat"))
+      )(nonDetFloatOrigin)
+    )
+  }
+
   override def postCoerce(e: Expr[Pre]): Expr[Post] =
     e match {
       case LiteralVector(element, xs) =>
@@ -413,15 +438,24 @@ case class ImportVector[Pre <: Generation](importer: ImportADTImporter)
                 ),
               )
             case div: VectorFloatDiv[Pre] =>
-              val o: Origin = Origin(Seq(LabelContext("vector div method")))
+              implicit val o: Origin = Origin(
+                Seq(LabelContext("vector div method"))
+              )
               vectorOpsMethods.getOrElseUpdate(
                 (size, "floatDiv", elementT),
                 makeVectorOp(
                   size,
                   elementT,
-                  isDivOp = divOp,
+                  // We do not want to check for non zeroness
+                  isDivOp = false,
                   isCompareOp = false,
-                  (l, r) => FloatDiv[Post](l, r)(div.blame)(o),
+                  // Floats are turned into rationals, and floats don't care about division by zero per se
+                  (l, r) =>
+                    Select(
+                      Neq(r, const[Post](0)),
+                      RatDiv[Post](l, r)(div.blame)(o),
+                      getNonDetFloat(),
+                    ),
                   "div",
                 ),
               )
