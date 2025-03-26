@@ -1666,6 +1666,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             case CTPointer(struct) =>
               getBaseStructTypeWithUnique(struct).map({ case (t, _) => t.ref })
                 .getOrElse(throw WrongStructType(deref.struct.t))
+            case CTArray(_, struct) =>
+              getBaseStructTypeWithUnique(struct).map({ case (t, _) => t.ref })
+                .getOrElse(throw WrongStructType(deref.struct.t))
             case t => throw WrongStructType(t)
           }
         Deref[Post](
