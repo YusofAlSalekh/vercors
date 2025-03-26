@@ -841,12 +841,24 @@ object AstBuildHelpers {
     Let(x_var, x, body(x_local))
   }
 
+  def letIfNonTrivial[G](
+      t: Type[G],
+      value: Expr[G],
+      inner: Expr[G] => Expr[G],
+  ): Expr[G] = {
+    value match {
+      case Local(_) | _: Constant[G] => inner(value)
+      case _ => let(t, value, inner)
+    }
+
+  }
+
   def assignLocal[G](local: Local[G], value: Expr[G])(
       implicit o: Origin
   ): Assign[G] = Assign(local, value)(AssignLocalOk)
 
   def assignInitial[G](local: Local[G], value: Expr[G])(
-    implicit o: Origin
+      implicit o: Origin
   ): AssignInitial[G] = AssignInitial(local, value)(AssignLocalOk)
 
   def assignField[G](

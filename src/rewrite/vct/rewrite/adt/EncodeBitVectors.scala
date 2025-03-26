@@ -2,7 +2,6 @@ package vct.rewrite.adt
 
 import hre.data.BitString
 import vct.col.ast.{
-  Applicable,
   Asserting,
   BitAnd,
   BitNot,
@@ -14,6 +13,8 @@ import vct.col.ast.{
   Declaration,
   Expr,
   Function,
+  FunctionInvocation,
+  Let,
   Minus,
   Node,
   PolarityDependent,
@@ -52,13 +53,13 @@ import vct.col.rewrite.{
   Generation,
   NonLatchingRewriter,
   Rewriter,
-  RewriterBuilder,
+  RewriterBuilderArg,
 }
 import vct.col.util.AstBuildHelpers._
 
 import scala.collection.mutable
 
-case object EncodeBitVectors extends RewriterBuilder {
+case object EncodeBitVectors extends RewriterBuilderArg[Boolean] {
   private case class OutOfBoundsBlame(
       node: Node[_],
       blame: Blame[IntegerOutOfBounds],
@@ -77,7 +78,8 @@ case object EncodeBitVectors extends RewriterBuilder {
   override def desc: String = "Encodes bit vector operations into SMT-LIB types"
 }
 
-case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
+case class EncodeBitVectors[Pre <: Generation](opaque: Boolean)
+    extends Rewriter[Pre] {
   import EncodeBitVectors._
 
   private val isInboundsMap: mutable.HashMap[(Int, Boolean), Function[Post]] =
@@ -90,12 +92,15 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
       blame: Blame[IntegerOutOfBounds],
   )(implicit bits: Int, signed: Boolean): Expr[Post] = {
     val stripped = StripAsserting().dispatch(e)
-    SmtlibInt2Bv(
-      Asserting(ensureInRange(stripped), stripped)(OutOfBoundsBlame(e, blame))(
-        e.o
-      ),
-      bits,
-    )(e.o)
+    val inner = let(
+      TInt(),
+      e,
+      { ex: Expr[Post] =>
+        Asserting(ensureInRange(stripped), ex)(OutOfBoundsBlame(e, blame))(e.o)
+      },
+    )
+    if (opaque) { inner }
+    else { SmtlibInt2Bv(inner, bits)(e.o) }
   }
 
   private def from(
@@ -103,18 +108,24 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
       doAssume: Boolean,
   )(implicit bits: Int, signed: Boolean): Expr[Post] = {
     implicit val o: Origin = e.o
+    if (opaque) {
+      return if (doAssume)
+        assumeInRange(e)
+      else
+        e
+    }
     if (signed) {
-      Select(
-        Z3BvSLt(
-          if (doAssume)
-            assumeInRange(e)
-          else
-            e,
-          SmtlibBitvecLiteral(BitString("0".repeat(bits))),
-        ),
-        SmtlibBv2Nat(e) - const(BigInt(2).pow(bits)),
-        SmtlibBv2Nat(e),
-      )
+      val res = { ex: Expr[Post] =>
+        Select(
+          Z3BvSLt(e, SmtlibBitvecLiteral(BitString("0".repeat(bits)))),
+          SmtlibBv2Nat(ex) - const(BigInt(2).pow(bits)),
+          SmtlibBv2Nat(ex),
+        )
+      }
+      if (doAssume)
+        assumeInRange(e, res)
+      else
+        res(StripAsserting().dispatch(e))
     } else {
       SmtlibBv2Nat(
         if (doAssume)
@@ -145,18 +156,35 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
   private def simplifyBV(e: Expr[Post])(implicit signed: Boolean) =
     e match {
       case SmtlibInt2Bv(
-            Asserting(
+            Let(
               _,
-              Select(
-                Z3BvSLt(Asserting(_, e0), SmtlibBitvecLiteral(_)),
-                Minus(SmtlibBv2Nat(e1), _),
-                SmtlibBv2Nat(e3),
+              _,
+              Asserting(
+                _,
+                Let(
+                  _,
+                  e0,
+                  Asserting(
+                    _,
+                    Select(
+                      Z3BvSLt(_, SmtlibBitvecLiteral(_)),
+                      Minus(SmtlibBv2Nat(_), _),
+                      SmtlibBv2Nat(_),
+                    ),
+                  ),
+                ),
               ),
             ),
             _,
-          ) if signed && e0 == e1 && e1 == e3 =>
+          ) if signed =>
         e0
-      case SmtlibInt2Bv(Asserting(_, SmtlibBv2Nat(e0)), _) if !signed => e0
+      case Let(_, e0 @ FunctionInvocation(_, _, _, _, _), Asserting(_, _))
+          if opaque &&
+            e0.o.find[LabelContext].contains(BaseOrigin.get[LabelContext]) =>
+        e0
+      case SmtlibInt2Bv(Let(_, SmtlibBv2Nat(e0), Asserting(_, _)), _)
+          if !signed =>
+        e0
       case _ => e
     }
 
@@ -177,17 +205,20 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
             } else { (const(0), const(BigInt(2).pow(bits) - 1)) }
           val x = new Variable[Post](TInt())(BaseOrigin.where(name = "x"))
           globalDeclarations.declare(withResult((result: Result[Post]) => {
+            var ensures: Expr[Post] = result === (min <= x.get && x.get <= max)
+            if (!opaque) {
+              ensures =
+                ensures &&
+                  (result ===
+                    (from(SmtlibInt2Bv(x.get, bits), doAssume = false) ===
+                      x.get))
+            }
             function(
               AbstractApplicable,
               TrueSatisfiable,
               TBool(),
               Seq(x),
-              ensures = UnitAccountedPredicate(
-                (result === (min <= x.get && x.get <= max)) &&
-                  (result ===
-                    (from(SmtlibInt2Bv(x.get, bits), doAssume = false) ===
-                      x.get))
-              ),
+              ensures = UnitAccountedPredicate(ensures),
             )(BaseOrigin.where(name = s"bv${bits}_is_inbounds"))
           }))
         },
@@ -197,38 +228,64 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
   }
 
   private def assumeInRange(
-      e: Expr[Post]
+      e: Expr[Post],
+      inner: Expr[Post] => Expr[Post] = { x => x },
   )(implicit bits: Int, signed: Boolean): Expr[Post] = {
-    val stripped = StripAsserting().dispatch(e)
-    Asserting(
-      functionInvocation[Post](
-        TrueSatisfiable,
-        assumeInboundsMap.getOrElseUpdate(
-          (bits, signed), {
-            implicit val o: Origin = BaseOrigin
-            val x =
-              new Variable[Post](TSmtlibBitVector(bits))(
-                BaseOrigin.where(name = "x")
-              )
-            globalDeclarations.declare(
-              function[Post](
-                PanicBlame("Postcondition is assert true"),
-                TrueSatisfiable,
-                TBool(),
-                Seq(x),
-                body = Some(tt),
-                ensures = UnitAccountedPredicate(PolarityDependent(
-                  SmtlibInt2Bv(from(x.get, doAssume = false), bits) === x.get,
-                  tt,
-                )),
-              )(BaseOrigin.where(name = s"bv${bits}_assume_inbounds"))
-            )
-          },
-        ).ref,
-        args = Seq(stripped),
-      )(e.o),
+    let(
+      if (opaque)
+        TInt()
+      else
+        TSmtlibBitVector(bits),
       e,
-    )(PanicBlame("Assert true"))(e.o)
+      { ex: Expr[Post] =>
+        Asserting(
+          functionInvocation[Post](
+            TrueSatisfiable,
+            assumeInboundsMap.getOrElseUpdate(
+              (bits, signed), {
+                implicit val o: Origin = BaseOrigin
+                val x =
+                  new Variable[Post](
+                    if (opaque)
+                      TInt()
+                    else
+                      TSmtlibBitVector(bits)
+                  )(BaseOrigin.where(name = "x"))
+                val (min, max): (Expr[Post], Expr[Post]) =
+                  if (signed) {
+                    (
+                      const(-BigInt(2).pow(bits - 1)),
+                      const(BigInt(2).pow(bits - 1) - 1),
+                    )
+                  } else { (const(0), const(BigInt(2).pow(bits) - 1)) }
+                val ensures =
+                  if (opaque) {
+                    PolarityDependent(min <= x.get && x.get <= max, tt)
+                  } else {
+                    PolarityDependent(
+                      SmtlibInt2Bv(from(x.get, doAssume = false), bits) ===
+                        x.get,
+                      tt,
+                    )
+                  }
+                globalDeclarations.declare(
+                  function[Post](
+                    PanicBlame("Postcondition is assert true"),
+                    TrueSatisfiable,
+                    TBool(),
+                    Seq(x),
+                    body = Some(tt),
+                    ensures = UnitAccountedPredicate(ensures),
+                  )(BaseOrigin.where(name = s"bv${bits}_assume_inbounds"))
+                )
+              },
+            ).ref,
+            args = Seq(ex),
+          )(e.o),
+          inner(ex),
+        )(TrueSatisfiable)(e.o)
+      },
+    )
   }
 
   private def binOp(
@@ -250,28 +307,84 @@ case class EncodeBitVectors[Pre <: Generation]() extends Rewriter[Pre] {
     )
   }
 
+  private def binOpFn(name: String): Function[Post] =
+    globalDeclarations.declare(
+      function[Post](
+        AbstractApplicable,
+        TrueSatisfiable,
+        TInt(),
+        args = Seq(
+          new Variable(TInt())(BaseOrigin.where(name = "l")),
+          new Variable(TInt())(BaseOrigin.where(name = "r")),
+        ),
+      )(BaseOrigin.where(name = name))
+    )
+
+  private lazy val and: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvand")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => SmtlibBvAnd[Post](l, r)(o) }
+  private lazy val or: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvor")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => SmtlibBvOr[Post](l, r)(o) }
+  private lazy val xor: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvxor")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => Z3BvXor[Post](l, r)(o) }
+  private lazy val shl: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvshl")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => SmtlibBvShl[Post](l, r)(o) }
+  private lazy val shr: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvshr")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => Z3BvSShr[Post](l, r)(o) }
+  private lazy val ushr: (Expr[Post], Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = binOpFn("bvushr")
+      (l, r, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(l, r))(o)
+    } else { (l, r, o) => SmtlibBvShr[Post](l, r)(o) }
+  private lazy val not: (Expr[Post], Origin) => Expr[Post] =
+    if (opaque) {
+      val f = globalDeclarations.declare(
+        function[Post](
+          AbstractApplicable,
+          TrueSatisfiable,
+          TInt(),
+          args = Seq(new Variable(TInt())(BaseOrigin.where(name = "e"))),
+        )(BaseOrigin.where(name = "bvnot"))
+      )
+      (e, o) =>
+        functionInvocation[Post](TrueSatisfiable, f.ref, args = Seq(e))(o)
+    } else { (e, o) => SmtlibBvNot[Post](e)(o) }
+
   override def dispatch(e: Expr[Pre]): Expr[Post] = {
     implicit val o: Origin = e.o
     e match {
-      case op @ BitAnd(l, r, b, s) =>
-        binOp(SmtlibBvAnd[Post](_, _), l, r, b, s, op.blame)
-      case op @ BitOr(l, r, b, s) =>
-        binOp(SmtlibBvOr[Post](_, _), l, r, b, s, op.blame)
-      case op @ BitXor(l, r, b, s) =>
-        binOp(Z3BvXor[Post](_, _), l, r, b, s, op.blame)
-      case op @ BitShl(l, r, b, s) =>
-        binOp(SmtlibBvShl[Post](_, _), l, r, b, s, op.blame)
+      case op @ BitAnd(l, r, b, s) => binOp(and(_, _, o), l, r, b, s, op.blame)
+      case op @ BitOr(l, r, b, s) => binOp(or(_, _, o), l, r, b, s, op.blame)
+      case op @ BitXor(l, r, b, s) => binOp(xor(_, _, o), l, r, b, s, op.blame)
+      case op @ BitShl(l, r, b, s) => binOp(shl(_, _, o), l, r, b, s, op.blame)
       case op @ BitShr(l, r, b) =>
-        binOp(Z3BvSShr[Post](_, _), l, r, b, s = true, op.blame)
+        binOp(shr(_, _, o), l, r, b, s = true, op.blame)
       case op @ BitUShr(l, r, b, s) =>
-        binOp(SmtlibBvShr[Post](_, _), l, r, b, s, op.blame)
+        binOp(ushr(_, _, o), l, r, b, s, op.blame)
       case op @ BitNot(arg, b, s) =>
         implicit val bits: Int = b
         implicit val signed: Boolean = s
-        from(
-          SmtlibBvNot(simplifyBV(to(dispatch(arg), op.blame))),
-          doAssume = true,
-        )
+        from(not(simplifyBV(to(dispatch(arg), op.blame)), o), doAssume = true)
       case _ => super.dispatch(e)
     }
   }

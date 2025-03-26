@@ -7,8 +7,8 @@
 #include "c-example.h"
 
 /*@
-  requires Perm(x,1);
-  ensures Perm(x,1) ** x==4;
+  requires Perm(&x,1);
+  ensures Perm(&x,1) ** x==4;
 @*/
 void use(){
   x=3;

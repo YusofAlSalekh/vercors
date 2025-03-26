@@ -452,15 +452,15 @@ case class CToCol[G](
 
   def convert(implicit stat: StatementContext): Statement[G] =
     stat match {
-      case Statement0(stat) => convert(stat)
-      case Statement1(stat) => convert(stat)
+      case Statement0(embedStats) => convert(embedStats)
+      case Statement1(embedStat) => convert(embedStat)
       case Statement2(stat) => convert(stat)
       case Statement3(stat) => convert(stat)
       case Statement4(stat) => convert(stat)
       case Statement5(stat) => convert(stat)
-      case _: Statement6Context => ??(stat)
-      case Statement7(embedStats) => convert(embedStats)
-      case Statement8(embedStat) => convert(embedStat)
+      case Statement6(stat) => convert(stat)
+      case Statement7(stat) => convert(stat)
+      case _: Statement8Context => ??(stat)
       case Statement9(GpgpuBarrier0(contract, _, _, specifier, _)) =>
         withContract(
           contract,
@@ -854,8 +854,9 @@ case class CToCol[G](
         convert(t) +: tail.map((e: SpecifierQualifierListContext) => convert(e))
           .getOrElse(Nil)
       case SpecifierQualifierList1(t, tail) =>
-        CTypeQualifierDeclarationSpecifier(convert(t)) +: tail.map((e: SpecifierQualifierListContext) => convert(e))
-        .getOrElse(Nil)
+        CTypeQualifierDeclarationSpecifier(convert(t)) +:
+          tail.map((e: SpecifierQualifierListContext) => convert(e))
+            .getOrElse(Nil)
     }
 
   def convert(implicit expr: CastExpressionContext): Expr[G] =
@@ -1233,7 +1234,8 @@ case class CToCol[G](
   def convert(implicit mod: ValTypeQualifierContext): CTypeQualifier[G] =
     mod match {
       case ValUnique(_, _, uniqueId, _) => CUnique[G](convert(uniqueId))
-      case ValUniquePointerField(_, _, name, _, uniqueId, _) => CUniquePointerField[G](convert(name), convert(uniqueId))
+      case ValUniquePointerField(_, _, name, _, uniqueId, _) =>
+        CUniquePointerField[G](convert(name), convert(uniqueId))
     }
 
   def convertEmbedWith(

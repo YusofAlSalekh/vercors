@@ -18,7 +18,10 @@ import vct.col.rewrite.exc._
 import vct.rewrite.lang.NoSupportSelfLoop
 import vct.importer.{PathAdtImporter, Util}
 import vct.main.Main.TemporarilyUnsupported
-import vct.main.stages.Transformation.{PassEventHandler, TransformationCheckError}
+import vct.main.stages.Transformation.{
+  PassEventHandler,
+  TransformationCheckError,
+}
 import vct.options.Options
 import vct.options.types.{Backend, PathOrStd}
 import vct.parsers.debug.DebugOptions
@@ -37,7 +40,7 @@ import vct.rewrite.{
   GenerateSingleOwnerPermissions,
   HeapVariableToRef,
   InlineTrivialLets,
-  LowerLocalHeapVariables,
+  LowerHeapVariables,
   MonomorphizeClass,
   SmtlibToProverTypes,
   VariableToPointer,
@@ -176,6 +179,7 @@ object Transformation extends LazyLogging {
           veymontBranchUnanimity = options.veymontBranchUnanimity,
           veymontPermissionStratificationMode =
             options.veymontPermissionStratificationMode,
+          opaqueBitwiseOperators = options.opaqueBitwiseOperators,
         )
     }
 
@@ -353,6 +357,7 @@ case class SilverTransformation(
     veymontBranchUnanimity: Boolean = true,
     veymontPermissionStratificationMode: PermissionStratificationMode =
       PermissionStratificationMode.Wrap,
+    opaqueBitwiseOperators: Boolean = false,
 ) extends Transformation(
       onPassEvent,
       Seq(
@@ -455,6 +460,7 @@ case class SilverTransformation(
         // value is pure and therefore be put in the contract of the constant function.
         ConstantifyFinalFields,
         EncodeByValueClassUsage,
+        LowerHeapVariables,
         // Resolve side effects including method invocations, for encodetrythrowsignals.
         ResolveExpressionSideChecks,
         ResolveExpressionSideEffects,
@@ -464,12 +470,11 @@ case class SilverTransformation(
         // No more classes
         ClassToRef,
         HeapVariableToRef,
-        LowerLocalHeapVariables,
         CheckContractSatisfiability.withArg(checkSat),
         DesugarCollectionOperators,
         EncodeNdIndex,
         ExtractInlineQuantifierPatterns,
-        EncodeBitVectors,
+        EncodeBitVectors.withArg(opaqueBitwiseOperators),
         // Translate internal types to domains
         FloatToRat,
         SmtlibToProverTypes,

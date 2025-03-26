@@ -321,6 +321,11 @@ case object Options {
         ).text(
           "Set the target string used for determining type sizes, or 'unset' to make no assumptions about sizes"
         ),
+      opt[Unit]("opaque-bitwise-operators").action((_, c) =>
+        c.copy(opaqueBitwiseOperators = true)
+      ).text(
+        "Replace bitwise operations (&, |, ^, <<, >>, ~) with opaque functions"
+      ),
       note(""),
       note("VeyMont Mode"),
       opt[Unit]("veymont").action((_, c) => c.copy(mode = Mode.VeyMont)).text(
@@ -392,6 +397,12 @@ case object Options {
               ),
           ),
       ),
+      note(""),
+      note("Pallas options"),
+      opt[Unit]("pallas-sroa").action((_, c) => c.copy(pallasRunSroa = true))
+        .text(
+          "Apply the SROA-pass of LLVM to the loaded IR before processing it."
+        ),
       note(""),
       note("Control flow graph"),
       opt[Unit]("build-cfg").action((_, c) => c.copy(mode = Mode.CFG)).text(
@@ -496,6 +507,7 @@ case class Options(
     inferHeapContextIntoFrame: Boolean = true,
     generatePermissions: Boolean = false,
     targetString: Option[String] = None,
+    opaqueBitwiseOperators: Boolean = false,
 
     // Verify options - hidden
     devParserReportAmbiguities: Boolean = false,
@@ -530,6 +542,9 @@ case class Options(
       EncodePermissionStratification.Mode.Wrap,
     veymontSkipChoreographyVerification: Boolean = false,
     veymontSkipImplementationVerification: Boolean = false,
+
+    // Pallas options
+    pallasRunSroa: Boolean = false,
 
     // VeSUV options
     vesuvOutput: Path = null,

@@ -319,7 +319,6 @@ case class LangSpecificToCol[Pre <: Generation](
       case CPPDeclarationStatement(decl) => cpp.rewriteLocalDecl(decl)
       case scope: CPPLifetimeScope[Pre] => cpp.rewriteLifetimeScope(scope)
       case goto: CGoto[Pre] => c.rewriteGoto(goto)
-      case goto: Goto[Pre] => llvm.rewriteGoto(goto)
       case barrier: GpgpuBarrier[Pre] => c.gpuBarrier(barrier)
 
       case eval @ Eval(CPPInvocation(_, _, _, _)) =>
@@ -335,10 +334,14 @@ case class LangSpecificToCol[Pre <: Generation](
       case load: LLVMLoad[Pre] => llvm.rewriteLoad(load)
       case store: LLVMStore[Pre] => llvm.rewriteStore(store)
       case alloc: LLVMAllocA[Pre] => llvm.rewriteAllocA(alloc)
+      case memset: LLVMMemset[Pre] => llvm.rewriteMemset(memset)
       case block: LLVMBasicBlock[Pre] => llvm.rewriteBasicBlock(block)
       case unreachable: LLVMBranchUnreachable[Pre] =>
         llvm.rewriteUnreachable(unreachable)
       case fracOf: LLVMFracOf[Pre] => llvm.rewriteFracOf(fracOf)
+      case add: LLVMAddWithOverflow[Pre] => llvm.rewriteAddWithOverflow(add)
+      case sub: LLVMSubWithOverflow[Pre] => llvm.rewriteSubWithOverflow(sub)
+      case mult: LLVMMultWithOverflow[Pre] => llvm.rewriteMultWithOverflow(mult)
       case other => other.rewriteDefault()
     }
 
@@ -415,18 +418,12 @@ case class LangSpecificToCol[Pre <: Generation](
         assign.target match {
           case AmbiguousSubscript(v, _) =>
             v.t match {
-              case CPrimitiveType(specs) if specs.collectFirst {
-                    case CSpecificationType(_: CTVector[Pre]) => ()
-                  }.isDefined =>
-                return c.assignSubscriptVector(assign)
+              case _: CTVector[Pre] => return c.assignSubscriptVector(assign)
               case _ =>
             }
           case CFieldAccess(obj, _) =>
             obj.t match {
-              case CPrimitiveType(specs) if specs.collectFirst {
-                    case CSpecificationType(_: TOpenCLVector[Pre]) => ()
-                  }.isDefined =>
-                return c.assignOpenCLVector(assign)
+              case TOpenCLVector(_, _) => return c.assignOpenCLVector(assign)
               case _ =>
             }
           case _ =>
@@ -449,6 +446,7 @@ case class LangSpecificToCol[Pre <: Generation](
         llvm.rewriteFunctionPointer(pointer)
       case pointer: LLVMPointerValue[Pre] => llvm.rewritePointerValue(pointer)
       case gep: LLVMGetElementPointer[Pre] => llvm.rewriteGetElementPointer(gep)
+      case extrVal: LLVMExtractValue[Pre] => llvm.rewriteExtractValue(extrVal)
       case int: LLVMIntegerValue[Pre] => IntegerValue(int.value)(int.o)
       case float: LLVMFloatValue[Pre] =>
         FloatValue(float.bigDecimalValue, dispatch(float.t))(float.o)
@@ -494,10 +492,10 @@ case class LangSpecificToCol[Pre <: Generation](
           dispatch(left),
           dispatch(right),
           determineBitVectorSize(e, left, right),
-          determineBitVectorSignedness(e, left, right),
+          isSigned(left.t),
         )(b.blame)(e.o)
       case b @ AmbiguousBitShr(left, right) =>
-        if (isSigned(left.t) || isSigned(right.t)) {
+        if (isSigned(left.t)) {
           BitShr(
             dispatch(left),
             dispatch(right),
@@ -508,7 +506,7 @@ case class LangSpecificToCol[Pre <: Generation](
             dispatch(left),
             dispatch(right),
             determineBitVectorSize(e, left, right),
-            false,
+            signed = false,
           )(b.blame)(e.o)
         }
       case b @ BitShr(left, right, 0) =>
@@ -525,7 +523,7 @@ case class LangSpecificToCol[Pre <: Generation](
           dispatch(left),
           dispatch(right),
           determineBitVectorSize(e, left, right),
-          determineBitVectorSignedness(e, left, right),
+          isSigned(left.t),
         )(b.blame)(e.o)
       case b @ BitNot(arg, 0, true) =>
         BitNot(
@@ -556,6 +554,7 @@ case class LangSpecificToCol[Pre <: Generation](
       t match {
         case t: JavaTClass[Pre] => java.classType(t)
         case t: CPointerType[Pre] => c.pointerType(t)
+        case _: CTFunction[Pre] => TVoid()
         case t: CTVector[Pre] => c.vectorType(t)
         case t: TOpenCLVector[Pre] => c.vectorType(t)
         case t: TCInt[Pre] =>
@@ -587,14 +586,13 @@ case class LangSpecificToCol[Pre <: Generation](
       left: Expr[Pre],
       right: Expr[Pre],
   ): Int = {
-    (left.t, right.t) match {
-      case (l: BitwiseType[Pre], r: BitwiseType[Pre]) =>
-        (BinOperatorTypes.getBits(l), BinOperatorTypes.getBits(r)) match {
-          case (0, _) | (_, 0) => throw IndeterminableBitVectorSize(op)
-          case (l, r) if l == r => l
-          case (l, r) => throw IncompatibleBitVectorSize(op, l, r)
-        }
-      case _ => throw IndeterminableBitVectorSize(op)
+    (
+      BinOperatorTypes.getBits(left.t),
+      BinOperatorTypes.getBits(right.t),
+    ) match {
+      case (0, _) | (_, 0) => throw IndeterminableBitVectorSize(op)
+      case (l, r) if l > r => l
+      case (_, r) => r
     }
   }
 
@@ -605,6 +603,15 @@ case class LangSpecificToCol[Pre <: Generation](
   ): Boolean = {
     (left.t, right.t) match {
       case (l: BitwiseType[Pre], r: BitwiseType[Pre]) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (TUnique(l: BitwiseType[Pre], _), TUnique(r: BitwiseType[Pre], _)) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (l: BitwiseType[Pre], TUnique(r: BitwiseType[Pre], _)) =>
+        if (l.signed == r.signed) { l.signed }
+        else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
+      case (TUnique(l: BitwiseType[Pre], _), r: BitwiseType[Pre]) =>
         if (l.signed == r.signed) { l.signed }
         else { throw IncompatibleBitVectorSign(op, l.signed, r.signed) }
       case _ => throw IndeterminableBitVectorSign(op)

@@ -10,6 +10,7 @@
 
 #include "Passes/Function/ExprWrapperMapper.h"
 #include "Transform/BlockTransform.h"
+#include "Transform/Instruction/IntrinsicsTransform.h"
 #include "Transform/Transform.h"
 #include "Util/BlockUtils.h"
 #include "Util/Constants.h"
@@ -37,6 +38,11 @@ void llvm2col::transformOtherOp(llvm::Instruction &llvmInstruction,
     case llvm::Instruction::Call:
         transformCallExpr(llvm::cast<llvm::CallInst>(llvmInstruction), colBlock,
                           funcCursor);
+        break;
+    case llvm::Instruction::ExtractValue:
+        transformExtractValueInst(
+            llvm::cast<llvm::ExtractValueInst>(llvmInstruction), colBlock,
+            funcCursor);
         break;
     default:
         reportUnsupportedOperatorError(SOURCE_LOC, llvmInstruction);
@@ -203,6 +209,32 @@ void llvm2col::transformCmpExpr(llvm::CmpInst &cmpInstruction,
     transformBinExpr(cmpInstruction, colCompareExpr, funcCursor);
 }
 
+void llvm2col::transformExtractValueInst(
+    llvm::ExtractValueInst &llvmInstruction, col::LlvmBasicBlock &colBlock,
+    pallas::FunctionCursor &funcCursor) {
+    col::Assign &assignment =
+        funcCursor.createAssignmentAndDeclaration(llvmInstruction, colBlock);
+    col::LlvmExtractValue *extrVal =
+        assignment.mutable_value()->mutable_llvm_extract_value();
+    extrVal->set_allocated_origin(
+        llvm2col::generateSingleStatementOrigin(llvmInstruction));
+    // Aggregate type
+    llvm2col::transformAndSetType(
+        *llvmInstruction.getAggregateOperand()->getType(),
+        *extrVal->mutable_aggregate_type());
+    // Result type
+    llvm2col::transformAndSetType(*llvmInstruction.getType(),
+                                  *extrVal->mutable_result_type());
+    // Value
+    llvm2col::transformAndSetExpr(funcCursor, llvmInstruction,
+                                  *llvmInstruction.getAggregateOperand(),
+                                  *extrVal->mutable_value());
+    // Indices
+    for (auto &index : llvmInstruction.indices()) {
+        extrVal->add_indices(index);
+    }
+}
+
 bool llvm2col::checkCallSupport(llvm::CallInst &callInstruction) {
     if (callInstruction.isIndirectCall()) {
         pallas::ErrorReporter::addError(
@@ -255,7 +287,7 @@ void llvm2col::transformCallExpr(llvm::CallInst &callInstruction,
         return;
 
     if (callInstruction.getCalledFunction()->isIntrinsic()) {
-        // TODO: Deal with intrinsic functions
+        transformIntrinsic(callInstruction, colBlock, funcCursor);
         return;
     }
 

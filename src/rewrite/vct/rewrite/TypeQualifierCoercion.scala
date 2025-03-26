@@ -210,7 +210,7 @@ case class TypeQualifierCoercion[Pre <: Generation]()
   override def postCoerce(t: Type[Pre]): Type[Post] =
     t match {
       case TConst(t) => dispatch(t)
-      case TUnique(_, _) => throw DisallowedQualifiedType(t)
+      case TUnique(t, _) => dispatch(t)
       case TPointer(it, None) => makePointer(it)
       case tu: TClassUnique[Pre] =>
         val map = TypeQualifierCoercion.getUniqueMap(tu)
@@ -289,6 +289,14 @@ case class TypeQualifierCoercion[Pre <: Generation]()
         if (e.collectFirst { case Deref(_, _) => () }.isDefined)
           throw DisallowedQualifiedType(e)
         AddrOf(AddrOfConstCast(postCoerce(e)))
+      case a @ AddrOf(e @ Local(_)) =>
+        e.t match {
+          case TUnique(_, unique) =>
+            // Call getUnqualified to check if const and unique are mixed
+            val _ = getUnqualified(e.t)
+            AddrOf(AddrOfUniqueCast(postCoerce(e), unique))
+          case _ => a.rewriteDefault()
+        }
       case other => other.rewriteDefault()
     }
   }
@@ -419,15 +427,15 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
     copyTypes.having((typeCoerced, original)) {
       globalDeclarations.declare({
         // Subtle, need to create variable scope, otherwise variables are already 'succeeded' in different copies.
-        variables.scope({
-          // If it is pure, it is converted to a function eventually so we need its body!
-          original.rewrite(body =
-            if (original.pure)
-              original.body.map(dispatch)
-            else
-              None
-          )
-        })
+        variables
+          .scope({ // If it is pure, it is converted to a function eventually so we need its body!
+            original.rewrite(body =
+              if (original.pure)
+                original.body.map(dispatch)
+              else
+                None
+            )
+          })
       })
     }
   }
@@ -576,6 +584,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
         m
       }
     }
+
   }
 
   def rewriteProcedureInvocation(
@@ -598,6 +607,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
         Some(f.returnType),
       inv.o,
     )
+
     if (m.isEmpty) {
       if (copyTypes.nonEmpty) {
         val map = copyTypes.top._1
@@ -612,10 +622,9 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
           return inv.rewrite(ref = newProcedure.ref, args = newArgs)
         }
       }
-      // Otherwise business as usual
+      // Otherwise business as usual return inv.rewriteDefault() }
       return inv.rewriteDefault()
     }
-
     // Coercing a call, whilst we are already coercing seems quite complicated.
     // So let's not do that for now.
     if (copyTypes.nonEmpty)

@@ -16,6 +16,7 @@ import vct.col.ast.{
   TProcess,
   TRational,
   TString,
+  TUnique,
   TVector,
   Type,
 }
@@ -108,7 +109,31 @@ object BinOperatorTypes {
             if l.signed == r.signed && getBits(l) != 0 &&
               getBits(l) >= getBits(r) =>
           l
+        case (TUnique(l: BitwiseType[G], _), TUnique(r: BitwiseType[G], _))
+            if l.signed == r.signed && getBits(l) != 0 &&
+              getBits(l) >= getBits(r) =>
+          l
+        case (l: BitwiseType[G], TUnique(r: BitwiseType[G], _))
+            if l.signed == r.signed && getBits(l) != 0 &&
+              getBits(l) >= getBits(r) =>
+          l
+        case (TUnique(l: BitwiseType[G], _), r: BitwiseType[G])
+            if l.signed == r.signed && getBits(l) != 0 &&
+              getBits(l) >= getBits(r) =>
+          l
         case (l: BitwiseType[G], r: BitwiseType[G])
+            if l.signed == r.signed && getBits(r) != 0 &&
+              getBits(r) >= getBits(l) =>
+          r
+        case (TUnique(l: BitwiseType[G], _), TUnique(r: BitwiseType[G], _))
+            if l.signed == r.signed && getBits(r) != 0 &&
+              getBits(r) >= getBits(l) =>
+          r
+        case (l: BitwiseType[G], TUnique(r: BitwiseType[G], _))
+            if l.signed == r.signed && getBits(r) != 0 &&
+              getBits(r) >= getBits(l) =>
+          r
+        case (TUnique(l: BitwiseType[G], _), r: BitwiseType[G])
             if l.signed == r.signed && getBits(r) != 0 &&
               getBits(r) >= getBits(l) =>
           r
