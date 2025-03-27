@@ -71,7 +71,7 @@ object viper extends ScalaModule {
 
   object siliconGit extends GitModule {
     def url = T { "https://github.com/superaxander/silicon.git" }
-    def commitish = T { "8ba5c7bc933073a6db849cc0de8e30d575397baa" }
+    def commitish = T { "d281a0463b25f35d81b675f673f6a6c19dac6b23" }
     def filteredRepo = T {
       val workspace = repo()
       os.remove.all(workspace / "src" / "test")
