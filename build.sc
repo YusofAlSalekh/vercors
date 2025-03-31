@@ -183,25 +183,6 @@ object vercors extends Module {
     }
   }
 
-  object lsp extends VercorsModule {
-    def key = "lsp"
-
-    def deps = Agg(
-      ivy"org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1",
-      ivy"io.circe::circe-core:0.15.0-M1",
-      ivy"io.circe::circe-generic:0.15.0-M1",
-      ivy"io.circe::circe-parser:0.15.0-M1"
-    )
-
-    override def scalacOptions = T {
-      Seq("-Xmixin-force-forwarders:false")
-    }
-
-    override def bareResourcePaths = T {
-      Seq(settings.src / "lsp" / "resources")
-    }
-  }
-
   object col extends VercorsModule {
     object helpers extends Module {
       import upickle.default.write
@@ -609,8 +590,15 @@ object vercors extends Module {
 
     def deps = Agg(
       ivy"com.github.scopt::scopt:4.0.1",
+      ivy"org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1",
+      ivy"io.circe::circe-core:0.15.0-M1",
+      ivy"io.circe::circe-generic:0.15.0-M1",
+      ivy"io.circe::circe-parser:0.15.0-M1"
     )
-    override def moduleDeps = Seq(hre, col, rewrite, parsers, viperApi, buildInfo, lsp)
+    override def scalacOptions = T {
+      Seq("-Xmixin-force-forwarders:false")
+    }
+    override def moduleDeps = Seq(hre, col, rewrite, parsers, viperApi, buildInfo)
     override def mainClass = Some("vct.main.Main")
     override def runScriptClasses = T { Map (
       "vercors" -> "vct.main.Main",
