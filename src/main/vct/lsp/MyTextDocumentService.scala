@@ -1,11 +1,13 @@
 package lsp
 
+import com.microsoft.z3.Expr
 import vct.options.Options
 import vct.parsers.transform.ConstantBlameProvider
-import vct.col.origin.BlameCollector
+import vct.col.origin.{BlameCollector, PositionRange}
 import vct.col.print.Ctx
 import vct.result.VerificationError
-import java.nio.file.{Paths, Path}
+
+import java.nio.file.{Path, Paths}
 import io.circe.parser._
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.TextDocumentService
@@ -14,7 +16,7 @@ import com.typesafe.scalalogging.LazyLogging
 import vct.options.types.PathOrStd
 import vct.main.stages.{Output, Parsing, Resolution, Transformation}
 import vct.parsers.ParseResult
-import vct.col.ast.Verification
+import vct.col.ast.{Local, Node, Verification}
 
 import java.util
 import java.util.Collections
@@ -23,6 +25,9 @@ import scala.io.Source
 import scala.jdk.CollectionConverters._
 import scala.util.matching.Regex
 import vct.col.rewrite.Generation
+
+import scala.collection.immutable.TreeMap
+import scala.collection.mutable
 
 class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
@@ -35,6 +40,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
   var parsingResults: Option[ParseResult[Nothing]] = None
   var resolutionResults: Option[Verification[_ <: Generation]] = None
+  var originMap: TreeMap[(Int, Int, Int), (Int, Int, Int)] = TreeMap.empty
 
 
   override def completion(params: CompletionParams): CompletableFuture[
@@ -86,46 +92,6 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
   override def documentSymbol(params: DocumentSymbolParams) = null
 
-  /*override def didSave(params: DidSaveTextDocumentParams): Unit = {
-    val uri = params.getTextDocument.getUri
-    val path = Paths.get(new java.net.URI(uri))
-
-    logger.info(s"Document saved: $uri")
-    MyLanguageServer.client.logMessage(new MessageParams(
-      MessageType.Log,
-      s"Document saved: ${params.getTextDocument.getUri}",
-    ))
-
-    val options = Options().copy(inputs = List(PathOrStd.Path(path)))
-
-    val collector = BlameCollector()
-    val blameProvider = ConstantBlameProvider(collector)
-
-    val result = Parsing.ofOptions(options, blameProvider)
-      .thenRun(Resolution.ofOptions(options, blameProvider)).run(options.inputs)
-
-      result match {
-        case Left(err: VerificationError.UserError) =>
-          logger.error(err.text)
-          MyLanguageServer.client.logMessage(new MessageParams(
-            MessageType.Log,
-            s"Parsing/Resolution error: ${err.text}",
-          ))
-        case Left(err: VerificationError.SystemError) =>
-          logger.error("System error during parsing/resolution", err)
-          MyLanguageServer.client.logMessage(new MessageParams(
-            MessageType.Log,
-            s"Verification error: ${err.text}",
-          ))
-        case Right(_) =>
-          logger.info("Parsing and resolution succeeded")
-          MyLanguageServer.client.logMessage(new MessageParams(
-            MessageType.Log,
-            "Parsing and resolution succeeded",
-          ))
-      }
-    }*/
-
   override def didSave(params: DidSaveTextDocumentParams): Unit = {
 
     val uri = params.getTextDocument.getUri
@@ -143,10 +109,14 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       val collector = BlameCollector()
       val blameProvider = ConstantBlameProvider(collector)
 
-      parsingResugit atatus lts = Some(Parsing.ofOptions(options, blameProvider)
+      parsingResults = Some(Parsing.ofOptions(options, blameProvider)
         .run(options.inputs))
       resolutionResults = Some(Resolution.ofOptions(options, blameProvider)
         .run(parsingResults.get))
+
+      val resolvedProgram = resolutionResults.get.tasks.head.program
+      val locals: Seq[Local[_]] = LocalCollector.collectLocals(resolvedProgram)
+      originMap = TreeMap.from(LocalCollector.hashLocalOrigins(locals))
 
     } catch {
       case err: VerificationError.SystemError =>
@@ -198,7 +168,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     }
   }
 
-  override def definition(params: DefinitionParams): CompletableFuture[
+  /*override def definition(params: DefinitionParams): CompletableFuture[
     Either[util.List[_ <: Location], util.List[_ <: LocationLink]]
   ] = {
     val uri = params.getTextDocument.getUri
@@ -217,5 +187,88 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
     CompletableFuture
       .completedFuture(Either.forLeft(Collections.singletonList(location)))
+  }*/
+  /*override def definition(params: DefinitionParams): CompletableFuture[
+    Either[util.List[_ <: Location], util.List[_ <: LocationLink]]
+  ] = {
+    val uri = params.getTextDocument.getUri
+    val pos = params.getPosition
+    val line = pos.getLine
+    val char = pos.getCharacter
+
+    val found = originMap.maxBefore((line, char, Int.MaxValue)) match {
+      case Some(((refLine, refStart, refEnd), (declLine, declStart, declEnd)))
+        if refLine == line && refStart <= char && char <= refEnd =>
+        val range = new Range(new Position(declLine, declStart), new Position(declLine, declEnd))
+        val location = new Location(uri, range)
+        Either.forLeft(Collections.singletonList(location))
+      case _ =>
+        MyLanguageServer.client.logMessage(new MessageParams(
+          MessageType.Warning,
+          s"No definition found for position: $pos"
+        ))
+        Either.forLeft(Collections.emptyList())
+    }
+
+    CompletableFuture.completedFuture(found)
+  }*/
+  override def definition(params: DefinitionParams): CompletableFuture[
+    Either[java.util.List[_ <: Location], java.util.List[_ <: LocationLink]]
+  ] = {
+    val uri = params.getTextDocument.getUri
+    val pos = params.getPosition
+    val line = pos.getLine
+    val char = pos.getCharacter
+
+    val result: Either[java.util.List[_ <: Location], java.util.List[_ <: LocationLink]] =
+      originMap.maxBefore((line, char, Int.MaxValue)) match {
+        case Some(((refLine, refStart, refEnd), (declLine, declStart, declEnd)))
+          if refLine == line && refStart <= char && char <= refEnd =>
+          val range = new Range(new Position(declLine, declStart), new Position(declLine, declEnd))
+          val location = new Location(uri, range)
+          Either.forLeft(Collections.singletonList[Location](location))
+        case _ =>
+          MyLanguageServer.client.logMessage(new MessageParams(
+            MessageType.Warning,
+            s"No definition found for position: $pos"
+          ))
+          Either.forLeft(Collections.emptyList[Location]())
+      }
+
+    CompletableFuture.completedFuture(result)
+  }
+}
+object LocalCollector {
+  def collectLocals(root: Node[_]): Seq[Local[_]] = {
+    val result = scala.collection.mutable.Buffer.empty[Local[_]]
+    val stack = scala.collection.mutable.Stack[Node[_]](root)
+
+    while (stack.nonEmpty) {
+      val node = stack.pop()
+      if (node.isInstanceOf[Local[_]]) {
+        result += node.asInstanceOf[Local[_]]
+      }
+      stack.pushAll(node.subnodes)
+    }
+
+    result.toSeq
+  }
+
+  def hashLocalOrigins(locals: Seq[Local[_]]): Map[(Int, Int, Int), (Int, Int, Int)] = {
+    locals.flatMap { local =>
+      val declRangeOpt = local.ref.decl.o.find[PositionRange]
+      val refRangeOpt = local.o.find[PositionRange]
+
+      for {
+        declRange <- declRangeOpt
+        refRange <- refRangeOpt
+        (startDeclCol, endDeclCol) <- declRange.startEndColIdx
+        (startRefCol, endRefCol) <- refRange.startEndColIdx
+      } yield {
+        val declKey = (refRange.startLineIdx, startRefCol, endRefCol)
+        val declValue = (declRange.startLineIdx, startDeclCol, endDeclCol)
+        declKey -> declValue
+      }
+    }.toMap
   }
 }
