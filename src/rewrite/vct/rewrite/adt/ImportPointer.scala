@@ -424,11 +424,11 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   override def postCoerce(e: Expr[Pre]): Expr[Post] = {
     implicit val o: Origin = e.o
     e match {
-      case f @ Forall(_, triggers, _) =>
+      case f @ Forall(_, triggers, _) if !f.o.find[LabelContext].exists(_.label == "generated quantifier")=>
         f.rewrite(triggers =
           triggers.map(_.map(rewriteTopLevelPointerSubscriptInTrigger))
         )
-      case s @ Starall(_, triggers, _) =>
+      case s @ Starall(_, triggers, _)  =>
         s.rewrite(triggers =
           triggers.map(_.map(rewriteTopLevelPointerSubscriptInTrigger))
         )

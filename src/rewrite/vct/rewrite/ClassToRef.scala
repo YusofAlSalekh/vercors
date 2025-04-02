@@ -949,6 +949,45 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
       case v @ Value(PredicateLocation(inv: InstancePredicateApply[Pre])) =>
         implicit val o: Origin = e.o
         Star[Post](v.rewrite(), dispatch(inv.obj) !== Null())
+      case starall @ Starall(bindings, _, body) => {
+        implicit val o: Origin = starall.o
+        val dereferencedClasses = body.flatCollect {
+          case Value(body) => body.flatCollect {
+            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
+              cls.collect {
+                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+                  ptr.t
+              }
+            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
+              cls.collect {
+                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+                  ptr.t
+              }
+          }
+          case Perm(body, _) => body.flatCollect {
+            // TODO: This could be inlinepattern!
+            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
+              cls.collect {
+                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+                  ptr.t
+              }
+            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
+              cls.collect {
+                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+                  ptr.t
+              }
+          }
+        }
+
+        foldStar(dereferencedClasses.toSet.map({c: Type[Pre] =>
+          val newPointer = dispatch(c) match {
+            case TPointer(inner, unique) => TNonNullPointer(inner, unique)
+            case t@TNonNullPointer(_, _) => t
+          }
+          PolarityDependent(foralls[Post](Seq(newPointer, newPointer), {case Seq(p, q) => ((p !== q) && CurPerm(PointerLocation(p)(NonNullPointerNull)) > NoPerm() && CurPerm(PointerLocation(q)(NonNullPointerNull)) > NoPerm()) ==> (DerefPointer(p)(NonNullPointerNull) !== DerefPointer(q)(NonNullPointerNull))}, {case Seq(p, q) => Seq(Seq(DerefPointer(p)(NonNullPointerNull), DerefPointer(q)(NonNullPointerNull)))}), tt)
+        }).toSeq :+ super.dispatch(starall))
+
+      }
       case _ => super.dispatch(e)
     }
 
