@@ -1014,6 +1014,8 @@ case class CToCol[G](
       case PrimaryExpression7(_, _, _, _, _, _) => ??(expr)
       case PrimaryExpression8(_, _, _, _, _, _) => ??(expr)
       case PrimaryExpression9(_) => col.Null()
+      case PrimaryExpression10(_) => FloatNaN(TFloats.C_ieee754_64bit)
+      case PrimaryExpression11(_) => FloatInf(TFloats.C_ieee754_64bit)
     }
 
   def convert(implicit ids: IdentifierListContext): Seq[String] =

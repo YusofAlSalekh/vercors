@@ -622,25 +622,6 @@ abstract class CoercingRewriter[Pre <: Generation]()
       )
     f(left._1, right._1)
   }
-  def vectorFloatRatOp2[T](
-      e: BinExpr[Pre],
-      f: (Expr[Pre], Expr[Pre]) => T,
-  ): T = {
-    implicit val o: Origin = e.o
-    val (left, right) = firstOk(
-      e,
-      s"Expected both operands to be of type vector[float or rational], but got ${e
-          .left.t} and ${e.right.t}.",
-      (vectorFloat(e.left), vectorFloat(e.right)),
-      (vectorRational(e.left), vectorRational(e.right)),
-    )
-    if (left._2.size != right._2.size)
-      throw IncoercibleText(
-        e,
-        "This expression does not have a matching vector lengths",
-      )
-    f(left._1, right._1)
-  }
   def vectorOp2[T](e: BinExpr[Pre], f: (Expr[Pre], Expr[Pre]) => T): T = {
     implicit val o: Origin = e.o
     val (left, right) = firstOk(
@@ -2086,6 +2067,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case value: CIntegerValue[Pre] => e
       case value: IntegerValue[Pre] => e
       case value: FloatValue[Pre] => e
+      case value: FloatNaN[Pre] => e
+      case value: FloatInf[Pre] => e
       case value @ Value(loc) => Value(loc)
       case value @ AutoValue(loc) => value
       case values @ Values(arr, from, to) =>
@@ -2116,7 +2099,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
         val vectorType = TVector(leftType.size, sharedType)
         VectorEq(coerce(left, vectorType), coerce(right, vectorType))
       case div @ VectorFloatDiv(_, _) =>
-        vectorFloatRatOp2(div, (l, r) => VectorFloatDiv(l, r)(div.blame))
+        vectorFloatOp2(div, (l, r) => VectorFloatDiv(l, r)(div.blame))
       case div @ VectorFloorDiv(_, _) =>
         vectorIntOp2(div, (l, r) => VectorFloorDiv(l, r)(div.blame))
       case minus @ VectorMinus(_, _) =>

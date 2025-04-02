@@ -53,9 +53,9 @@ case class CFloatIntCoercion[Pre <: Generation]()
       // This is wrong, but since we translate to rationals anyways, this does not matter.
       // Getting everything to type check otherwise is a pain, since in "coerce" we always coerce
       // to an arbitrary big float.
-      case TCFloat(e, m) => TFloats.ieee754_32bit
-      case TFloat(e, m) => TFloats.ieee754_32bit
-      case other => other.rewriteDefault() // super.postCoerce(other)
+      case TCFloat(_, _) => TFloats.ieee754_32bit
+      case TFloat(_, _) => TFloats.ieee754_32bit
+      case other => other.rewriteDefault()
     }
 
   override def postCoerce(e: Expr[Pre]): Expr[Post] =
@@ -64,6 +64,6 @@ case class CFloatIntCoercion[Pre <: Generation]()
       case Cast(e, TypeValue(TCInt())) if e.t.isInstanceOf[TCInt[Pre]] =>
         dispatch(e)
       case CIntegerValue(v, _) => IntegerValue(v)(e.o)
-      case other => other.rewriteDefault() // super.postCoerce(other)
+      case other => other.rewriteDefault()
     }
 }
