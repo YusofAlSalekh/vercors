@@ -31,6 +31,8 @@ case object ClassToRef extends RewriterBuilder {
   private def CastHelperOrigin: Origin =
     Origin(Seq(LabelContext("classToRef cast helpers")))
 
+  val ByValueClassADTLabel = "ByValueClassADT"
+
   private case class InstanceNullPreconditionFailed(
       inner: Blame[InstanceNull],
       inv: InvokingNode[_],
@@ -69,6 +71,16 @@ case object ClassToRef extends RewriterBuilder {
             s"Permission should be framed, did not expect: ${error.desc}"
           )
         case _: PointerInsufficientPermission => throw RequiresExhaleModeError()
+      }
+    }
+  }
+
+  private case class SubscriptToAddBlame(blame: Blame[PointerSubscriptError])
+      extends Blame[PointerAddError] {
+    override def blame(error: PointerAddError): Unit = {
+      error match {
+        case e @ PointerNull(_) => blame.blame(e)
+        case e @ PointerBounds(_) => blame.blame(e)
       }
     }
   }
@@ -477,7 +489,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             "new_" + cls.o.find[SourceName].map(_.name).getOrElse("unknown")
           )
       )
-    // TAnyValue is a placeholder the pointer adt doesn't have type parameters
+    // TVoid is a placeholder the pointer adt doesn't have type parameters
     val indexFunction =
       new ADTFunction[Post](
         Seq(new Variable(TNonNullPointer(TVoid(), None))(Origin(
@@ -490,6 +502,10 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             "index_" + cls.o.find[SourceName].map(_.name).getOrElse("unknown")
           )
       )
+//    val fromPointer = new ADTFunction[Post](
+//      Seq(new Variable(TNonNullPointer(TVoid(), None))(Origin(Seq(PreferredName(Seq("pointer")), LabelContext("classToRef"))))),
+//      axiomType
+//    )(cls.o.copy(cls.o.originContents.filterNot(_.isInstanceOf[SourceName])).where(name = "from_pointer_"+cls.o.find[SourceName].map(_.name).getOrElse("unknown")));
     val injectivityAxiom =
       new ADTAxiom[Post](foralls(
         Seq(axiomType, axiomType),
@@ -552,7 +568,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         Seq(indexFunction) ++ destructorAxioms ++ indexAxioms ++
           fieldFunctions ++ fieldInverses ++ valueAsAxioms,
         Nil,
-      )
+      )(o.withContent(LabelContext(ByValueClassADTLabel)))
     globalDeclarations.succeed(cls, byValClassSucc(cls))
   }
 
@@ -724,25 +740,24 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     val constraint = forall[Post](
       TNonNullPointer(outerType, None),
       body = { p =>
-        PolarityDependent(
-          Greater(
-            CurPerm(PointerLocation(p)(PanicBlame(
-              "Referring to a non-null pointer should not cause any verification failures"
-            ))),
-            NoPerm(),
-          ) ==>
-            (InlinePattern(
-              Cast(p, TypeValue(TNonNullPointer(newT, unique)))
-            ) === adtFunctionInvocation(
-              valueAsFunctions.getOrElseUpdate(
-                (t, unique),
-                makeValueAsFunction(t.toString, newT, unique),
-              ).ref,
-              typeArgs = Some((valueAdt.ref(()), Seq(outerType))),
-              args = Seq(DerefPointer(p)(RequiresExhaleModeBlame())),
-            )),
-          tt,
-        )
+//        PolarityDependent(
+//          Greater(
+//            CurPerm(PointerLocation(p)(PanicBlame(
+//              "Referring to a non-null pointer should not cause any verification failures"
+//            ))),
+//            NoPerm(),
+//          ) ==>
+        (InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT, unique)))) ===
+          adtFunctionInvocation(
+            valueAsFunctions.getOrElseUpdate(
+              (t, unique),
+              makeValueAsFunction(t.toString, newT, unique),
+            ).ref,
+            typeArgs = Some((valueAdt.ref(()), Seq(outerType))),
+            args = Seq(PointerToAdt(p, outerType)(RequiresExhaleModeBlame())),
+          )) /*,*/
+//          tt,
+//        )
       },
     )
     t match {
@@ -845,17 +860,32 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
               deref.blame
             )(deref.o)
           case t: TByValueClass[Pre] =>
-            DerefPointer(
-              adtFunctionInvocation[Post](
-                byValFieldSucc.ref(field),
-                args = Seq(dispatch(obj)),
-              )(deref.o)
-            )(DerefFieldPointerBlame(
-              deref.blame,
-              deref,
-              t.cls.decl.asInstanceOf[ByValueClass[Pre]],
-              Referrable.originNameOrEmpty(field),
-            ))(deref.o)
+            if (field.t.asByValueClass.isDefined) {
+              PointerToAdt(
+                adtFunctionInvocation[Post](
+                  byValFieldSucc.ref(field),
+                  args = Seq(dispatch(obj)),
+                )(deref.o),
+                dispatch(field.t),
+              )(DerefFieldPointerBlame(
+                deref.blame,
+                deref,
+                t.cls.decl.asInstanceOf[ByValueClass[Pre]],
+                Referrable.originNameOrEmpty(field),
+              ))(deref.o)
+            } else {
+              DerefPointer(
+                adtFunctionInvocation[Post](
+                  byValFieldSucc.ref(field),
+                  args = Seq(dispatch(obj)),
+                )(deref.o)
+              )(DerefFieldPointerBlame(
+                deref.blame,
+                deref,
+                t.cls.decl.asInstanceOf[ByValueClass[Pre]],
+                Referrable.originNameOrEmpty(field),
+              ))(deref.o)
+            }
         }
       case TypeValue(t) =>
         t match {
@@ -949,45 +979,54 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
       case v @ Value(PredicateLocation(inv: InstancePredicateApply[Pre])) =>
         implicit val o: Origin = e.o
         Star[Post](v.rewrite(), dispatch(inv.obj) !== Null())
-      case starall @ Starall(bindings, _, body) => {
-        implicit val o: Origin = starall.o
-        val dereferencedClasses = body.flatCollect {
-          case Value(body) => body.flatCollect {
-            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
-              cls.collect {
-                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
-                  ptr.t
-              }
-            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
-              cls.collect {
-                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
-                  ptr.t
-              }
-          }
-          case Perm(body, _) => body.flatCollect {
-            // TODO: This could be inlinepattern!
-            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
-              cls.collect {
-                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
-                  ptr.t
-              }
-            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
-              cls.collect {
-                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
-                  ptr.t
-              }
-          }
-        }
-
-        foldStar(dereferencedClasses.toSet.map({c: Type[Pre] =>
-          val newPointer = dispatch(c) match {
-            case TPointer(inner, unique) => TNonNullPointer(inner, unique)
-            case t@TNonNullPointer(_, _) => t
-          }
-          PolarityDependent(foralls[Post](Seq(newPointer, newPointer), {case Seq(p, q) => ((p !== q) && CurPerm(PointerLocation(p)(NonNullPointerNull)) > NoPerm() && CurPerm(PointerLocation(q)(NonNullPointerNull)) > NoPerm()) ==> (DerefPointer(p)(NonNullPointerNull) !== DerefPointer(q)(NonNullPointerNull))}, {case Seq(p, q) => Seq(Seq(DerefPointer(p)(NonNullPointerNull), DerefPointer(q)(NonNullPointerNull)))}), tt)
-        }).toSeq :+ super.dispatch(starall))
-
-      }
+//      case starall @ Starall(bindings, _, body) => {
+//        implicit val o: Origin = starall.o
+//        val dereferencedClasses = body.flatCollect {
+//          case Value(body) => body.flatCollect {
+//            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
+//              cls.collect {
+//                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+//                  ptr.t
+//              }
+//            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
+//              cls.collect {
+//                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+//                  ptr.t
+//              }
+//          }
+//          case Perm(body, _) => body.flatCollect {
+//            // TODO: This could be inlinepattern!
+//            case FieldLocation(cls, _) if cls.t.asByValueClass.isDefined =>
+//              cls.collect {
+//                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+//                  ptr.t
+//              }
+//            case Deref(cls, _) if cls.t.asByValueClass.isDefined =>
+//              cls.collect {
+//                case DerefPointer(ptr) if ptr.t.asPointer.get.element == cls.t && ptr.exists { case Local(Ref(v)) => bindings.contains(v) } =>
+//                  ptr.t
+//              }
+//          }
+//        }
+//
+//        foldStar(dereferencedClasses.toSet.map({c: Type[Pre] =>
+//          val newPointer = dispatch(c) match {
+//            case TPointer(inner, unique) => TNonNullPointer(inner, unique)
+//            case t@TNonNullPointer(_, _) => t
+//          }
+//          PolarityDependent(foralls[Post](Seq(newPointer, newPointer), {case Seq(p, q) => ((p !== q) && CurPerm(PointerLocation(p)(NonNullPointerNull)) > NoPerm() && CurPerm(PointerLocation(q)(NonNullPointerNull)) > NoPerm()) ==> (DerefPointer(p)(NonNullPointerNull) !== DerefPointer(q)(NonNullPointerNull))}, {case Seq(p, q) => Seq(Seq(DerefPointer(p)(NonNullPointerNull), DerefPointer(q)(NonNullPointerNull)))}), tt)
+//        }).toSeq :+ super.dispatch(starall))
+//
+//      }
+      case dp @ DerefPointer(ptr) if dp.t.asByValueClass.isDefined =>
+        PointerToAdt(dispatch(ptr), dispatch(dp.t))(dp.blame)(dp.o)
+      case ps @ PointerSubscript(ptr, index) if ps.t.asByValueClass.isDefined =>
+        PointerToAdt(
+          PointerAdd(dispatch(ptr), dispatch(index))(SubscriptToAddBlame(
+            ps.blame
+          ))(ps.o),
+          dispatch(ps.t),
+        )(ps.blame)(ps.o)
       case _ => super.dispatch(e)
     }
 

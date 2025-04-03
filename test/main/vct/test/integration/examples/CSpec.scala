@@ -22,7 +22,7 @@ class CSpec extends VercorsSpec {
     int x = 4.0 % 1;
   }
   """
-  vercors should fail withCode "ptrPerm" using silicon in "cannot access field of struct after freeing" c
+  vercors should fail withCode "assignFieldFailed" using silicon in "cannot access field of struct after freeing" c
     """
     #include <stdlib.h>
 
@@ -118,7 +118,7 @@ class CSpec extends VercorsSpec {
     }
     """
 
-  vercors should fail withCode "ptrPerm" using silicon in "Deref field of zero perm ptr" c
+  vercors should fail withCode "assignFieldFailed" using silicon in "Deref field of zero perm ptr" c
     """
     struct d{
       int x;
@@ -126,7 +126,7 @@ class CSpec extends VercorsSpec {
     int main(){
       struct d s1;
       struct d* s2 = &s1;
-      //@ exhale Perm(s2, 1\1);
+      //@ exhale Perm(s2->x, 1\1);
       s2->x = 1;
     }
     """

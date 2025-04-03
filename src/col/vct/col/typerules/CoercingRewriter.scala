@@ -1656,6 +1656,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
         )
       case add @ PointerAdd(p, offset) =>
         PointerAdd(pointer(p)._1, int(offset))(add.blame)
+      case to @ PointerToAdt(p, t) => PointerToAdt(pointer(p)._1, t)(to.blame)
       case blck @ PointerBlock(p) => PointerBlock(pointer(p)._1)(blck.blame)
       case addr @ PointerAddress(p, elementSize) =>
         PointerAddress(pointer(p)._1, elementSize)(addr.blame)

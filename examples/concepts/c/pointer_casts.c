@@ -31,7 +31,6 @@ void castRemainsValidInLoop() {
     int *pointer_to_integer = (int *)&struct_b;
 
     //@ loop_invariant 0 <= i && i <= 10;
-    //@ loop_invariant Perm(&struct_b, write);
     //@ loop_invariant Perm(struct_b, write);
     //@ loop_invariant pointer_to_integer == (int *)&struct_b;
     //@ loop_invariant *pointer_to_integer == 10 - i;
