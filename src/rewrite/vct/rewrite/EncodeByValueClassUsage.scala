@@ -305,6 +305,10 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
       case dp @ DerefPointer(Local(Ref(_))) =>
         // This can happen if the user specifies a local of type pointer to TByValueClass
         rewriteInCopyContext2(dispatch(dp), dp.blame, t, target, context)
+      case Then(value, post) =>
+        Block(Seq(doCopy(value, target, t, context), dispatch(post)))(e.o)
+      case With(pre, value) =>
+        Block(Seq(dispatch(pre), doCopy(value, target, t, context)))(e.o)
       case _ =>
         println(e)
         ???
