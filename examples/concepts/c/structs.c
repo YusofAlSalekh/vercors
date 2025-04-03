@@ -33,6 +33,19 @@ void alter_struct(struct point *p){
 }
 
 /*@
+    context p != NULL ** Perm(p, write);
+    context Perm(&p->x, write);
+    context Perm(&p->y, write);
+    ensures p->x == 0;
+    ensures p->y == 0;
+    ensures \old(*p) == *p;
+@*/
+void alter_struct2(struct point p[]){
+    p->x = 0;
+    p->y = 0;
+}
+
+/*@
     context p != NULL ** Perm(p, write) ** Perm(*p, write);
     ensures p->x == \old(p->x + 1);
     ensures p->y == \old(p->y + 1);

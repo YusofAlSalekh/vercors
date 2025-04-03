@@ -41,6 +41,8 @@ primaryExpression
     |   '__builtin_va_arg' '(' unaryExpression ',' typeName ')'
     |   '__builtin_offsetof' '(' typeName ',' unaryExpression ')'
     |   'NULL'
+    |   'vercorsNAN'
+    |   'vercorsINFINITY'
     ;
 
 annotatedPrimaryExpression

@@ -1261,6 +1261,7 @@ sealed trait Expr[G] extends NodeFamily[G] with ExprImpl[G]
 
 sealed trait Constant[G] extends Expr[G] with ConstantImpl[G]
 sealed trait ConstantInt[G] extends Constant[G] with ConstantIntImpl[G]
+sealed trait ConstantFloat[G] extends Constant[G]
 final case class CIntegerValue[G](value: BigInt, t: Type[G])(
     implicit val o: Origin
 ) extends ConstantInt[G] with Expr[G] with CIntegerValueImpl[G]
@@ -1270,7 +1271,11 @@ final case class BooleanValue[G](value: Boolean)(implicit val o: Origin)
     extends Constant[G] with BooleanValueImpl[G]
 final case class FloatValue[G](value: BigDecimal, t: Type[G] /* TFloat */ )(
     implicit val o: Origin
-) extends Constant[G] with FloatValueImpl[G]
+) extends ConstantFloat[G] with FloatValueImpl[G]
+final case class FloatNaN[G](t: Type[G] /* TFloat */ )(implicit val o: Origin)
+    extends ConstantFloat[G] with FloatNaNImpl[G]
+final case class FloatInf[G](t: Type[G] /* TFloat */ )(implicit val o: Origin)
+    extends ConstantFloat[G] with FloatInfImpl[G]
 final case class StringValue[G](value: String)(implicit val o: Origin)
     extends Constant[G] with StringValueImpl[G]
 final case class CharValue[G](value: Int)(implicit val o: Origin)

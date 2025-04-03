@@ -2067,6 +2067,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case value: CIntegerValue[Pre] => e
       case value: IntegerValue[Pre] => e
       case value: FloatValue[Pre] => e
+      case value: FloatNaN[Pre] => e
+      case value: FloatInf[Pre] => e
       case value @ Value(loc) => Value(loc)
       case value @ AutoValue(loc) => value
       case values @ Values(arr, from, to) =>
