@@ -104,18 +104,11 @@ case class FloatToRat[Pre <: Generation]() extends Rewriter[Pre] {
         // Select((b === z && a === z) || (isInf(b) && isInf(a)) || a === NaN || b === NaN, NaN,
         // Anyway I think this complicates stuff atm, since you can never really check calculations anymore, since
         // something could be NaN and then NaN keeps propagating. To properly do this we need an ADT for floats
+        // Strictly speaking we need 1/inf == 0, but if we add that here, you'd always have to say that a certain value
+        // is not inf. Even 5/1 does not work, since the prover thinks that 5 could be inf.
 
         // +/-a/0=+/-inf (also if a is inf, see:
-        Select(
-          b === z,
-          Select(a > z, posInf, negInf),
-          Select(
-            isInf(b),
-            z, // This should be +/- zero, but we only have regular zero
-            // Otherwise, standard def
-            a /:/ b,
-          ),
-        )
+        Select(b === z, Select(a > z, posInf, negInf), a /:/ b)
       }
 
     makeFloatOp(body, "floatDiv")
