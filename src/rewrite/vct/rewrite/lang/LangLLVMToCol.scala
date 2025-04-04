@@ -473,6 +473,13 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
               )
             }
           }
+      // Propagate pointer types across \old
+      case Assign(Local(Ref(tVar)), LLVMOld(Ref(sVar))) =>
+        addTypeGuess(
+          tVar,
+          Set(sVar),
+          _ => typeGuesses.get(sVar).map(_.currentType).getOrElse(tVar.t),
+        )
     }
 
     typeGuesses.foreachEntry((k, v) =>

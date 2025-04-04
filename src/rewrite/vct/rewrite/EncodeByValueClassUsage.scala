@@ -86,7 +86,7 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
         contractBlame = TrueSatisfiable,
         returnType = dispatch(t),
         ensures = UnitAccountedPredicate(
-          unwrapClassPerm(result, WritePerm(), t)
+          unwrapClassPerm(result, Perm(_, WritePerm()), t)
         ),
         decreases = Some(DecreasesClauseNoRecursion[Post]()),
       )
@@ -169,7 +169,7 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
 
   private def unwrapClassPerm(
       obj: Expr[Post],
-      perm: Expr[Post],
+      perm: Location[Post] => Expr[Post],
       structType: TByValueClass[Pre],
       visited: Seq[TByValueClass[Pre]] = Seq(),
   ): Expr[Post] = {
@@ -186,13 +186,13 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
       val loc = FieldLocation[Post](obj, succ(member))
       member.t match {
         case inner: TByValueClass[Pre] =>
-          Perm[Post](loc, perm) &* unwrapClassPerm(
+          perm(loc) &* unwrapClassPerm(
             Deref[Post](obj, succ(member))(blame),
             perm,
             inner,
             structType +: visited,
           )
-        case _ => Perm(loc, perm)
+        case _ => perm(loc)
       }
     })
 
@@ -211,10 +211,20 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
         )
       case _ if inAssignment.nonEmpty => node.rewriteDefault()
       case Perm(ByValueClassLocation(e), p) =>
-        unwrapClassPerm(dispatch(e), dispatch(p), e.t.asByValueClass.get)
+        val permission = dispatch(p)
+        unwrapClassPerm(
+          dispatch(e),
+          Perm(_, permission),
+          e.t.asByValueClass.get,
+        )
+      case Value(ByValueClassLocation(e)) =>
+        unwrapClassPerm(dispatch(e), Value(_), e.t.asByValueClass.get)
+      case AutoValue(ByValueClassLocation(e)) =>
+        unwrapClassPerm(dispatch(e), AutoValue(_), e.t.asByValueClass.get)
       // Only doing this for TNonNullPointer pointers since those originate from the frontend and users can define heap variables of the normal TPointer pointer type
       case Perm(pl @ PointerLocation(dhv @ DerefHeapVariable(Ref(v))), p)
-          if v.t.isInstanceOf[TNonNullPointer[Pre]] || v.t.isInstanceOf[TNonNullConstPointer[Pre]] =>
+          if v.t.isInstanceOf[TNonNullPointer[Pre]] ||
+            v.t.isInstanceOf[TNonNullConstPointer[Pre]] =>
         val t = v.t.asPointer.get
         if (t.element.asByValueClass.isDefined) {
           val newV: Ref[Post, HeapVariable[Post]] = succ(v)

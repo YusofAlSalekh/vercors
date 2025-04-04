@@ -14,6 +14,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Metadata.h>
+#include <llvm/Support/raw_ostream.h>
 #include <string>
 
 const std::string SOURCE_LOC = "Transform::LoopContractTransform";
@@ -165,7 +166,8 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
             llvm2col::buildArgExprFromAlloca(
                 *wrapperCall, argIdx, *llvm::cast<llvm::AllocaInst>(llvmVal),
                 *llvmWFunc, *srcLoc, functionCursor);
-        } else if (llvm::isa<llvm::PHINode>(llvmVal)) {
+        } else if (llvm::isa<llvm::PHINode>(llvmVal) ||
+                   llvm::isa<llvm::LoadInst>(llvmVal)) {
             col::Variable *colVar =
                 &functionCursor.getVariableMapEntry(*llvmVal, true);
             // Local to var of phi-node
@@ -180,9 +182,14 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
                 llvm2col::generatePallasWrapperCallOrigin(*llvmWFunc, *srcLoc));
             argExpr->mutable_ref()->set_id(colVar->id());
         } else {
+            std::string valStr;
+            llvm::raw_string_ostream vStream(valStr);
+            vStream << *llvmVal;
             pallas::ErrorReporter::addError(
                 SOURCE_LOC,
-                "Unable to map DIVariable to col-variable (Unsupported value).",
+                "Unable to map DIVariable to col-variable (Unsupported "
+                "value):" +
+                    vStream.str(),
                 *llvmParentFunc);
             return false;
         }
