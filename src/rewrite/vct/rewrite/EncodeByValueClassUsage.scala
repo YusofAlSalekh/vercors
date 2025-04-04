@@ -82,6 +82,9 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
 
   private val classCreationMethodsSucc
       : SuccessionMap[TByValueClass[Pre], Procedure[Post]] = SuccessionMap()
+  private val heapLocalArgSucc
+      : SuccessionMap[Variable[Pre], LocalHeapVariable[Post]] = SuccessionMap()
+  private val inContract: ScopedStack[Unit] = ScopedStack()
 
   // Duplicated in LowerHeapVariables, keep in sync
   def makeClassCreationMethod(t: TByValueClass[Pre]): Procedure[Post] = {
@@ -121,7 +124,7 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
       blame: InstanceField[Pre] => Blame[InsufficientPermission],
   ): Statement[Post] = {
     implicit val o: Origin = obj.o
-    val ov = new Variable[Post](obj.t)(o.where(name = "original"))
+    val ov = new Variable[Post](dispatch(t))(o.where(name = "original"))
     val children = t.cls.decl.decls.collect { case f: InstanceField[Pre] =>
       f.t match {
         case inner: TByValueClass[Pre] =>
@@ -243,7 +246,53 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
             case _ => dispatch(a)
           }
         })
+      case Local(Ref(v))
+          if inContract.isEmpty && heapLocalArgSucc.contains(v) =>
+        DerefPointer(heapLocalArgSucc(v).get(PanicBlame(
+          "Missing permission to procedure argument of struct type, no suitable blame available"
+        )))(PanicBlame(
+          "Missing permission to dereference procedure argument of struct type, no suitable blame available"
+        ))
       case _ => node.rewriteDefault()
+    }
+  }
+
+  override def dispatch(decl: Declaration[Pre]): Unit = {
+    implicit val o: Origin = decl.o
+    decl match {
+      // TODO: AS: This transformation should be moved to LangCToCol to get proper blames
+      case proc: Procedure[Pre] =>
+        val byValueArgs = proc.args.filter(_.t.asByValueClass.isDefined)
+        globalDeclarations.succeed(
+          proc,
+          proc.rewrite(
+            body = proc.body.map(b =>
+              Scope(
+                Nil,
+                localHeapVariables.scope {
+                  Block(byValueArgs.flatMap { v =>
+                    val newVar =
+                      new LocalHeapVariable(
+                        TNonNullPointer(dispatch(v.t), None)
+                      )
+                    heapLocalArgSucc(v) = newVar
+                    Seq(
+                      HeapLocalDecl(newVar),
+                      Assign(
+                        newVar.get(PanicBlame(
+                          "Should always have access to local variable just after declaration"
+                        )),
+                        Local[Post](succ(v)),
+                      )(AssignLocalOk),
+                    )
+                  } :+ dispatch(b))
+                },
+              )
+            ),
+            contract = inContract.having(()) { dispatch(proc.contract) },
+          ),
+        )
+      case _ => super.dispatch(decl)
     }
   }
 
@@ -309,6 +358,18 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
         Block(Seq(doCopy(value, target, t, context), dispatch(post)))(e.o)
       case With(pre, value) =>
         Block(Seq(dispatch(pre), doCopy(value, target, t, context)))(e.o)
+      case Local(Ref(v)) if heapLocalArgSucc.contains(v) =>
+        rewriteInCopyContext2(
+          heapLocalArgSucc(v).get(PanicBlame(
+            "Missing permission to procedure argument of struct type, no suitable blame available"
+          ))(e.o),
+          PanicBlame(
+            "Failed to copy struct that originated from a procedure argument, no suitable blame available"
+          ),
+          t,
+          target,
+          context,
+        )
       case _ =>
         println(e)
         ???

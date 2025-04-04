@@ -544,7 +544,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val newValue = dispatch(value)
         (targetType, value.t) match {
           case (target: PointerType[Pre], value: PointerType[Pre])
-              if target.unique != value.unique =>
+              if target.unique != value.unique &&
+                target.element == value.element =>
             // Should not occur
             ???
           case (TPointer(innerType, _), TPointer(_, _)) =>
