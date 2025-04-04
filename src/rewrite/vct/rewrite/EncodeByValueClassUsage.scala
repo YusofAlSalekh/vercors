@@ -248,10 +248,8 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
         })
       case Local(Ref(v))
           if inContract.isEmpty && heapLocalArgSucc.contains(v) =>
-        DerefPointer(heapLocalArgSucc(v).get(PanicBlame(
+        heapLocalArgSucc(v).get(PanicBlame(
           "Missing permission to procedure argument of struct type, no suitable blame available"
-        )))(PanicBlame(
-          "Missing permission to dereference procedure argument of struct type, no suitable blame available"
         ))
       case _ => node.rewriteDefault()
     }
