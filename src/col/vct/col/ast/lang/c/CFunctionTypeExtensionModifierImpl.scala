@@ -1,4 +1,4 @@
-package vct.col.ast.unsorted
+package vct.col.ast.lang.c
 
 import vct.col.ast.{CFunctionTypeExtensionModifier, CTypeAttribute}
 import vct.col.ast.ops.CFunctionTypeExtensionModifierOps

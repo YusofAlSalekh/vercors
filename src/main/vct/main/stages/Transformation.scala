@@ -476,13 +476,14 @@ case class SilverTransformation(
         ExtractInlineQuantifierPatterns,
         EncodeBitVectors.withArg(opaqueBitwiseOperators),
         // Translate internal types to domains
+        ImportVector.withArg(adtImporter),
+        // After ImportVector, but before SmtlibToProverTypes
         FloatToRat,
         SmtlibToProverTypes,
         EnumToDomain,
         ImportArray.withArg(adtImporter),
         ImportConstPointer.withArg(adtImporter),
         ImportPointer.withArg(adtImporter),
-        ImportVector.withArg(adtImporter),
         ImportMapCompat.withArg(adtImporter),
         ImportEither.withArg(adtImporter),
         ImportTuple.withArg(adtImporter),
