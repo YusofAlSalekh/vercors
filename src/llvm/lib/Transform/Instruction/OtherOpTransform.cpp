@@ -27,6 +27,10 @@ void llvm2col::transformOtherOp(llvm::Instruction &llvmInstruction,
         transformPhi(llvm::cast<llvm::PHINode>(llvmInstruction), colBlock,
                      funcCursor);
         break;
+    case llvm::Instruction::Select:
+        transformSelect(llvm::cast<llvm::SelectInst>(llvmInstruction), colBlock,
+                        funcCursor);
+        break;
     case llvm::Instruction::ICmp:
         transformICmp(llvm::cast<llvm::ICmpInst>(llvmInstruction), colBlock,
                       funcCursor);
@@ -47,6 +51,28 @@ void llvm2col::transformOtherOp(llvm::Instruction &llvmInstruction,
     default:
         reportUnsupportedOperatorError(SOURCE_LOC, llvmInstruction);
     }
+}
+
+void llvm2col::transformSelect(llvm::SelectInst &selectInst,
+                               col::LlvmBasicBlock &colBlock,
+                               pallas::FunctionCursor &funcCursor) {
+    col::Assign &assignment =
+        funcCursor.createAssignmentAndDeclaration(selectInst, colBlock);
+    col::Select &select = *assignment.mutable_value()->mutable_select();
+    select.set_allocated_origin(
+        llvm2col::generateSingleStatementOrigin(selectInst));
+    // Condition
+    llvm2col::transformAndSetExpr(funcCursor, selectInst,
+                                  *selectInst.getCondition(),
+                                  *select.mutable_condition());
+    // True
+    llvm2col::transformAndSetExpr(funcCursor, selectInst,
+                                  *selectInst.getTrueValue(),
+                                  *select.mutable_when_true());
+    // False
+    llvm2col::transformAndSetExpr(funcCursor, selectInst,
+                                  *selectInst.getFalseValue(),
+                                  *select.mutable_when_false());
 }
 
 void llvm2col::transformPhi(llvm::PHINode &phiInstruction,
