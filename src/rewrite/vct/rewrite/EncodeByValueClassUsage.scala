@@ -339,19 +339,13 @@ case class EncodeByValueClassUsage[Pre <: Generation]() extends Rewriter[Pre] {
           target,
           context,
         )
-      case dp @ DerefPointer(HeapLocal(Ref(_)) | DerefHeapVariable(Ref(_))) =>
+      case dp @ DerefPointer(_) =>
         rewriteInCopyContext2(dispatch(dp), dp.blame, t, target, context)
-      case ps @ PointerSubscript(
-            HeapLocal(Ref(_)) | DerefHeapVariable(Ref(_)),
-            _,
-          ) =>
+      case ps @ PointerSubscript(_, _) =>
         rewriteInCopyContext2(dispatch(ps), ps.blame, t, target, context)
-      case deref @ Deref(_, Ref(f)) =>
+      case deref @ Deref(_, _) =>
         // TODO: Improve blame message here
         copyClassValue2(deref.rewriteDefault(), t, target, f => deref.blame)
-      case dp @ DerefPointer(Local(Ref(_))) =>
-        // This can happen if the user specifies a local of type pointer to TByValueClass
-        rewriteInCopyContext2(dispatch(dp), dp.blame, t, target, context)
       case Then(value, post) =>
         Block(Seq(doCopy(value, target, t, context), dispatch(post)))(e.o)
       case With(pre, value) =>

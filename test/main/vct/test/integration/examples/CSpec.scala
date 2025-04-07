@@ -712,4 +712,46 @@ void test(int* xs, int nx, int ny){
   }
 }
   """
+  vercors should verify using silicon in "Struct from pointer subscript passed by value" c
+  """
+#include <assert.h>
+
+struct s {int x; int y;};
+
+/*@
+ requires Perm(v, write);
+ //ensures v.x == \old(v.x);
+ ensures Perm(\result, write);
+ ensures \result.x == x;
+*/
+struct s set_x(struct s v, int x) {
+  v.x = x;
+  return v;
 }
+
+/*@
+ requires p != NULL ** \pointer_length(p) == 1 ** Perm(&p->x, read);
+ ensures \result == p->x;
+*/
+/*@ pure */int get_x(struct s *p) {
+    return p->x;
+}
+
+void main(){
+    struct s p[1];
+    p[0].x = 5;
+    p[0].y = 10;
+    int x = get_x(p);
+    // Gets the correct value
+    assert(x == 5);
+    struct s v2 = set_x(p[0], 3);
+    // Since p[0] is passed by value, it is not changed
+    //@ assert(p[0].x == 5);
+    assert(p[0].x == 5);
+    assert(p[0].y == 10);
+    // But the returned valued is changed
+    assert(v2.x == 3 && p[0].y == 10);
+}
+  """
+}
+
