@@ -127,7 +127,7 @@ case class EncodeBreakReturn[Pre <: Generation]() extends Rewriter[Pre] {
               )
             case LLVMLoopContract(_) => throw ExtraNode
           }
-        case None => super.dispatch(contract)
+        case _ => super.dispatch(contract)
       }
     }
   }
