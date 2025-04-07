@@ -25,6 +25,9 @@ import scala.io.Source
 import scala.jdk.CollectionConverters._
 import scala.util.matching.Regex
 import vct.col.rewrite.Generation
+import org.eclipse.lsp4j.{Diagnostic, DiagnosticSeverity, Range, Position, PublishDiagnosticsParams}
+
+
 
 import scala.collection.immutable.TreeMap
 import scala.collection.mutable
@@ -63,11 +66,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   ): CompletableFuture[CompletionItem] = CompletableFuture.completedFuture(item)
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit = {
-    println(s"Document opened: ${params.getTextDocument.getUri}")
+    MyLanguageServer.client.logMessage(new MessageParams(
+      MessageType.Log,
+      s"Document opened:: ${params.getTextDocument.getUri}",
+    ))
   }
 
   override def didChange(params: DidChangeTextDocumentParams): Unit = {
-    logger.info(s"Document changed: ${params.getTextDocument.getUri}")
+    MyLanguageServer.client.logMessage(new MessageParams(
+      MessageType.Log,
+      s"Document changed ${params.getTextDocument.getUri}",
+    ))
     val text = params.getContentChanges.get(0).getText
     val diagnostics = validateText(text)
     val paramsDiag =
@@ -81,10 +90,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   }
 
   override def didClose(params: DidCloseTextDocumentParams): Unit = {
-    println(s"Document closed: ${params.getTextDocument.getUri}")
+    MyLanguageServer.client.logMessage(new MessageParams(
+      MessageType.Log,
+      s"Document closed: ${params.getTextDocument.getUri}",
+    ))
+
   }
 
-  override def hover(params: HoverParams): CompletableFuture[Hover] = null
+  //override def hover(params: HoverParams): CompletableFuture[Hover] = null
+  override def hover(params: HoverParams): CompletableFuture[Hover] = {
+    CompletableFuture.completedFuture(null)
+  }
 
   override def codeAction(
       params: CodeActionParams
@@ -97,7 +113,6 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     val uri = params.getTextDocument.getUri
     val path = Paths.get(new java.net.URI(uri))
 
-    logger.info(s"Document saved: $uri")
     MyLanguageServer.client.logMessage(new MessageParams(
       MessageType.Log,
       s"Document saved: ${params.getTextDocument.getUri}",
@@ -118,12 +133,25 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       val locals: Seq[Local[_]] = LocalCollector.collectLocals(resolvedProgram)
       originMap = TreeMap.from(LocalCollector.hashLocalOrigins(locals))
 
+     // MyLanguageServer.client.publishDiagnostics(new PublishDiagnosticsParams(uri, Collections.emptyList()))
+
     } catch {
-      case err: VerificationError.SystemError =>
-        logger.error("System error during parsing/resolution", err)
+      case err: VerificationError.UserError =>
         MyLanguageServer.client.logMessage(new MessageParams(
           MessageType.Error,
-          s"Verification error: ${err.text}",
+          s"User error during parsing/resolution: ${err.text}"
+        ))
+        val diagnostics = extractDiagnostics(err)
+        MyLanguageServer.client.publishDiagnostics(new PublishDiagnosticsParams(uri, diagnostics.asJava))
+      case err: VerificationError.SystemError =>
+        MyLanguageServer.client.logMessage(new MessageParams(
+          MessageType.Error,
+          s"Verification error: ${err.text}"
+        ))
+      case ex: Exception =>
+        MyLanguageServer.client.logMessage(new MessageParams(
+          MessageType.Error,
+          s"Unexpected error: ${ex.getMessage}"
         ))
     }
   }
@@ -154,16 +182,13 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
               items.flatMap(_.get("match").map(s => new CompletionItem(s)))
                 .asJava
             case Left(error) =>
-              println(s"Error parsing matches: ${error.getMessage}")
               Collections.emptyList()
           }
         case Left(error) =>
-          println(s"Error parsing JSON: ${error.getMessage}")
           Collections.emptyList()
       }
     } catch {
       case e: Exception =>
-        println(s"Exception loading completions: ${e.getMessage}")
         Collections.emptyList()
     }
   }
@@ -224,19 +249,72 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       originMap.maxBefore((line, char, Int.MaxValue)) match {
         case Some(((refLine, refStart, refEnd), (declLine, declStart, declEnd)))
           if refLine == line && refStart <= char && char <= refEnd =>
-          val range = new Range(new Position(declLine, declStart), new Position(declLine, declEnd))
-          val location = new Location(uri, range)
-          Either.forLeft(Collections.singletonList[Location](location))
+
+          val originRange = new Range(new Position(refLine, refStart), new Position(refLine, refEnd))
+          val targetRange = new Range(new Position(declLine, declStart), new Position(declLine, declEnd))
+
+          val locationLink = new LocationLink()
+          locationLink.setOriginSelectionRange(originRange)
+          locationLink.setTargetUri(uri)
+          locationLink.setTargetRange(targetRange)
+          locationLink.setTargetSelectionRange(targetRange) //could be improved later
+
+          Either.forRight(Collections.singletonList(locationLink))
+
         case _ =>
           MyLanguageServer.client.logMessage(new MessageParams(
             MessageType.Warning,
             s"No definition found for position: $pos"
           ))
-          Either.forLeft(Collections.emptyList[Location]())
+          Either.forRight(Collections.emptyList())
       }
 
     CompletableFuture.completedFuture(result)
   }
+  case class ParsedError(message: String, startLine: Int, startCol: Int, endLine: Int, endCol: Int)
+
+  private def extractParsedErrors(err: VerificationError.UserError): Seq[ParsedError] = err match {
+    case pe: vct.parsers.err.ParseError =>
+      pe.origin.find[PositionRange].toSeq.flatMap { pos =>
+        pos.startEndColIdx.map { case (startCol, endCol) =>
+          ParsedError(
+            message   = pe.message,
+            startLine = pos.startLineIdx,
+            startCol  = startCol,
+            endLine   = pos.endLineIdx,
+            endCol    = endCol
+          )
+        }
+      }
+    case vct.parsers.err.ParseErrors(errors) =>
+      //errors.flatMap { pe =>
+      errors.headOption.toSeq.flatMap { pe =>
+        pe.origin.find[PositionRange].toSeq.flatMap { pos =>
+          pos.startEndColIdx.map { case (startCol, endCol) =>
+            ParsedError(
+              message   = pe.message,
+              startLine = pos.startLineIdx,
+              startCol  = startCol,
+              endLine   = pos.endLineIdx,
+              endCol    = endCol
+            )
+          }
+        }
+      }
+    case _ => Nil
+  }
+
+  private def extractDiagnostics(err: VerificationError.UserError): List[Diagnostic] = {
+    extractParsedErrors(err).map { pe =>
+      val diagnostic = new Diagnostic()
+      diagnostic.setSeverity(DiagnosticSeverity.Error)
+      diagnostic.setMessage(pe.message)
+
+      diagnostic.setRange(new Range(new Position(pe.startLine, pe.startCol), new Position(pe.endLine, pe.endCol)))
+      diagnostic
+    }.toList
+  }
+
 }
 object LocalCollector {
   def collectLocals(root: Node[_]): Seq[Local[_]] = {
