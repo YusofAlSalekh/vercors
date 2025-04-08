@@ -11,9 +11,9 @@
  */
 namespace pallas::utils {
 
-/** 
- * Returns all dbg-variable intrinsics in the given function that refer to 
- * the diven DILocalVariable.  
+/**
+ * Returns all dbg-variable intrinsics in the given function that refer to
+ * the diven DILocalVariable.
  */
 llvm::SmallVector<llvm::DbgVariableIntrinsic *>
 getIntrinsicsForDIVar(llvm::Function &f, llvm::DILocalVariable &diVar);

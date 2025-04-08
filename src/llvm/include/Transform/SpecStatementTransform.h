@@ -12,7 +12,6 @@
 namespace llvm2col {
 namespace col = vct::col::ast;
 
-
 void transformSpecStmntBlock(llvm::MDNode &llvmSpecBlock,
                              llvm::Instruction &llvmInstr,
                              col::LlvmBasicBlock &colBlock,

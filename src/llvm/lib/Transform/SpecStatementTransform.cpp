@@ -197,16 +197,15 @@ void llvm2col::transformSpecStmnt(llvm::MDNode &specStmnt,
         col::VctAssert *assert = body.add_statements()->mutable_vct_assert();
         assert->set_allocated_blame(new col::Blame());
         // TODO: Fix the origin
-        assert->set_allocated_origin(
-            llvm2col::generateSingleStatementOrigin(llvmInstr));
+        assert->set_allocated_origin(llvm2col::generatePallasSpecStmntOrigin(
+            llvmInstr, *srcLoc, "assert"));
         assert->mutable_res()->set_allocated_llvm_function_invocation(wCall);
     } else if (typeStrMD->getString().str() ==
                pallas::constants::PALLAS_ASSUME) {
         // Build Assume
         col::Assume *assume = body.add_statements()->mutable_assume();
-        // TODO: Fix the origin
-        assume->set_allocated_origin(
-            llvm2col::generateSingleStatementOrigin(llvmInstr));
+        assume->set_allocated_origin(llvm2col::generatePallasSpecStmntOrigin(
+            llvmInstr, *srcLoc, "assume"));
         assume->mutable_assn()->set_allocated_llvm_function_invocation(wCall);
     } else {
         printSpecStmntError(llvmInstr, "Unknown statement-type");

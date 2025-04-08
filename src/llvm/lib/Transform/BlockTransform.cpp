@@ -12,6 +12,7 @@
 #include "Transform/SpecStatementTransform.h"
 #include "Util/Constants.h"
 #include "Util/Exceptions.h"
+#include "Util/PallasMD.h"
 
 #include <llvm/IR/Metadata.h>
 
@@ -51,8 +52,8 @@ void llvm2col::transformInstruction(pallas::FunctionCursor &funcCursor,
                                     llvm::Instruction &llvmInstruction,
                                     col::LlvmBasicBlock &colBodyBlock) {
     // Check if a block of specification-statements is attached
-    if (llvm::MDNode *specMD = llvmInstruction.getMetadata(
-            pallas::constants::PALLAS_SPEC_STMNT_BLOCK)) {
+    if (llvm::MDNode *specMD =
+            pallas::utils::getSpecStmntBlock(llvmInstruction)) {
         llvm2col::transformSpecStmntBlock(*specMD, llvmInstruction,
                                           colBodyBlock, funcCursor);
     }

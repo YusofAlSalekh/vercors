@@ -16,8 +16,6 @@ namespace pallas::utils {
 
 namespace {
 
-
-
 llvm::Value *mapDbgDeclare(const llvm::DbgDeclareInst &dbgDeclare) {
     if (dbgDeclare.getExpression() != nullptr &&
         dbgDeclare.getExpression()->getNumElements() != 0) {

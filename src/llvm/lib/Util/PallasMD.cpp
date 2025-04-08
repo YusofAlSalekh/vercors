@@ -111,4 +111,9 @@ llvm::MDNode *getPallasLoopContract(const llvm::Loop &llvmLoop) {
     }
     return nullptr;
 }
+
+llvm::MDNode *getSpecStmntBlock(llvm::Instruction &instr) {
+    return instr.getMetadata(pallas::constants::PALLAS_SPEC_STMNT_BLOCK);
+}
+
 } // namespace pallas::utils

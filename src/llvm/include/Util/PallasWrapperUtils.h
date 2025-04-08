@@ -33,12 +33,12 @@ void buildArgExprFromAlloca(col::LlvmFunctionInvocation &wrapperCall,
  * Given an llvm-value that was referenced by a dbg.value instrinsic,
  * this function adds an argument to the given call of a wrapper function that
  * reads the given value.
- * Returns true on success and false otherwise. 
+ * Returns true on success and false otherwise.
  */
 bool buildArgExprFromDbgValue(col::LlvmFunctionInvocation &wrapperCall,
                               unsigned int argIdx, llvm::DbgValueInst &dbgVal,
                               llvm::Function &llvmWFunc, llvm::MDNode &srcLoc,
-                              pallas::FunctionCursor &functionCursor, 
+                              pallas::FunctionCursor &functionCursor,
                               llvm::Function &llvmParentFunc);
 
 /**

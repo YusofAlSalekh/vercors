@@ -76,6 +76,25 @@ generatePallasFContractClauseOrigin(const llvm::Function &parentFunc,
                                     const llvm::MDNode &clauseSrcLoc,
                                     unsigned int clauseNum);
 
+col::Origin *generatePallasSpecStmntOrigin(const llvm::Instruction &llvmInstr,
+                                           const llvm::MDNode &srcLoc,
+                                           const std::string &stmntType);
+
+/**
+ * Generates an origin based on a source-location in the metadata-format of
+ * Pallas and with the given preferred name.
+ */
+col::Origin *generatePallasSpecOrigin(const llvm::MDNode &srcLoc,
+                                      const llvm::Function &parentFunc,
+                                      const std::string &preferedName);
+
+/**
+ * Adds the source-location that is encoded by the given MD-node in the
+ * specification format of Pallas to the given origin.
+ */
+void addSourceLocFromPallasMD(col::Origin *origin, const llvm::MDNode &srcLoc,
+                              const llvm::DIScope &scope);
+
 col::Origin *generateOperandOrigin(llvm::Instruction &llvmInstruction,
                                    llvm::Value &llvmOperand);
 
