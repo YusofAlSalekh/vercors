@@ -16,17 +16,7 @@ namespace pallas::utils {
 
 namespace {
 
-llvm::SmallVector<llvm::DbgVariableIntrinsic *>
-getIntrinsicsForDIVar(llvm::Function &f, llvm::DILocalVariable &diVar) {
-    llvm::SmallVector<llvm::DbgVariableIntrinsic *> intrinsics;
-    for (auto i = inst_begin(&f), end = inst_end(&f); i != end; ++i) {
-        auto *asIntr = llvm::dyn_cast<llvm::DbgVariableIntrinsic>(&*i);
-        // Check if the intrinsic actually uses the local variable.
-        if (asIntr != nullptr && asIntr->getVariable() == &diVar)
-            intrinsics.push_back(asIntr);
-    }
-    return intrinsics;
-}
+
 
 llvm::Value *mapDbgDeclare(const llvm::DbgDeclareInst &dbgDeclare) {
     if (dbgDeclare.getExpression() != nullptr &&
@@ -87,6 +77,18 @@ mapDbgValue(const llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
 }
 
 } // namespace
+
+llvm::SmallVector<llvm::DbgVariableIntrinsic *>
+getIntrinsicsForDIVar(llvm::Function &f, llvm::DILocalVariable &diVar) {
+    llvm::SmallVector<llvm::DbgVariableIntrinsic *> intrinsics;
+    for (auto i = inst_begin(&f), end = inst_end(&f); i != end; ++i) {
+        auto *asIntr = llvm::dyn_cast<llvm::DbgVariableIntrinsic>(&*i);
+        // Check if the intrinsic actually uses the local variable.
+        if (asIntr != nullptr && asIntr->getVariable() == &diVar)
+            intrinsics.push_back(asIntr);
+    }
+    return intrinsics;
+}
 
 llvm::Value *mapDIVarToValue(llvm::Function &f, llvm::DIVariable &diVar,
                              llvm::Loop *llvmLoop) {

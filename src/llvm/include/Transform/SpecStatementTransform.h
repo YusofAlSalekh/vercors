@@ -12,6 +12,7 @@
 namespace llvm2col {
 namespace col = vct::col::ast;
 
+
 void transformSpecStmntBlock(llvm::MDNode &llvmSpecBlock,
                              llvm::Instruction &llvmInstr,
                              col::LlvmBasicBlock &colBlock,
@@ -20,6 +21,9 @@ void transformSpecStmntBlock(llvm::MDNode &llvmSpecBlock,
 void transformSpecStmnt(llvm::MDNode &specStmnt, llvm::Instruction &llvmInstr,
                         col::LlvmBasicBlock &colBlock,
                         pallas::FunctionCursor &functionCursor);
+
+llvm::Value *mapDIVarToValueForStatement(llvm::Function &f,
+                                         llvm::DIVariable &diVar);
 
 } // namespace llvm2col
 
