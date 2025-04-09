@@ -105,9 +105,10 @@ getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
         }
     }
 
-    llvm::DbgValueInst * closestDbgValue = nullptr;
-    // Find the closest dbg.value intrinsic that preceeds the instruction. 
-    // i.e. find the intrinsic that does not dominate any of the other intrinsics.
+    llvm::DbgValueInst *closestDbgValue = nullptr;
+    // Find the closest dbg.value intrinsic that preceeds the instruction.
+    // i.e. find the intrinsic that does not dominate any of the other
+    // intrinsics.
     for (auto *dbgVal : dbgValues) {
         bool dominatesAny = false;
         for (auto *v : dbgValues) {

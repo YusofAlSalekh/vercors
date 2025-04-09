@@ -163,6 +163,9 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val typeSubstitutions: mutable.Map[Variable[Pre], Type[Pre]] = mutable
     .Map()
 
+  private val wrappersInAssume: mutable.Set[LLVMFunctionDefinition[Pre]] =
+    mutable.Set()
+
   // Keeps track if the currently transformed function is a wrapper-function.
   private val inWrapperFunction: ScopedStack[Boolean] = ScopedStack()
 
@@ -503,6 +506,14 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     )
   }
 
+  def gatherWrappersInAssume(program: Program[Pre]): Unit = {
+    program.collect {
+      case Assume(LLVMFunctionInvocation(Ref(f), _, _, _))
+          if f.pallasExprWrapperFor.isDefined =>
+        wrappersInAssume.add(f);
+    }
+  }
+
   def rewriteLocal(local: LLVMLocal[Pre]): Expr[Post] = {
     implicit val o: Origin = local.o
     Local(rw.succ(local.ref.get.decl))
@@ -544,8 +555,9 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         val isWrapper = func.pallasExprWrapperFor.isDefined
         val returnT =
-          if (isWrapper) { TResource[Post]() }
-          else {
+          if (isWrapper && !wrappersInAssume.contains(func)) {
+            TResource[Post]()
+          } else {
             rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
           }
         funcRetType.having(returnT) {
