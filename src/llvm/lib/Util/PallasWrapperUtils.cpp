@@ -103,9 +103,10 @@ getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
     // Walk backwards through the instructions until one of the
     // dbg.value intrinsics is encountered.
     llvm::Instruction *currentInstr = &llvmInstr;
-    while (currentInstr != nullptr &&
-           !llvm::isa<llvm::DbgValueInst>(currentInstr) &&
-           !dbgValues.contains(llvm::cast<llvm::DbgValueInst>(currentInstr))) {
+    while (
+        currentInstr != nullptr &&
+        !(llvm::isa<llvm::DbgValueInst>(currentInstr) &&
+          dbgValues.contains(llvm::cast<llvm::DbgValueInst>(currentInstr)))) {
         // Try to go to the preceeding instruction
         if (llvm::Instruction *prevInst = currentInstr->getPrevNode()) {
             // Still in the same basic block

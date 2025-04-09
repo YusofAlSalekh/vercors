@@ -281,7 +281,7 @@ llvm2col::generatePallasLoopContractOrigin(const llvm::Loop &loop,
 
 col::Origin *
 llvm2col::generatePallasSpecStmntOrigin(const llvm::Instruction &llvmInstr,
-                                        const llvm::MDNode &srcLoc, 
+                                        const llvm::MDNode &srcLoc,
                                         const std::string &stmntType) {
     auto prefName = stmntType + " statement";
     auto &parentFunc = *llvmInstr.getParent()->getParent();
@@ -307,8 +307,9 @@ llvm2col::generatePallasSpecOrigin(const llvm::MDNode &srcLoc,
     return origin;
 }
 
-void llvm2col::addSourceLocFromPallasMD(col::Origin *origin, const llvm::MDNode &srcLoc,
-                              const llvm::DIScope &scope) {
+void llvm2col::addSourceLocFromPallasMD(col::Origin *origin,
+                                        const llvm::MDNode &srcLoc,
+                                        const llvm::DIScope &scope) {
     auto startL = getIntValue(srcLoc.getOperand(1).get());
     auto startC = getIntValue(srcLoc.getOperand(2).get());
     auto endL = std::make_optional(getIntValue(srcLoc.getOperand(3).get()));

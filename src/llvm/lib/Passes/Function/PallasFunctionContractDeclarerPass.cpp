@@ -5,7 +5,9 @@
 #include "Passes/Function/FunctionDeclarer.h"
 #include "Util/Constants.h"
 #include "Util/Exceptions.h"
+#include "Util/PallasDIMapping.h"
 #include "Util/PallasMD.h"
+#include "Util/PallasWrapperUtils.h"
 
 #include <llvm/ADT/SmallSet.h>
 #include <llvm/ADT/SmallVector.h>
@@ -23,6 +25,12 @@ const std::string SOURCE_LOC =
     "Passes::Function::PallasFunctionContractDeclarerPass";
 
 using namespace llvm;
+
+namespace {
+void addError(llvm::Function &func, const std::string &msg) {
+    pallas::ErrorReporter::addError(SOURCE_LOC, msg, func);
+}
+} // namespace
 
 /*
  * Pallas Function Contract Declarer Pass
@@ -292,26 +300,20 @@ Argument *PallasFunctionContractDeclarerPass::mapDIVarToArg(Function &f,
     }
 
     // Get the debug-intrinsic that uses the local variable.
-    SmallVector<DbgVariableIntrinsic *, 2> intrinsics;
+    SmallVector<DbgVariableIntrinsic *, 8> intrinsics;
     for (auto i = inst_begin(&f), end = inst_end(&f); i != end; ++i) {
         auto *asIntr = dyn_cast<DbgVariableIntrinsic>(&*i);
-        // TODO: Check if the intrinsic actually uses the local variable.
+        if (asIntr != nullptr && pallas::utils::hasDiExpression(*asIntr)) {
+            addError(f, "DIExpressions are not yet supported.");
+            return nullptr;
+        }
         if (asIntr != nullptr && asIntr->getVariable() == locDiVar)
             intrinsics.push_back(asIntr);
     }
-    // Only derive arg if there is a unique association with an intrinsic
-    if (intrinsics.size() != 1) {
-        return nullptr;
-    }
 
-    auto *intr = intrinsics.front();
-    // Resolution of DIExpression is not yet supported.
-    if (intr->getExpression() != nullptr &&
-        intr->getExpression()->getNumElements() != 0) {
-        return nullptr;
-    }
-
-    if (auto *declIntr = dyn_cast<DbgDeclareInst>(intr)) {
+    // Try to map to unique dbg.declare
+    auto *declIntr = pallas::utils::getUniqueDbgDeclare(intrinsics);
+    if (declIntr != nullptr) {
         // Check if intrinsic refers to an alloca in the initial block of the
         // function that is set to the value of an argument in its first use.
         auto *alloc = dyn_cast_if_present<AllocaInst>(declIntr->getAddress());
@@ -343,12 +345,17 @@ Argument *PallasFunctionContractDeclarerPass::mapDIVarToArg(Function &f,
             }
             return arg;
         }
-    } else if (auto *valIntr = dyn_cast<DbgValueInst>(intr)) {
-        // Check if the intrinsic refers directly to an argument of f
-        Argument *arg = dyn_cast_if_present<Argument>(valIntr->getValue());
-        if (arg != nullptr && arg->getParent() == &f)
-            return arg;
+        return nullptr;
     }
+    // Try to map to dbg.value that refers directly to an argument of f
+    for (auto *intr : intrinsics) {
+        if (auto *valIntr = dyn_cast<DbgValueInst>(intr)) {
+            auto *arg = dyn_cast_if_present<Argument>(valIntr->getValue());
+            if (arg != nullptr && arg->getParent() == &f)
+                return arg;
+        }
+    }
+
     return nullptr;
 }
 

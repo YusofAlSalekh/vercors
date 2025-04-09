@@ -3,8 +3,8 @@
 
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/Instruction.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Instruction.h>
 #include <llvm/IR/Metadata.h>
 #include <optional>
 #include <string>
@@ -75,8 +75,8 @@ llvm::Function *getWrapperFromLoopInv(const llvm::MDNode &invMD);
 bool isConstantInt(llvm::Metadata *md);
 
 /**
- * Checks if a block if specification-statements is attached to the given 
- * instruction and returns it if it is present. Otherwise, a nullpointer is 
+ * Checks if a block if specification-statements is attached to the given
+ * instruction and returns it if it is present. Otherwise, a nullpointer is
  * returned
  */
 llvm::MDNode *getSpecStmntBlock(llvm::Instruction &instr);

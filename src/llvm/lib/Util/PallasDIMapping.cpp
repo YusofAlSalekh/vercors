@@ -88,6 +88,22 @@ getIntrinsicsForDIVar(llvm::Function &f, llvm::DILocalVariable &diVar) {
     return intrinsics;
 }
 
+llvm::DbgDeclareInst *
+getUniqueDbgDeclare(llvm::ArrayRef<llvm::DbgVariableIntrinsic *> intrinsics) {
+    llvm::DbgDeclareInst *dbgIntr = nullptr;
+    for (auto *intr : intrinsics) {
+        if (auto *dbgDecl = llvm::dyn_cast<llvm::DbgDeclareInst>(intr)) {
+            if (dbgIntr == nullptr) {
+                dbgIntr = dbgDecl; 
+            } else {
+                // More than one dbg.declare
+                return nullptr;
+            }
+        }
+    }
+    return dbgIntr;
+}
+
 llvm::Value *mapDIVarToValue(llvm::Function &f, llvm::DIVariable &diVar,
                              llvm::Loop *llvmLoop) {
     auto *locDiVar = llvm::dyn_cast<llvm::DILocalVariable>(&diVar);
