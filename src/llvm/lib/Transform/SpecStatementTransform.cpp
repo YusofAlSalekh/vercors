@@ -108,8 +108,9 @@ bool buildArgForDIVar(llvm::DIVariable &diVar, llvm::Instruction &llvmInstr,
     } else {
         // Search the dbg.value-intrinsic that is closest to the instruction
         // to which the spec-block is attached.
+        auto &fam = functionCursor.getFunctionAnalysisManager();
         auto *dbgValueIntr =
-            pallas::utils::getClosestDbgValue(intrinsics, llvmInstr);
+            pallas::utils::getClosestDbgValue(intrinsics, llvmInstr, fam);
         if (dbgValueIntr == nullptr) {
             printSpecStmntError(llvmInstr,
                                 "Unable to map dbg.value to instruction.");

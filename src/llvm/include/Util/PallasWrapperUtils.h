@@ -42,13 +42,15 @@ bool buildArgExprFromDbgValue(col::LlvmFunctionInvocation &wrapperCall,
                               llvm::Function &llvmParentFunc);
 
 /**
- * Given an llvm-instruction and a list of debug-intrinsics, walk backwards
- * through the instructions to find the first dbg.value intrinsic that preceedes
- * the given instruction.
+ * Given an llvm-instruction and a list of debug-intrinsics,
+ * find the intrinsic that is the 'closest predecessor' of the given
+ * instruction.
+ * Uses the DominatorTreeAnalysis.
  */
 llvm::DbgValueInst *
 getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
-                   llvm::Instruction &llvmInstr);
+                   llvm::Instruction &llvmInstr,
+                   llvm::FunctionAnalysisManager &fam);
 
 } // namespace pallas::utils
 

@@ -94,7 +94,7 @@ getUniqueDbgDeclare(llvm::ArrayRef<llvm::DbgVariableIntrinsic *> intrinsics) {
     for (auto *intr : intrinsics) {
         if (auto *dbgDecl = llvm::dyn_cast<llvm::DbgDeclareInst>(intr)) {
             if (dbgIntr == nullptr) {
-                dbgIntr = dbgDecl; 
+                dbgIntr = dbgDecl;
             } else {
                 // More than one dbg.declare
                 return nullptr;

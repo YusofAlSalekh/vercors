@@ -3,9 +3,10 @@
 #include "Origin/OriginProvider.h"
 #include "Transform/Transform.h"
 
-#include <llvm/ADT/SmallPtrSet.h>
+#include <llvm/ADT/SmallSet.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/IR/Type.h>
 
 namespace pallas::utils {
@@ -85,48 +86,45 @@ bool buildArgExprFromDbgValue(col::LlvmFunctionInvocation &wrapperCall,
 
 llvm::DbgValueInst *
 getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
-                   llvm::Instruction &llvmInstr) {
+                   llvm::Instruction &llvmInstr,
+                   llvm::FunctionAnalysisManager &fam) {
     /* If this approach is not strong enough, an alternative approach would be
      * to use the dominator-tree to find the dbg.value that dominates the
      * llvmInstr but non of the other intrinsics.
      */
+    auto *pFunc = llvmInstr.getParent()->getParent();
+    llvm::DominatorTree &domTree = fam.getResult<DominatorTreeAnalysis>(*pFunc);
 
     // Build set of the llvm.value intrinsics
-    llvm::SmallPtrSet<llvm::DbgValueInst *, 8> dbgValues;
+    llvm::SmallSet<llvm::DbgValueInst *, 8> dbgValues;
     for (auto *intr : intrinsics) {
-        if (auto *value = llvm::dyn_cast<llvm::DbgValueInst>(intr)) {
-            // TODO: Also check that the intrinsic dominates the instruction
-            dbgValues.insert(value);
+        if (auto *dbgValue = llvm::dyn_cast<llvm::DbgValueInst>(intr)) {
+            if (domTree.dominates(dbgValue, &llvmInstr)) {
+                dbgValues.insert(dbgValue);
+            }
         }
     }
 
-    // Walk backwards through the instructions until one of the
-    // dbg.value intrinsics is encountered.
-    llvm::Instruction *currentInstr = &llvmInstr;
-    while (
-        currentInstr != nullptr &&
-        !(llvm::isa<llvm::DbgValueInst>(currentInstr) &&
-          dbgValues.contains(llvm::cast<llvm::DbgValueInst>(currentInstr)))) {
-        // Try to go to the preceeding instruction
-        if (llvm::Instruction *prevInst = currentInstr->getPrevNode()) {
-            // Still in the same basic block
-            currentInstr = prevInst;
-        } else if (llvm::BasicBlock *prevBlock =
-                       currentInstr->getParent()->getSinglePredecessor()) {
-            // Try to go to the next instruction in the preceeding basic block
-            // This only works if there is exactly one preceeding block
-            currentInstr = prevBlock->getTerminator();
-        } else {
-            // No unique predecessor
-            currentInstr = nullptr;
+    llvm::DbgValueInst * closestDbgValue = nullptr;
+    // Find the closest dbg.value intrinsic that preceeds the instruction. 
+    // i.e. find the intrinsic that does not dominate any of the other intrinsics.
+    for (auto *dbgVal : dbgValues) {
+        bool dominatesAny = false;
+        for (auto *v : dbgValues) {
+            if (dbgVal == v)
+                continue;
+            if (domTree.dominates(dbgVal, v)) {
+                dominatesAny = true;
+                break;
+            }
+        }
+        if (!dominatesAny && closestDbgValue != nullptr) {
+            // Ambiguous
+            return nullptr;
+        } else if (!dominatesAny) {
+            closestDbgValue = dbgVal;
         }
     }
-
-    if (auto *dbgValue =
-            llvm::dyn_cast_if_present<llvm::DbgValueInst>(currentInstr)) {
-        return dbgValues.contains(dbgValue) ? dbgValue : nullptr;
-    } else {
-        return nullptr;
-    }
+    return closestDbgValue;
 }
 } // namespace pallas::utils
