@@ -50,6 +50,7 @@ class LLVMSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/llvm/pallas/pallas_loop_goto.ll"
   vercors should fail withCode "assertFailed:false" using silicon example "concepts/llvm/pallas/pallas_c_assert_fail.ll"
   vercors should verify using silicon example "concepts/llvm/pallas/pallas_c_assert.ll"
+  vercors should verify using silicon example "concepts/llvm/pallas/pallas_swift_assert.ll"
 
   // Swift
   vercors should verify using silicon flags("--pallas-sroa") example "concepts/llvm/pallas/pallas_swift_fib.ll"
