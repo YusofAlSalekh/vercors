@@ -25,13 +25,3 @@ int foo(int a, int b) {
     tmp += b;
     return a + b;
 }
-
-/*@
-ensures _result(int) > 0;
-@*/
-int bar(int a, int b) {
-    int tmp = a;
-    /*@ assume a > b; @*/
-    tmp -= b;
-    return tmp;
-}
