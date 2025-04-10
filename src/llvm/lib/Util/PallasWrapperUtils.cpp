@@ -84,10 +84,9 @@ bool buildArgExprFromDbgValue(col::LlvmFunctionInvocation &wrapperCall,
     return true;
 }
 
-llvm::DbgValueInst *
-getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
-                   llvm::Instruction &llvmInstr,
-                   llvm::FunctionAnalysisManager &fam) {
+llvm::DbgValueInst *getClosestDbgValue(
+    const llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
+    llvm::Instruction &llvmInstr, llvm::FunctionAnalysisManager &fam) {
     /* If this approach is not strong enough, an alternative approach would be
      * to use the dominator-tree to find the dbg.value that dominates the
      * llvmInstr but non of the other intrinsics.

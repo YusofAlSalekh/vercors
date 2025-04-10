@@ -87,7 +87,7 @@ void llvm2col::transformLoopContract(llvm::Loop &llvmLoop,
 namespace {
 llvm::DbgValueInst *selectDbgValue(
     const llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
-    llvm::Loop &llvmLoop) {
+    llvm::Loop &llvmLoop, llvm::FunctionAnalysisManager &fam) {
     // Cast all intrinsics to dbg.value
     llvm::SmallVector<llvm::DbgValueInst *> dbgValues;
     for (auto *intr : intrinsics) {
@@ -111,6 +111,7 @@ llvm::DbgValueInst *selectDbgValue(
     }
 
     // Try to find dbg.value that refers to phi-node in loop-header
+    // (Applies to values that are modified within the loop)
     auto *loopHeader = llvmLoop.getHeader();
     llvm::DbgValueInst *valInHeader = nullptr;
     for (auto *dbgValue : dbgValues) {
@@ -129,11 +130,15 @@ llvm::DbgValueInst *selectDbgValue(
         }
         valInHeader = dbgValue;
     }
+    if (valInHeader != nullptr) {
+        return valInHeader;
+    }
 
-    // TODO: If this is not strong enough, we could apply the same precedure
-    // as for the specification-statements and loop for the closest dbg.value
-    // the preceeds the loop.
-    return valInHeader;
+    // Map to the next dbg.value intrinsic that preceeds the loop-header.
+    // (Applies to values that are not modified in the loop)
+    auto *closestDbgValue =
+        pallas::utils::getClosestDbgValue(intrinsics, loopHeader->front(), fam);
+    return closestDbgValue;
 }
 
 } // namespace
@@ -235,7 +240,8 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
                                                   functionCursor);
         } else {
             // Try to map to dbg.value in loop-header
-            llvm::DbgValueInst *dbgVal = selectDbgValue(intrinsics, llvmLoop);
+            llvm::DbgValueInst *dbgVal =
+                selectDbgValue(intrinsics, llvmLoop, fam);
             if (dbgVal == nullptr) {
                 addError(*llvmParentFunc,
                          "Unable to map dbg.value to instruction.");

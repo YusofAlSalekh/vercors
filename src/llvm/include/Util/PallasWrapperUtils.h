@@ -47,10 +47,9 @@ bool buildArgExprFromDbgValue(col::LlvmFunctionInvocation &wrapperCall,
  * instruction.
  * Uses the DominatorTreeAnalysis.
  */
-llvm::DbgValueInst *
-getClosestDbgValue(llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
-                   llvm::Instruction &llvmInstr,
-                   llvm::FunctionAnalysisManager &fam);
+llvm::DbgValueInst *getClosestDbgValue(
+    const llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
+    llvm::Instruction &llvmInstr, llvm::FunctionAnalysisManager &fam);
 
 } // namespace pallas::utils
 
