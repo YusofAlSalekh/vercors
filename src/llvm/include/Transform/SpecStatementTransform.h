@@ -21,9 +21,6 @@ void transformSpecStmnt(llvm::MDNode &specStmnt, llvm::Instruction &llvmInstr,
                         col::LlvmBasicBlock &colBlock,
                         pallas::FunctionCursor &functionCursor);
 
-llvm::Value *mapDIVarToValueForStatement(llvm::Function &f,
-                                         llvm::DIVariable &diVar);
-
 } // namespace llvm2col
 
 #endif // PALLAS_SPECSTATEMENTTRANSFORM_H

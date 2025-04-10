@@ -20,6 +20,12 @@
 
 const std::string SOURCE_LOC = "Transform::LoopContractTransform";
 
+namespace {
+void addError(llvm::Function &parentFunc, const std::string &msg) {
+    pallas::ErrorReporter::addError(SOURCE_LOC, msg, parentFunc);
+}
+} // namespace
+
 void llvm2col::transformLoopContract(llvm::Loop &llvmLoop,
                                      col::LoopContract &colContract,
                                      pallas::FunctionCursor &functionCursor) {
@@ -78,6 +84,60 @@ void llvm2col::transformLoopContract(llvm::Loop &llvmLoop,
     return;
 }
 
+namespace {
+llvm::DbgValueInst *selectDbgValue(
+    const llvm::SmallVector<llvm::DbgVariableIntrinsic *> &intrinsics,
+    llvm::Loop &llvmLoop) {
+    // Cast all intrinsics to dbg.value
+    llvm::SmallVector<llvm::DbgValueInst *> dbgValues;
+    for (auto *intr : intrinsics) {
+        if (pallas::utils::hasDiExpression(*intr)) {
+            pallas::ErrorReporter::addError(
+                SOURCE_LOC, "Unable to map DIVariable (DIExpressions not "
+                            "yet supported)");
+            return nullptr;
+        }
+        auto *dbgVal = llvm::dyn_cast<llvm::DbgValueInst>(intr);
+        if (dbgVal == nullptr) {
+            pallas::ErrorReporter::addError(
+                SOURCE_LOC, "Unable to map DIVariable (Expected dbg.value)");
+            return nullptr;
+        }
+        dbgValues.push_back(dbgVal);
+    }
+    // If there is a unique intrinsic, return that
+    if (dbgValues.size() == 1) {
+        return dbgValues.front();
+    }
+
+    // Try to find dbg.value that refers to phi-node in loop-header
+    auto *loopHeader = llvmLoop.getHeader();
+    llvm::DbgValueInst *valInHeader = nullptr;
+    for (auto *dbgValue : dbgValues) {
+        auto *phi = llvm::dyn_cast<llvm::PHINode>(dbgValue->getValue());
+        // Only consider dbg-intrinsics in the loop-header that refer to a
+        // phi-node in the loop-header.
+        if (dbgValue->getParent() != loopHeader || phi == nullptr ||
+            phi->getParent() != loopHeader) {
+            continue;
+        }
+        if (valInHeader != nullptr) {
+            pallas::ErrorReporter::addError(
+                SOURCE_LOC, "Unable to map DIVariable (Ambiguous dbg.value in "
+                            "loop-header)");
+            return nullptr;
+        }
+        valInHeader = dbgValue;
+    }
+
+    // TODO: If this is not strong enough, we could apply the same precedure
+    // as for the specification-statements and loop for the closest dbg.value
+    // the preceeds the loop.
+    return valInHeader;
+}
+
+} // namespace
+
 bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
                                       col::LlvmLoopContract &colContract,
                                       llvm::MDNode &contractLoc,
@@ -121,16 +181,16 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
             .getAssociatedColFuncDef();
 
     // Get DIVariables from MD
-    llvm::SmallVector<llvm::DIVariable *, 8> diVars;
+    llvm::SmallVector<llvm::DILocalVariable *, 8> diVars;
     unsigned int idx = 2;
     while (idx < invMD.getNumOperands()) {
-        // Check that operand is a DIVariable
-        auto *diVar = llvm::dyn_cast_if_present<llvm::DIVariable>(
+        // Check that operand is a DILocalVariable
+        auto *diVar = llvm::dyn_cast_if_present<llvm::DILocalVariable>(
             invMD.getOperand(idx).get());
         if (diVar == nullptr) {
             pallas::ErrorReporter::addError(
                 SOURCE_LOC,
-                "Malformed loop invariant. Expected DIVariable as operand.",
+                "Malformed loop invariant. Expected DILocalVariable.",
                 *llvmParentFunc);
             return false;
         }
@@ -152,48 +212,43 @@ bool llvm2col::addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
 
     // Add arguments to wrapper-call
     for (auto [argIdx, diVar] : llvm::enumerate(diVars)) {
-        // Match DIVariables to LLVM-Values
-        llvm::Value *llvmVal =
-            pallas::utils::mapDIVarToValue(*llvmParentFunc, *diVar, &llvmLoop);
-        if (llvmVal == nullptr) {
-            pallas::ErrorReporter::addError(
-                SOURCE_LOC, "Unable to map DIVariable to value.",
-                *llvmParentFunc);
-            return false;
-        }
+        llvm::SmallVector<llvm::DbgVariableIntrinsic *> intrinsics =
+            pallas::utils::getIntrinsicsForDIVar(*llvmParentFunc, *diVar);
 
-        // TODO: Refactor this to use the functions from PallasWrapperUtils
-        // Get variables from llvm-values and build argument-expressions
-        if (llvm::isa<llvm::AllocaInst>(llvmVal)) {
-            pallas::utils::buildArgExprFromAlloca(
-                *wrapperCall, argIdx, *llvm::cast<llvm::AllocaInst>(llvmVal),
-                *llvmWFunc, *srcLoc, functionCursor);
-        } else if (llvm::isa<llvm::PHINode>(llvmVal) ||
-                   llvm::isa<llvm::LoadInst>(llvmVal)) {
-            col::Variable *colVar =
-                &functionCursor.getVariableMapEntry(*llvmVal, true);
-            // Local to var of phi-node
-            auto *local = wrapperCall->add_args()->mutable_local();
-            local->set_allocated_origin(
-                llvm2col::generatePallasWrapperCallOrigin(*llvmWFunc, *srcLoc));
-            local->mutable_ref()->set_id(colVar->id());
-        } else if (auto *arg = llvm::dyn_cast<llvm::Argument>(llvmVal)) {
-            col::Variable *colVar = &colFResult.getFuncArgMapEntry(*arg);
-            auto *argExpr = wrapperCall->add_args()->mutable_local();
-            argExpr->set_allocated_origin(
-                llvm2col::generatePallasWrapperCallOrigin(*llvmWFunc, *srcLoc));
-            argExpr->mutable_ref()->set_id(colVar->id());
+        if (auto *declIntr = pallas::utils::getUniqueDbgDeclare(intrinsics)) {
+            // Map to unique dbg.declare
+            if (pallas::utils::hasDiExpression(*declIntr)) {
+                pallas::ErrorReporter::addError(
+                    SOURCE_LOC, "Unable to map DIVariable (DIExpressions not "
+                                "yet supported)");
+                return false;
+            }
+            auto *alloca =
+                llvm::dyn_cast<llvm::AllocaInst>(declIntr->getAddress());
+            if (alloca == nullptr) {
+                addError(*llvmParentFunc,
+                         "Unable to map dbg.declare to instruction");
+                return false;
+            }
+            pallas::utils::buildArgExprFromAlloca(*wrapperCall, argIdx, *alloca,
+                                                  *llvmWFunc, *srcLoc,
+                                                  functionCursor);
         } else {
-            std::string valStr;
-            llvm::raw_string_ostream vStream(valStr);
-            vStream << *llvmVal;
-            pallas::ErrorReporter::addError(
-                SOURCE_LOC,
-                "Unable to map DIVariable to col-variable (Unsupported "
-                "value):" +
-                    vStream.str(),
-                *llvmParentFunc);
-            return false;
+            // Try to map to dbg.value in loop-header
+            llvm::DbgValueInst *dbgVal = selectDbgValue(intrinsics, llvmLoop);
+            if (dbgVal == nullptr) {
+                addError(*llvmParentFunc,
+                         "Unable to map dbg.value to instruction.");
+                return false;
+            }
+            bool ok = pallas::utils::buildArgExprFromDbgValue(
+                *wrapperCall, argIdx, *dbgVal, *llvmWFunc, *srcLoc,
+                functionCursor, *llvmParentFunc);
+            if (!ok) {
+                addError(*llvmParentFunc,
+                         "Unable to build argument of wrapper-function.");
+                return false;
+            }
         }
     }
 
