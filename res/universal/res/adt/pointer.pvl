@@ -19,7 +19,6 @@ adt `block` {
 }
 
 adt `pointer` {
-  /* pure `pointer` pointer_of(`block` b, int offset); */
   pure `block` pointer_block(`pointer` p);
   pure int pointer_offset(`pointer` p);
   pure `pointer` pointer_inv(ref r);
@@ -39,8 +38,6 @@ adt `pointer` {
   axiom (∀ `pointer` p, int stride; stride > 0; {:ptr_address(p, stride):} > 0);
 
   axiom (∀ `pointer` p1, `pointer` p2, int stride; stride > 0 && ({:ptr_address(p1, stride):} == {:ptr_address(p2, stride):} && {:pointer_block(p1):} == {:pointer_block(p2):}) ==> p1 == p2);
-
-  axiom (∀ `pointer` p1, `pointer` p2; {:pointer_offset(p1):} == {:pointer_offset(p2):} && {:pointer_block(p1):} == {:pointer_block(p2):} ==> p1 == p2);
 
   axiom ptr_add_axiom();
 
@@ -62,12 +59,12 @@ ensures `pointer`.pointer_block(\result) == `pointer`.pointer_block(p);
 pure `pointer` ptr_add(`pointer` p, int offset);
 
 decreases;
-ensures (\forall `pointer` p1, int offset, int i;
-    0 <= `pointer`.pointer_offset(p1) + offset &&
-    `pointer`.pointer_offset(p1) + offset < `block`.block_length(`pointer`.pointer_block(p1)) &&
-    0 <= i &&
-    i < `block`.block_length(`pointer`.pointer_block(p1)) - `pointer`.pointer_offset(p1) - offset;
-    {:ptr_add(ptr_add(p1, offset), i):} == ptr_add(p1, offset + i));
+ensures (\forall `pointer` p, int offset, int i;
+    0 <= `pointer`.pointer_offset(p) + offset &&
+    `pointer`.pointer_offset(p) + offset < `block`.block_length(`pointer`.pointer_block(p)) &&
+    0 <= `pointer`.pointer_offset(p) + offset + i &&
+    `pointer`.pointer_offset(p) + offset + i < `block`.block_length(`pointer`.pointer_block(p));
+    {:ptr_add(ptr_add(p, offset), i):} == ptr_add(p, offset + i));
 pure boolean ptr_add_axiom() = true;
 
 decreases;
@@ -82,3 +79,4 @@ decreases;
 requires stride > 0;
 ensures `pointer`.ptr_address(\result, stride) == address;
 pure `pointer` ptr_from_address(int address, int stride);
+

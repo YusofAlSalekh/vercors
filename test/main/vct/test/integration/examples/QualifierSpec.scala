@@ -150,7 +150,7 @@ class StructQualifierSpec extends VercorsSpec {
 
   /*@
     context xs != NULL && xs2 != NULL;
-    requires x1 != NULL ** \pointer_length(x1)==1 ** Perm(x1, write) ** Perm(*x1, write);
+    requires x1 != NULL ** \pointer_length(x1)==1 ** Perm(*x1, write);
     context Perm(v, write) ** v.xxs != NULL;
   @*/
 
@@ -177,7 +177,7 @@ class StructQualifierSpec extends VercorsSpec {
 
   /*@
     context xs != NULL;
-    context x1 != NULL ** \pointer_length(x1)==1 ** Perm(x1, write) ** Perm(*x1, write);
+    context x1 != NULL ** \pointer_length(x1)==1 ** Perm(*x1, write);
   @*/
   int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  x1, /*@ unique<2> @*/ int* xs){
     x1->xs = xs;
@@ -214,7 +214,7 @@ class StructQualifierSpec extends VercorsSpec {
 
   /*@
     context xs != NULL;
-    context x1 != NULL ** \pointer_length(x1)==1 ** Perm(x1, write) ** Perm(*x1, write);
+    context x1 != NULL ** \pointer_length(x1)==1 ** Perm(*x1, write);
   @*/
   int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  x1, /*@ unique<2> @*/ int* xs){
     x1->xs = xs;
@@ -259,7 +259,7 @@ class StructQualifierSpec extends VercorsSpec {
 
   /*@
     context xs1 != NULL && ys1 != NULL;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
   @*/
   int f(/*@unique_pointer_field<ys, 1>@*/ /*@unique_pointer_field<xs, 2>@*/ struct vec*  v,
     /*@ unique<2> @*/ int* xs1,
@@ -279,7 +279,7 @@ class StructQualifierSpec extends VercorsSpec {
 
   /*@
     context xs1 != NULL && ys1 != NULL;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
   @*/
   int f(/*@unique_pointer_field<xs, 1>@*/ /*@unique_pointer_field<xs, 2>@*/ struct vec*  v,
     /*@ unique<2> @*/ int* xs1,
@@ -298,7 +298,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   /*@ unique<1> @*/ int* get_xs(/*@unique_pointer_field<xs, 1>@*/ struct vec* v){
@@ -306,7 +306,7 @@ class StructQualifierSpec extends VercorsSpec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  v){
@@ -322,7 +322,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   int* get_xs(struct vec* v){
@@ -330,7 +330,7 @@ class StructQualifierSpec extends VercorsSpec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  v){
@@ -347,7 +347,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   /*@unique<1>@*/ int* get_xs(/*@unique_pointer_field<xs, 1>@*/ struct vec* v){
@@ -355,7 +355,7 @@ class StructQualifierSpec extends VercorsSpec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 2>@*/ struct vec*  v){
@@ -371,7 +371,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -380,7 +380,7 @@ struct vec {
 
   /*@
   ghost
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(v->xs, 1\100) ** v->xs != NULL;
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100) ** v->xs != NULL;
     context 1 \in m.keys && m[1].size >0 ==> m[1][0].fst != NULL;
     ensures \result != NULL;
   int* get_xs2(struct vec* v, map<int, seq<tuple<int*, void*> > > m){
@@ -395,7 +395,7 @@ struct vec {
   /*@
     given map<int, seq<tuple<int*, void*> > > m;
     context 1 \in m.keys && m[1].size >0 ==> m[1][0].fst != NULL;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 1>@*/ struct vec*  v){
@@ -412,7 +412,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100) ** Perm(&v->n, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100) ** Perm(&v->n, 1\100);
     ensures \result == &(v->n);
   @*/
   int* get_xs(struct vec* v){
@@ -420,7 +420,7 @@ struct vec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
     context v->n == 42;
   @*/
@@ -812,7 +812,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -821,7 +821,7 @@ struct vec {
 
   /*@
   ghost
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(v->xs, 1\100) ** v->xs != NULL;
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100) ** v->xs != NULL;
     context 1 \in m.keys && m[1].size >0 ==> m[1][0].fst != NULL;
     ensures \result != NULL;
   int* get_xs2(struct vec* v, map<int, seq<tuple<int*, void*> > > m){
@@ -836,7 +836,7 @@ struct vec {
   /*@
     given map<int, seq<tuple<int*, void*> > > m;
     context 1 \in m.keys && m[1].size >0 ==> m[1][0].fst != NULL;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 1>@*/ struct vec*  v){
@@ -857,7 +857,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   int* get_xs(struct vec* v){
@@ -883,7 +883,7 @@ struct vec {
   /*@
     given int* ys;
     yields int* res;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -891,7 +891,7 @@ struct vec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 1>@*/ struct vec*  v, int* ys){
@@ -909,7 +909,7 @@ struct vec {
   /*@
     given int* ys;
     yields int* res;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, 1\100) ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -917,7 +917,7 @@ struct vec {
    }
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(v, write) ** Perm(*v, write);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(*v, write);
     context v->xs != NULL;
   @*/
   int f(/*@unique_pointer_field<xs, 1>@*/ struct vec*  v, /*@unique<1>@*/ int* ys){
@@ -1011,7 +1011,7 @@ struct vec {
     /*@ unique<1> */int * /*@ unique<2> */ xs;
 };
 
-//@ requires v != NULL ** Value(v) ** Value(*v);
+//@ requires v != NULL ** Value(*v);
 int f(struct vec*  v){
     /*@ unique<1> @*/ int* xs2 = v->xs;
     /*@ unique<1> */int * /*@ unique<2>*/ *xs3 = &v->xs;
@@ -1082,7 +1082,6 @@ struct dim {
 };
 /*@
 inline resource dim_perm(struct dim *dim, rational p, int i) =
- Perm(&dim[i], 1\2) **
  Perm(dim[i].min, 1\2) **
  Perm(dim[i].stride, 1\2) **
  Perm(dim[i].extent, 1\2) **
@@ -1104,8 +1103,6 @@ struct buf {
 inline resource buffer_pred(struct buf *buf, rational p, int n_dims) =
  buf != NULL **
  \pointer_length(buf) == 1 **
- Perm(buf, p) **
- Perm(&buf->shape, p) **
  Perm(&buf->shape.dim, p) **
  buf->shape.dim != NULL **
  \pointer_length(buf->shape.dim) == n_dims **

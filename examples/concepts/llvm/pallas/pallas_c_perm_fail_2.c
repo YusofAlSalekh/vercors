@@ -7,8 +7,7 @@ typedef struct S {
 } BigStruct;
 
 /*@
-requires s != NULL && Perm(s, fracOf(1, 2));
-ensures Perm(s, fracOf(1, 2));
+requires s != NULL;
 ensures s->a == 0;
 @*/
 void bar(BigStruct *s) {

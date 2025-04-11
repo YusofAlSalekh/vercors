@@ -23,11 +23,9 @@ void baz() {
     //@ loop_invariant 0 <= i && i <= 2;
     //@ loop_invariant elems != NULL;
     //@ loop_invariant \pointer(elems, 2, write);
-    //@ loop_invariant Perm(&e1, write);
     //@ loop_invariant Perm(e1, write);
     //@ loop_invariant e1.d != NULL;
     //@ loop_invariant Perm(e1.d, write);
-    //@ loop_invariant Perm(&e2, write);
     //@ loop_invariant Perm(e2, write);
     //@ loop_invariant e2.d != NULL;
     //@ loop_invariant Perm(e2.d, write);
