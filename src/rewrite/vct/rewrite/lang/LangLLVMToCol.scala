@@ -163,6 +163,9 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val typeSubstitutions: mutable.Map[Variable[Pre], Type[Pre]] = mutable
     .Map()
 
+  private val wrappersInAssume: mutable.Set[LLVMFunctionDefinition[Pre]] =
+    mutable.Set()
+
   // Keeps track if the currently transformed function is a wrapper-function.
   private val inWrapperFunction: ScopedStack[Boolean] = ScopedStack()
 
@@ -503,6 +506,14 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     )
   }
 
+  def gatherWrappersInAssume(program: Program[Pre]): Unit = {
+    program.collect {
+      case Assume(LLVMFunctionInvocation(Ref(f), _, _, _))
+          if f.pallasExprWrapperFor.isDefined =>
+        wrappersInAssume.add(f);
+    }
+  }
+
   def rewriteLocal(local: LLVMLocal[Pre]): Expr[Post] = {
     implicit val o: Origin = local.o
     Local(rw.succ(local.ref.get.decl))
@@ -544,8 +555,9 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         val isWrapper = func.pallasExprWrapperFor.isDefined
         val returnT =
-          if (isWrapper) { TResource[Post]() }
-          else {
+          if (isWrapper && !wrappersInAssume.contains(func)) {
+            TResource[Post]()
+          } else {
             rw.dispatch(func.importedReturnType.getOrElse(func.returnType))
           }
         funcRetType.having(returnT) {
@@ -1310,24 +1322,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case _ => throw UnsupportedMemset(memset)
     }
 
-    // Assign new value to the struct
-    val newCls = structMap.get(structType).get
-    val assignStruct =
-      Assign(
-        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
-        new NewObject[Post](newCls.ref),
-      )(memset.blame)
     // Set field of the struct to 0
     val structField = structFieldMap((structType, 0))
-    val assignField =
-      Assign[Post](
-        Deref[Post](
-          DerefPointer(rw.dispatch(memset.dest))(memset.blame),
-          structField.ref,
-        )(memset.blame),
-        rw.dispatch(memset.value),
-      )(memset.blame)
-    Block(Seq(assignStruct, assignField))
+    Assign[Post](
+      Deref[Post](
+        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+        structField.ref,
+      )(memset.blame),
+      rw.dispatch(memset.value),
+    )(memset.blame)
   }
 
   def rewritePointerValue(pointer: LLVMPointerValue[Pre]): Expr[Post] = {

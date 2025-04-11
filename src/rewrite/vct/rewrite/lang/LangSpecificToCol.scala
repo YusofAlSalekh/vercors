@@ -216,6 +216,7 @@ case class LangSpecificToCol[Pre <: Generation](
 
   override def dispatch(program: Program[Pre]): Program[Post] = {
     llvm.gatherBackEdges(program)
+    llvm.gatherWrappersInAssume(program)
     llvm.gatherTypeHints(program)
     llvm.gatherPallasTypeSubst(program)
     super.dispatch(program)

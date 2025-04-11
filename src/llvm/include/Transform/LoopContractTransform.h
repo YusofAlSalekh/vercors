@@ -24,14 +24,6 @@ bool addInvariantToContract(llvm::MDNode &invMD, llvm::Loop &llvmLoop,
                             llvm::MDNode &contractLoc,
                             pallas::FunctionCursor &functionCursor);
 
-/**
- * Build argument-expression that dereferences the value of the given alloca.
- */
-void buildArgExprFromAlloca(col::LlvmFunctionInvocation &wrapperCall,
-                            unsigned int argIdx, llvm::AllocaInst &llvmAlloca,
-                            llvm::Function &llvmWFunc, llvm::MDNode &srcLoc,
-                            pallas::FunctionCursor &functionCursor);
-
 } // namespace llvm2col
 
 #endif // PALLAS_LOOPCONTRACTTRANSFORM_H
