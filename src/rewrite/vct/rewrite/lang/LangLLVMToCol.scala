@@ -1322,24 +1322,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case _ => throw UnsupportedMemset(memset)
     }
 
-    // Assign new value to the struct
-    val newCls = structMap.get(structType).get
-    val assignStruct =
-      Assign(
-        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
-        new NewObject[Post](newCls.ref),
-      )(memset.blame)
     // Set field of the struct to 0
     val structField = structFieldMap((structType, 0))
-    val assignField =
-      Assign[Post](
-        Deref[Post](
-          DerefPointer(rw.dispatch(memset.dest))(memset.blame),
-          structField.ref,
-        )(memset.blame),
-        rw.dispatch(memset.value),
-      )(memset.blame)
-    Block(Seq(assignStruct, assignField))
+    Assign[Post](
+      Deref[Post](
+        DerefPointer(rw.dispatch(memset.dest))(memset.blame),
+        structField.ref,
+      )(memset.blame),
+      rw.dispatch(memset.value),
+    )(memset.blame)
   }
 
   def rewritePointerValue(pointer: LLVMPointerValue[Pre]): Expr[Post] = {
