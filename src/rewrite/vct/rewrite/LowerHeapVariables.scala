@@ -2,29 +2,48 @@ package vct.rewrite
 
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
 import vct.col.ast.{
-  Variable,
-  LocalHeapVariable,
-  HeapVariable,
-  DerefPointer,
-  TNonNullPointer,
-  Program,
-  Expr,
-  Statement,
-  HeapLocal,
-  PointerLocation,
-  HeapVariableLocation,
-  DerefHeapVariable,
+  Assign,
   Block,
-  Scope,
-  Local,
-  Location,
+  DecreasesClauseNoRecursion,
+  Deref,
+  DerefHeapVariable,
+  DerefPointer,
+  Expr,
+  FieldLocation,
+  HeapLocal,
   HeapLocalDecl,
+  HeapVariable,
+  HeapVariableLocation,
+  InstanceField,
+  Local,
+  LocalHeapVariable,
+  Location,
+  Perm,
+  PointerLocation,
+  Procedure,
+  Program,
+  Result,
+  Scope,
+  Statement,
+  TByValueClass,
+  TNonNullPointer,
+  UnitAccountedPredicate,
+  Variable,
+  WritePerm,
 }
-import vct.col.origin.Origin
+import vct.col.origin.{
+  AbstractApplicable,
+  AssignLocalOk,
+  NonNullPointerNull,
+  Origin,
+  PanicBlame,
+  TrueSatisfiable,
+}
 import vct.col.util.AstBuildHelpers._
 import vct.col.ref.Ref
 import vct.col.util.{CurrentRewriteProgramContext, SuccessionMap}
 import vct.result.VerificationError
+import vct.rewrite.EncodeByValueClassUsage.UnsupportedStructPerm
 
 case object LowerHeapVariables extends RewriterBuilder {
   override def key: String = "lowerHeapVariables"
@@ -42,6 +61,81 @@ case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
       : SuccessionMap[HeapVariable[Pre], HeapVariable[Post]] = SuccessionMap()
   private val globalLowered
       : SuccessionMap[HeapVariable[Pre], HeapVariable[Post]] = SuccessionMap()
+  private val classCreationMethodsSucc
+      : SuccessionMap[TByValueClass[Pre], Procedure[Post]] = SuccessionMap()
+  private val classPointerCreationMethodsSucc
+      : SuccessionMap[(TByValueClass[Pre], Option[BigInt]), Procedure[Post]] =
+    SuccessionMap()
+
+  // Duplicate from EncodeByValueClassUsage, keep in sync
+  def makeClassCreationMethod(t: TByValueClass[Pre]): Procedure[Post] = {
+    implicit val o: Origin = t.cls.decl.o
+
+    globalDeclarations.declare(withResult((result: Result[Post]) =>
+      procedure[Post](
+        blame = AbstractApplicable,
+        contractBlame = TrueSatisfiable,
+        returnType = dispatch(t),
+        ensures = UnitAccountedPredicate(
+          unwrapClassPerm(result, Perm(_, WritePerm()), t)
+        ),
+        decreases = Some(DecreasesClauseNoRecursion[Post]()),
+      )
+    ))
+  }
+
+  def makeClassPointerCreationMethod(
+      t: TByValueClass[Pre],
+      unique: Option[BigInt],
+  ): Procedure[Post] = {
+    implicit val o: Origin = t.cls.decl.o
+
+    globalDeclarations.declare(withResult((result: Result[Post]) =>
+      procedure[Post](
+        blame = AbstractApplicable,
+        contractBlame = TrueSatisfiable,
+        returnType = TNonNullPointer(dispatch(t), unique),
+        ensures = UnitAccountedPredicate(unwrapClassPerm(
+          DerefPointer(result)(NonNullPointerNull),
+          Perm(_, WritePerm()),
+          t,
+        )),
+        decreases = Some(DecreasesClauseNoRecursion[Post]()),
+      )
+    ))
+  }
+
+  private def unwrapClassPerm(
+      obj: Expr[Post],
+      perm: Location[Post] => Expr[Post],
+      structType: TByValueClass[Pre],
+      visited: Seq[TByValueClass[Pre]] = Seq(),
+  ): Expr[Post] = {
+    if (visited.contains(structType))
+      throw UnsupportedStructPerm(
+        obj.o
+      ) // We do not allow this notation for recursive structs
+    implicit val o: Origin = obj.o
+    val blame = PanicBlame("Field permission is framed")
+    val fields = structType.cls.decl.decls.collect {
+      case f: InstanceField[Pre] => f
+    }
+    val newFieldPerms = fields.map(member => {
+      val loc = FieldLocation[Post](obj, succ(member))
+      member.t match {
+        case inner: TByValueClass[Pre] =>
+          unwrapClassPerm(
+            Deref[Post](obj, succ(member))(blame),
+            perm,
+            inner,
+            structType +: visited,
+          )
+        case _ => perm(loc)
+      }
+    })
+
+    foldStar(newFieldPerms)
+  }
 
   override def dispatch(program: Program[Pre]): Program[Post] = {
     val dereferencedHeapLocals = program.collect {
@@ -117,7 +211,31 @@ case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
           localLowered(v) = new Variable[Post](dispatch(v.t))(v.o)
           variables.declare(localLowered(v))
         }
-        Block(Nil)
+        if (v.t.asPointer.get.element.asByValueClass.isDefined) {
+          val t = v.t.asPointer.get.element.asByValueClass.get
+          if (localStripped.contains(v)) {
+            Assign(
+              localStripped(v).get,
+              procedureInvocation[Post](
+                TrueSatisfiable,
+                classCreationMethodsSucc
+                  .getOrElseUpdate(t, makeClassCreationMethod(t)).ref,
+              ),
+            )(AssignLocalOk)
+          } else {
+            val unique = v.t.asPointer.get.unique
+            Assign(
+              localLowered(v).get,
+              procedureInvocation[Post](
+                TrueSatisfiable,
+                classPointerCreationMethodsSucc.getOrElseUpdate(
+                  (t, unique),
+                  makeClassPointerCreationMethod(t, unique),
+                ).ref,
+              ),
+            )(AssignLocalOk)
+          }
+        } else { Block(Nil) }
       case _ => node.rewriteDefault()
     }
   }

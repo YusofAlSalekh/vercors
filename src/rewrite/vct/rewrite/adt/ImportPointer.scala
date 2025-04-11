@@ -5,7 +5,7 @@ import ImportADT.typeText
 import hre.util.ScopedStack
 import vct.col.origin._
 import vct.col.ref.Ref
-import vct.col.rewrite.Generation
+import vct.col.rewrite.{ClassToRef, Generation}
 import vct.col.util.AstBuildHelpers.{functionInvocation, _}
 import vct.col.util.SuccessionMap
 
@@ -23,7 +23,11 @@ case object ImportPointer extends ImportADTBuilder("pointer") {
   )
 
   private val AsTypeOrigin: Origin = Origin(
-    Seq(LabelContext("classToRef, asType function"))
+    Seq(LabelContext("adtPointer, asType function"))
+  )
+
+  private val PointerToAdtOrigin: Origin = Origin(
+    Seq(LabelContext("adtPointer, pointerToAdt function"))
   )
 
   private case class PointerNullOptNone(
@@ -110,6 +114,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
 
   private val asTypeFunctions: mutable.Map[Type[Pre], Function[Post]] = mutable
     .Map()
+  private val toAdtFunctions
+      : mutable.Map[(AxiomaticDataType[Pre], Seq[Type[Pre]]), Function[Post]] =
+    mutable.Map()
   private val context: ScopedStack[Context] = ScopedStack()
   private var casts: Set[(Type[Pre], Type[Pre])] = Set.empty
 
@@ -144,26 +151,29 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
 
     val result =
       new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(o.where(name = "res"))
-    globalDeclarations.declare(procedure[Post](
-      blame = AbstractApplicable,
-      contractBlame = TrueSatisfiable,
-      returnType = TVoid(),
-      outArgs = Seq(result),
-      ensures = UnitAccountedPredicate(
+    var ensures =
+      (ADTFunctionInvocation[Post](
+        typeArgs = Some((blockAdt.ref, Nil)),
+        ref = blockLength.ref,
+        args = Seq(ADTFunctionInvocation[Post](
+          typeArgs = Some((pointerAdt.ref, Nil)),
+          ref = pointerBlock.ref,
+          args = Seq(result.get),
+        )),
+      ) === const(1)) &*
         (ADTFunctionInvocation[Post](
-          typeArgs = Some((blockAdt.ref, Nil)),
-          ref = blockLength.ref,
-          args = Seq(ADTFunctionInvocation[Post](
-            typeArgs = Some((pointerAdt.ref, Nil)),
-            ref = pointerBlock.ref,
-            args = Seq(result.get),
-          )),
-        ) === const(1)) &*
-          (ADTFunctionInvocation[Post](
-            typeArgs = Some((pointerAdt.ref, Nil)),
-            ref = pointerOffset.ref,
-            args = Seq(result.get),
-          ) === const(0)) &* Perm(
+          typeArgs = Some((pointerAdt.ref, Nil)),
+          ref = pointerOffset.ref,
+          args = Seq(result.get),
+        ) === const(0))
+    pointerT.element match {
+      // TODO: Using a label to keep track of this information is quite ugly and I should replace it with something better
+      case TAxiomatic(adt, _)
+          if adt.decl.o.find[LabelContext]
+            .exists(_.label == ClassToRef.ByValueClassADTLabel) =>
+      case _ =>
+        ensures =
+          ensures &* Perm(
             SilverFieldLocation(
               obj =
                 FunctionInvocation[Post](
@@ -183,7 +193,15 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 ).ref,
             ),
             WritePerm(),
-          ) &* (asType(t, result.get) === result.get)
+          )
+    }
+    globalDeclarations.declare(procedure[Post](
+      blame = AbstractApplicable,
+      contractBlame = TrueSatisfiable,
+      returnType = TVoid(),
+      outArgs = Seq(result),
+      ensures = UnitAccountedPredicate(
+        ensures &* (asType(t, result.get) === result.get)
       ),
       decreases = Some(DecreasesClauseNoRecursion[Post]()),
     ))
@@ -424,7 +442,9 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   override def postCoerce(e: Expr[Pre]): Expr[Post] = {
     implicit val o: Origin = e.o
     e match {
-      case f @ Forall(_, triggers, _) =>
+      case f @ Forall(_, triggers, _)
+          if !f.o.find[LabelContext]
+            .exists(_.label == "generated quantifier") =>
         f.rewrite(triggers =
           triggers.map(_.map(rewriteTopLevelPointerSubscriptInTrigger))
         )
@@ -524,7 +544,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         val newValue = dispatch(value)
         (targetType, value.t) match {
           case (target: PointerType[Pre], value: PointerType[Pre])
-              if target.unique != value.unique =>
+              if target.unique != value.unique &&
+                target.element == value.element =>
             // Should not occur
             ???
           case (TPointer(innerType, _), TPointer(_, _)) =>
@@ -622,6 +643,46 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         adtFunctionInvocation[Post](
           ref = pointerAddress.ref,
           args = Seq(unwrapOption(p, addr.blame), dispatch(elementSize)),
+        )
+      case to @ PointerToAdt(p, TAxiomatic(Ref(adt), args)) =>
+        functionInvocation(
+          TrueSatisfiable,
+          ref =
+            toAdtFunctions.getOrElseUpdate(
+              (adt, args), {
+                globalDeclarations.declare(
+                  function[Post](
+                    AbstractApplicable,
+                    TrueSatisfiable,
+                    TAxiomatic(succ(adt), args.map(dispatch)),
+                    Seq(new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
+                      PointerToAdtOrigin.where(name = "p")
+                    )),
+                  )(PointerToAdtOrigin.where(name =
+                    "ptr_to_" + adt.o.find[SourceName].map(_.name)
+                      .getOrElse("unknown")
+                  ))
+                )
+              },
+            ).ref,
+          args = Seq(p match {
+            case PointerAdd(_, _) => unwrapOption(p, to.blame)
+            case _
+                if context.topOption.contains(InAxiom()) ||
+                  p.o.find[LabelContext]
+                    .exists(_.label == "classToRef cast helpers") =>
+              unwrapOption(p, to.blame)
+            case _ =>
+              FunctionInvocation[Post](
+                ref = pointerAdd.ref,
+                args = Seq(unwrapOption(p, to.blame), const(0)),
+                typeArgs = Nil,
+                Nil,
+                Nil,
+              )(PanicBlame(
+                "Pointer out of bounds, but this should not be possible since index equals 0"
+              ))
+          }),
         )
       case other => super.postCoerce(other)
     }

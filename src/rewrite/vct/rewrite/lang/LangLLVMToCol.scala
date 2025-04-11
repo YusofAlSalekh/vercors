@@ -599,9 +599,6 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         implicit val o: Origin = pallasResArgPermOrigin
         c.rewrite(contextEverywhere =
           (Local(arg) !== Null()) &* Perm(
-            AmbiguousLocation(Local(arg))(LLVMSretPerm),
-            WritePerm[Post](),
-          ) &* Perm(
             AmbiguousLocation(DerefPointer(Local(arg))(LLVMSretPerm))(
               LLVMSretPerm
             ),
@@ -1274,28 +1271,12 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val newT = rw.dispatch(t)
     val v = Local[Post](rw.succ(alloc.variable.decl))
     val elements = rw.dispatch(alloc.numElements)
-    t match {
-      case structType: LLVMTStruct[Pre] =>
-        Block(Seq(
-          assignLocal(
-            v,
-            NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
-              "allocation should never fail"
-            )),
-          ),
-          Assign(
-            DerefPointer(v)(PanicBlame("pointer is framed in allocation")),
-            NewObject[Post](structMap.ref(structType)),
-          )(PanicBlame("assignment should never fail")),
-        ))
-      case _ =>
-        assignLocal(
-          v,
-          NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
-            "allocation should never fail"
-          )),
-        )
-    }
+    assignLocal(
+      v,
+      NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
+        "allocation should never fail"
+      )),
+    )
   }
 
   def rewriteMemset(memset: LLVMMemset[Pre]): Statement[Post] = {

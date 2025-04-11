@@ -2,8 +2,8 @@
 // Test that the permission-annotations of Pallas work as expected.
 
 /*@
-requires ptr != NULL && Perm(ptr, fracOf(1, 2));
-ensures Perm(ptr, fracOf(1, 2));
+requires ptr != NULL && _Perm(ptr, _fracOf(1, 2));
+ensures _Perm(ptr, _fracOf(1, 2));
 @*/
 int foo(int *ptr) {
     return *ptr + 5;
@@ -14,10 +14,9 @@ typedef struct S {
 } BigStruct;
 
 /*@
-requires s != NULL && Perm(s, fracOf(1, 2));
-requires sep(Perm(&s->a, fracOf(1, 1)), Perm(&s->b, fracOf(1, 1)));
-ensures Perm(s, fracOf(1, 2));
-ensures sep(Perm(&s->a, fracOf(1, 1)), Perm(&s->b, fracOf(1, 1)));
+requires s != NULL;
+requires _sep(_Perm(&s->a, _write), _Perm(&s->b, _write));
+ensures _sep(_Perm(&s->a, _write), _Perm(&s->b, _write));
 ensures s->a == 0 && s->b == 0;
 @*/
 void bar(BigStruct *s) {
