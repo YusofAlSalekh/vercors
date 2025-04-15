@@ -7,6 +7,8 @@
 #include "Util/PallasMD.h"
 
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Instruction.h>
 #include <llvm/IR/Metadata.h>
 
 namespace pallas {
@@ -98,6 +100,32 @@ ExprWrapperMapper::Result ExprWrapperMapper::run(Function &F,
                 }
             }
         }
+
+        // Check blocks of specification-statements
+        for (auto it = llvm::inst_begin(parentF), end = llvm::inst_end(parentF);
+             it != end; ++it) {
+            llvm::Instruction *inst = &*it;
+            llvm::MDNode *specBlock = pallas::utils::getSpecStmntBlock(*inst);
+            if (specBlock == nullptr) {
+                continue;
+            }
+            // Check if any spec-statements reference F
+            for (auto idx = 1; idx < specBlock->getNumOperands(); ++idx) {
+                if (auto *stmnt = llvm::dyn_cast_if_present<llvm::MDNode>(
+                        specBlock->getOperand(idx).get())) {
+                    // TODO: Do amazing things
+                    if (stmnt->getNumOperands() < 3) {
+                        continue;
+                    }
+                    auto *wFunc =
+                        pallas::utils::getWrapperFunc(stmnt->getOperand(2));
+                    if (wFunc != nullptr && wFunc == &F) {
+                        return EWMResult(&parentF,
+                                         getContextForSpecStmnt(*stmnt));
+                    }
+                }
+            }
+        }
     }
     return EWMResult(nullptr, std::nullopt);
 }
@@ -121,6 +149,21 @@ ExprWrapperMapper::getContextForFContractClause(const llvm::MDNode &clause) {
             ctx = PallasWrapperContext::FuncContractPre;
         } else if (clauseTStr == pallas::constants::PALLAS_ENSURES) {
             ctx = PallasWrapperContext::FuncContractPost;
+        }
+    }
+    return ctx;
+}
+
+std::optional<PallasWrapperContext>
+ExprWrapperMapper::getContextForSpecStmnt(const llvm::MDNode &stmnt) {
+    std::optional<PallasWrapperContext> ctx = std::nullopt;
+    // Attempt to get string with statement-type
+    if (auto *stmntTypeMD = dyn_cast<MDString>(stmnt.getOperand(0).get())) {
+        auto stmntTypeStr = stmntTypeMD->getString().str();
+        if (stmntTypeStr == pallas::constants::PALLAS_ASSERT) {
+            ctx = PallasWrapperContext::AssertStmnt;
+        } else if (stmntTypeStr == pallas::constants::PALLAS_ASSUME) {
+            ctx = PallasWrapperContext::AssumeStmnt;
         }
     }
     return ctx;

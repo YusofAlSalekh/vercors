@@ -13,6 +13,9 @@ const std::string PALLAS_ENSURES = "pallas.ensures";
 const std::string PALLAS_WRAPPER_FUNC = "pallas.exprWrapper";
 const std::string PALLAS_SRC_LOC_ID = "pallas.srcLoc";
 const std::string PALLAS_LOOP_CONTR_ID = "pallas.loopInv";
+const std::string PALLAS_SPEC_STMNT_BLOCK = "pallas.stmntBlock";
+const std::string PALLAS_ASSUME = "pallas.assume";
+const std::string PALLAS_ASSERT = "pallas.assert";
 
 const std::string PALLAS_SPEC_LIB_MARKER = "pallas.specLib";
 const std::string PALLAS_SPEC_RESULT = "pallas.result";

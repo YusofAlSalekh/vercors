@@ -9,7 +9,12 @@
 #include "Transform/Instruction/TermOpTransform.h"
 #include "Transform/Instruction/UnaryOpTransform.h"
 #include "Transform/LoopContractTransform.h"
+#include "Transform/SpecStatementTransform.h"
+#include "Util/Constants.h"
 #include "Util/Exceptions.h"
+#include "Util/PallasMD.h"
+
+#include <llvm/IR/Metadata.h>
 
 const std::string SOURCE_LOC = "Transform::BlockTransform";
 
@@ -46,6 +51,13 @@ void llvm2col::transformLLVMBlock(llvm::BasicBlock &llvmBlock,
 void llvm2col::transformInstruction(pallas::FunctionCursor &funcCursor,
                                     llvm::Instruction &llvmInstruction,
                                     col::LlvmBasicBlock &colBodyBlock) {
+    // Check if a block of specification-statements is attached
+    if (llvm::MDNode *specMD =
+            pallas::utils::getSpecStmntBlock(llvmInstruction)) {
+        llvm2col::transformSpecStmntBlock(*specMD, llvmInstruction,
+                                          colBodyBlock, funcCursor);
+    }
+
     u_int32_t opCode = llvmInstruction.getOpcode();
     if (llvm::Instruction::TermOpsBegin <= opCode &&
         opCode < llvm::Instruction::TermOpsEnd) {
