@@ -1376,7 +1376,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     implicit val o: Origin = llvmPerm.o
     val locExpr = Local[Post](rw.succ(llvmPerm.loc.decl))
     Perm[Post](
-      AmbiguousLocation[Post](locExpr)(llvmPerm.blame),
+      PointerLocation[Post](locExpr)(llvmPerm.blame),
       Local[Post](rw.succ(llvmPerm.perm.decl)),
     )
   }
@@ -1571,7 +1571,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         } else { ReadPerm[Post]() }
       extendedInv =
         Perm(
-          AmbiguousLocation[Post](Local(rw.succ(v)))(PanicBlame(
+          PointerLocation[Post](Local(rw.succ(v)))(PanicBlame(
             "Generated locals always have permission"
           )),
           perm,
