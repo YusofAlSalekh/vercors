@@ -6,8 +6,8 @@
 extern int x;
 
 /*@
-  requires Perm(&x,1);
-  ensures Perm(&x,1) ** x==\old(x)+1;
+  requires Perm(x,1);
+  ensures Perm(x,1) ** x==\old(x)+1;
 @*/
 extern void test();
 

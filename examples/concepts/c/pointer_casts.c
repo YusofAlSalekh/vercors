@@ -17,8 +17,8 @@ void canCastToInteger() {
     //@ assert pointer_to_integer == &struct_b.struct_a.integer;
     //@ assert pointer_to_integer == (int *)&struct_b.struct_a;
     // The following is not implemented yet
-    // assert pointer_to_integer == &struct_b
-    // assert pointer_to_integer == &struct_b.struct_a
+    // assert pointer_to_integer == &struct_b;
+    // assert pointer_to_integer == &struct_b.struct_a;
     *pointer_to_integer = 10;
     //@ assert struct_b.struct_a.integer == 10;
 }
@@ -43,7 +43,7 @@ void castRemainsValidInLoop() {
 
     // We can also specify the permission through the pointer
     //@ loop_invariant 0 <= i && i <= 10;
-    //@ loop_invariant Perm(pointer_to_integer, write);
+    //@ loop_invariant Perm(*pointer_to_integer, write);
     //@ loop_invariant *pointer_to_integer == 10 - i;
     for (int i = 0; i < 10; i++) {
         *pointer_to_integer = *pointer_to_integer - 1;
@@ -58,7 +58,7 @@ void castRemainsValidInParBlock() {
 
     int *pointer_to_integer = (int *)&struct_b;
 
-    //@ context i == 8 ==> Perm(pointer_to_integer, write);
+    //@ context i == 8 ==> Perm(*pointer_to_integer, write);
     //@ ensures i == 8 ==> *pointer_to_integer == 0;
     for (int i = 0; i < 10; i++) {
         if (i == 8) {
@@ -72,7 +72,7 @@ void castRemainsValidInParBlock() {
 }
 
 //@ requires a != NULL;
-//@ context Perm(a, write);
+//@ context Perm(*a, write);
 //@ ensures *a == \old(*a) + 1;
 void increaseByOne(int *a) {
     *a += 1;
