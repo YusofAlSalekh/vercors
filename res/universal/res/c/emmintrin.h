@@ -80,14 +80,14 @@ __m128i /*@ pure @*/ _mm_set1_epi64x (long long __A)
 /*@ pure @*/ __m128d _mm_load_pd (double *__P);
 
 /*@
-  requires __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(*(long long *)&__P[i], read));
+  requires __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(((long long *)__P)[i], read));
   ensures ((long long*)__P)[0] == \result[0] && ((long long*)__P)[1] == \result[1];
 @*/
 /*@ pure @*/ __m128i _mm_loadu_epi64 (void *__P);
 
 
 /*@
-  requires __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(*(long long *)&__P[i], read));
+  requires __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(((long long *)__P)[i], read));
   ensures ((long long*)__P)[0] == \result[0] && ((long long*)__P)[1] == \result[1];
 @*/
 /*@ pure @*/ __m128i _mm_load_epi64 (void *__P);
@@ -120,14 +120,14 @@ __m128i /*@ pure @*/ _mm_set1_epi64x (long long __A)
 /*@ pure @*/ __m256d _mm256_load_pd (double *__P);
 
 /*@
-  requires __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(*(long long *)&__P[i], read));
+  requires __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(((long long *)__P)[i], read));
   ensures ((long long*)__P)[0] == \result[0] && ((long long*)__P)[1] == \result[1] && ((long long*)__P)[2] == \result[2] && ((long long*)__P)[3] == \result[3];
 @*/
 /*@ pure @*/ __m256i _mm256_loadu_epi64 (void *__P);
 
 
 /*@
-  requires __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(*(long long *)&__P[i], read));
+  requires __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(((long long *)__P)[i], read));
   ensures ((long long*)__P)[0] == \result[0] && ((long long*)__P)[1] == \result[1] && ((long long*)__P)[2] == \result[2] && ((long long*)__P)[3] == \result[3];
 @*/
 /*@ pure @*/ __m256i _mm256_load_epi64 (void *__P);
@@ -159,13 +159,13 @@ void _mm_store_pd (double *__P, __m128d __A);
 void _mm_storeu_pd (double *__P, __m128d __A);
 
 /*@
-  context __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(*(long long *)&__P[i], write));
+  context __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(((long long *)__P)[i], write));
   ensures ((long long *) __P)[0] == __A[0] && ((long long *) __P)[1] == __A[1];
 @*/
 void _mm_storeu_epi64 (void *__P, __m128i __A);
 
 /*@
-  context __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(*(long long *)&__P[i], write));
+  context __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<2; Perm(((long long *)__P)[i], write));
   ensures ((long long *) __P)[0] == __A[0] && ((long long *) __P)[1] == __A[1];
 @*/
 void _mm_store_epi64 (void *__P, __m128i __A);
@@ -198,13 +198,13 @@ void _mm256_store_pd (double *__P, __m256d __A);
 void _mm256_storeu_pd (double *__P, __m256d __A);
 
 /*@
-  context __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(*(long long *)&__P[i], write));
+  context __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(((long long *)__P)[i], write));
   ensures ((long long *) __P)[0] == __A[0] && ((long long *) __P)[1] == __A[1] && ((long long *) __P)[2] == __A[2] && ((long long *) __P)[3] == __A[3];
 @*/
 void _mm256_storeu_epi64 (void *__P, __m256i __A);
 
 /*@
-  context __P != NULL ** \pointer_length(__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(*(long long *)&__P[i], write));
+  context __P != NULL ** \pointer_length((long long *)__P) >= 8 ** (\forall* int i; 0<=i && i<4; Perm(((long long *)__P)[i], write));
   ensures ((long long *) __P)[0] == __A[0] && ((long long *) __P)[1] == __A[1] && ((long long *) __P)[2] == __A[2] && ((long long *) __P)[3] == __A[3];
 @*/
 void _mm256_store_epi64 (void *__P, __m256i __A);

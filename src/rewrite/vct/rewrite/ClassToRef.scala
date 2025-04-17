@@ -139,6 +139,9 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
       newT: Type[Post],
       unique: Option[BigInt],
       fieldRef: Ref[Post, ADTFunction[Post]],
+      structSize: Expr[Post],
+      fieldSize: Expr[Post],
+      toSize: Expr[Post],
   )(implicit o: Origin): Seq[ADTAxiom[Post]] = {
     (oldT match {
       case t: TByValueClass[Pre] => {
@@ -150,6 +153,9 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             dispatch(field.t),
             field.flags.collectFirst { case Unique(unique) => unique },
             fieldRef,
+            structSize,
+            fieldSize,
+            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].casts(1)._2),
           )
         }).getOrElse(Nil)
       }
@@ -157,14 +163,17 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     }) :+ new ADTAxiom[Post](forall(
       TNonNullPointer(axiomType, None),
       body = { a =>
-        InlinePattern(Cast(a, TypeValue(TNonNullPointer(newT, unique)))) ===
-          Cast(
-            adtFunctionInvocation(
-              fieldRef,
-              args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
-            ),
-            TypeValue(TNonNullPointer(newT, unique)),
-          )
+        InlinePattern(
+          PointerCast(a, TNonNullPointer(newT, unique), structSize, toSize)
+        ) === PointerCast(
+          adtFunctionInvocation(
+            fieldRef,
+            args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
+          ),
+          TNonNullPointer(newT, unique),
+          fieldSize,
+          toSize,
+        )
       },
     ))
   }
@@ -359,9 +368,12 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             castAxioms :+ new ADTAxiom[Post](forall(
               TNonNullPointer(axiomType, None),
               body = { a =>
-                InlinePattern(
-                  Cast(a, TypeValue(TNonNullPointer(newT, unique)))
-                ) === adtFunctionInvocation(
+                InlinePattern(PointerCast(
+                  a,
+                  TNonNullPointer(newT, unique),
+                  dispatch(cls.casts.head._2),
+                  dispatch(cls.casts(1)._2),
+                )) === adtFunctionInvocation(
                   byValFieldSucc.ref(field),
                   args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
                 )
@@ -381,6 +393,9 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
                         dispatch(innerF.t),
                         unique,
                         byValFieldSucc.ref(field),
+                        dispatch(cls.casts.head._2),
+                        dispatch(cls.casts(1)._2),
+                        dispatch(cls.casts(2)._2),
                       )
                     }).getOrElse(Nil)
                 case _ => Nil
@@ -619,12 +634,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         t match {
           case t: TClass[Pre] if t.typeArgs.isEmpty =>
             const(typeNumber(t.cls.decl))(e.o)
-          // Keep pointer casts intact for the adtPointer stage
-          case _: TPointer[Pre] | _: TNonNullPointer[Pre] |
-              _: TConstPointer[Pre] | _: TNonNullConstPointer[Pre] =>
-            e.rewriteDefault()
-          // Keep integer casts intact for casting between integers and pointers
-          case _: TInt[Pre] => e.rewriteDefault()
           // Keep any casts intact for the adtAny stage
           case _: TAnyValue[Pre] => e.rewriteDefault()
           case other => ???
@@ -662,10 +671,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(PanicBlame("instanceOf requires nothing"))(e.o)
-      case Cast(value, typeValue) if value.t.asPointer.isDefined => {
-        // Keep pointer casts and add extra annotations
-        e.rewriteDefault()
-      }
       case Cast(value, typeValue)
           if value.t.asClass.isDefined ||
             CoercionUtils.getAnyCoercion(value.t, TAnyClass[Pre]()).isDefined =>

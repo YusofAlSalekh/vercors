@@ -113,6 +113,6 @@ void client() {
     void *tp = tag((void *)&x, 1);
     //@ assert tag_of(tp)/*@ given {t2 = 1} @*/ == 1;
     size_t *px = (size_t *) untag(tp) /*@ given {originalP=xp} @*/;
-    //@ assume \pointer_block(xp) == \pointer_block(px);
+    //@ assume \pointer_block(&x) == \pointer_block(px);
     //@ assert *px == 0;
 }

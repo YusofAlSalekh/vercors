@@ -296,7 +296,7 @@ class CSpec extends VercorsSpec {
         assert(test(1) == 2);
     }
     """
-  vercors should error withCode "unsupportedStructPerm" in "cylic struct" c
+  vercors should error withCode "cyclicStruct" in "cylic struct" c
     """
     struct d {
       int x;

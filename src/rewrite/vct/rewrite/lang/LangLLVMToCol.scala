@@ -737,6 +737,8 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         t.packed,
+        // TODO: Get valid casts and size like in C
+        Nil,
       )(t.o.withContent(TypeName("struct")))
 
     rw.globalDeclarations.declare(newStruct)
