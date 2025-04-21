@@ -1951,6 +1951,12 @@ case class PVLToCol[G](
         val allIndices = convert(indices)
         NdPartialIndex(allIndices.init, allIndices.last, convert(dims))
       case ValNdLength(_, _, dims, _) => NdLength(convert(dims))
+      case ValEuclideanDiv(_, _, left, _, right, _) =>
+        FloorDiv(convert(left), convert(right))(blame(e))
+      case ValEuclideanMod(_, _, left, _, right, _) =>
+        col.Mod(convert(left), convert(right))(blame(e))
+      case ValPow(_, _, left, _, right, _) =>
+        SmtlibPow(convert(left), convert(right))
       case ValChoose(_, _, xs, _) => Choose(convert(xs))(blame(e))
       case ValChooseFresh(_, _, xs, _) => ChooseFresh(convert(xs))(blame(e))
       case ValBoolAssuming(_, _, assn, _) => Assuming(convert(assn), tt)
