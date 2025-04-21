@@ -70,7 +70,7 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
                      extra_cond: Option[Seq[Local[G]] => Expr[G]] = None,
                      c: Option[Expr[G]]=None
                     ): Unit = {
-    val vars = Seq.fill(bounds.size)(TInt[G])
+    val vars = Seq.fill(bounds.size)(TInt[G]())
 
     val before = block(foralls[G](vars,
       {
@@ -81,6 +81,13 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
           domain = extra_cond.map(c => domain && c(locals)).getOrElse(domain)
           domain ==> ArraySubscript(xs, index(locals))(blame) > const(0)
       },
+      {
+        case locals =>
+          Seq(Seq(
+            ArraySubscript(xs, index(locals))(blame)
+          ))
+
+      }
     ), c)
     val rw = SimplifyNestedQuantifiers[G]()
     if(res_domain.isEmpty){
