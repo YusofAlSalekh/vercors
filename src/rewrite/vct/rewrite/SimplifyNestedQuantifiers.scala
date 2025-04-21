@@ -765,9 +765,11 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               dependentConditions.map(sub.dispatch)
           for (v <- remaining) {
             val vNew = Local[Post](newVars(v).ref)(v.o)
-            for (l <- lowerBounds(v))
+            for (l <- lowerBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]()))
               select = select :+ (sub.dispatch(l) <= vNew)
-            for (u <- upperExclusiveBounds(v))
+            for (
+              u <- upperExclusiveBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]())
+            )
               select = select :+ (vNew < sub.dispatch(u))
           }
 
