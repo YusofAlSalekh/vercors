@@ -1058,7 +1058,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
         def sortVar(v: Variable[Pre]): BigInt =
           equalityChecker.isConstantInt(linearExpressions(v)).getOrElse(999999)
-        val vars = quantVars.bindings.toList.sortBy(sortVar)
+        val vars = quantVars.toList.sortBy(sortVar)
 
         val res = vars.permutations.map(check_vars_list).collectFirst({
           case Some(subst) => subst
