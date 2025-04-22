@@ -47,6 +47,24 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
       implicit o: Origin
   ): Location[Post] =
     expr match {
+      case InlinePattern(inner, pattern, group) =>
+        if (inner.t.asByValueClass.isDefined) {
+          throw InvalidPatternLocation(
+            expr,
+            inner.t.asByValueClass.get.cls.decl,
+          )
+        }
+        // If we leave AddrOf in the trigger, it removes the ptr_deref from the ptr_add
+        // which seems to cause trigger loops
+        val strippedInner =
+          inner match {
+            case AddrOf(inner @ PointerSubscript(_, _)) => inner
+            case inner => inner
+          }
+        InLinePatternLocation(
+          exprToLoc(inner, blame),
+          InlinePattern(dispatch(strippedInner), pattern, group)(expr.o),
+        )(expr.o)
       case expr if expr.t.asPointer.isDefined =>
         if (expr.t.asPointer.get.element.asByValueClass.isDefined) {
           throw NotALocation(expr)
@@ -61,18 +79,6 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
       case expr @ ArraySubscript(arr, index) =>
         ArrayLocation(dispatch(arr), dispatch(index))(expr.blame)
       case PredicateApplyExpr(inv) => PredicateLocation(dispatch(inv))
-      case InlinePattern(inner, pattern, group) =>
-        if (inner.t.asByValueClass.isDefined) {
-          throw InvalidPatternLocation(
-            expr,
-            inner.t.asByValueClass.get.cls.decl,
-          )
-        }
-        InLinePatternLocation(
-          exprToLoc(inner, blame),
-          InlinePattern(dispatch(inner), pattern, group)(expr.o),
-        )(expr.o)
-
       case default => throw NotALocation(default)
     }
 

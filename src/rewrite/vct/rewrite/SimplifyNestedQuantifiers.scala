@@ -1,15 +1,16 @@
 package vct.col.rewrite
 
+import com.google.common.collect.ImmutableList
 import com.typesafe.scalalogging.LazyLogging
 import org.sosy_lab.common.{NativeLibraries, ShutdownNotifier}
 import org.sosy_lab.common.configuration.Configuration
 import org.sosy_lab.common.log.LogManager
 import org.sosy_lab.java_smt.SolverContextFactory
 import org.sosy_lab.java_smt.SolverContextFactory.Solvers
-import org.sosy_lab.java_smt.api.BooleanFormula
+import org.sosy_lab.java_smt.api.{BooleanFormula, FormulaType}
 import org.sosy_lab.java_smt.api.NumeralFormula.IntegerFormula
 import org.sosy_lab.java_smt.api.SolverContext.ProverOptions
-import vct.col.ast._
+import vct.col.ast.{Variable, _}
 import vct.col.ast.util.ExpressionEqualityCheck.{Neg, Pos}
 import vct.col.ast.util.{AnnotationVariableInfoGetter, ExpressionEqualityCheck}
 import vct.col.rewrite.util.Comparison
@@ -24,6 +25,7 @@ import vct.col.origin.{
 }
 import vct.col.ref.Ref
 import vct.col.rewrite.SimplifyNestedQuantifiers.{
+  InvalidTrigger,
   InvalidTriggerPair,
   NotAllowedInTrigger,
 }
@@ -67,7 +69,8 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def code: String = "invalidTrigger"
     override def text: String =
       e.o.messageInContext(
-        "We cannot rewrite this trigger which contains arithmetic."
+        "We did not succeed in rewriting this part of the trigger. " +
+          "Only linear expressions are possible to rewrite in triggers."
       )
   }
 
@@ -271,8 +274,11 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       case Starall(_, triggers, _) => triggers
     }
 
-  private def triggerContainVar(e: Binder[Pre], v: Variable[Pre]): Boolean = {
-    getTriggers(e).flatten.foreach(e =>
+  private def triggerContainVar(
+      triggers: Seq[Seq[Expr[Pre]]],
+      v: Variable[Pre],
+  ): Boolean = {
+    triggers.flatten.foreach(e =>
       if (indepOfV(v, e))
         return true
     )
@@ -307,7 +313,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     quantifierData.checkSingleValueVariables()
 
     // We __only__ want to further reshape quantifiers, which are explicitly marked with a trigger.
-    // There should also not be other quantifiers present (complicates things to much)
+    // There should also not be other quantifiers present (complicates things too much)
     if (!hasTriggers(e) || quantifierData.checkOtherBinders()) {
       logger.debug(s"Not rewriting $e because it has no patterns")
       return quantifierData.result()
@@ -327,6 +333,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       val dependentConditions: ArrayBuffer[Expr[Pre]],
       var constraints: ArrayBuffer[Expr[Pre]],
       var body: Expr[Pre],
+      var triggers: Seq[Seq[Expr[Pre]]],
       val originalBinder: Binder[Pre],
       val mainRewriter: SimplifyNestedQuantifiers[Pre],
   ) {
@@ -349,6 +356,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         ArrayBuffer[Expr[Pre]](),
         ArrayBuffer[Expr[Pre]](),
         originalBody,
+        getTriggers(originalBinder),
         originalBinder,
         rewriter,
       )
@@ -543,8 +551,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         if (equalBounds.isDefined) {
           // If in trigger and result is not simple, do not substitute for now
           if (
-            triggerContainVar(originalBinder, name) &&
-            !simpleExpr(equalBounds.get)
+            triggerContainVar(triggers, name) && !simpleExpr(equalBounds.get)
           ) { constantVars(name) = equalBounds.get }
           else {
             // We will put out a new quantifier
@@ -557,6 +564,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
             // Do not quantify over name anymore
             bindings.remove(name)
+            triggers = triggers.map(_.map(replacer))
 
             // Some dependent selects, might now have become independent or even bounds
             val oldDependentBounds = dependentConditions.map(replacer)
@@ -598,7 +606,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
             if (!indepOfV(name, s))
               independent = false
           )
-          if (triggerContainVar(originalBinder, name))
+          if (triggerContainVar(triggers, name))
             independent = false
           if (independent) {
             // We can freely remove this named variable
@@ -734,7 +742,6 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     def lookForLinearAccesses(): Option[Expr[Post]] = {
       val linearAccesses = new FindLinearArrayAccesses(this)
 
-      val triggers = getTriggers(originalBinder)
       triggers.flatten.foreach(validTrigger(_, checkArithmetic = false))
 
       if (triggers.flatten.forall(!containsArithmetic(_))) {
@@ -758,7 +765,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       // We should have vars to rewrite
       if (qvars.isEmpty)
         ???
-      val remaining = originalBinder.bindings.filterNot(qvars.contains(_))
+      val remaining = bindings.filterNot(qvars.contains(_))
 
       mainRewriter.variables.collect {
         linearAccesses.linearExpression(arithmetic.head, qvars)
@@ -816,7 +823,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 )
             }
           Some(forall)
-        case (_, None) => result()
+        case (_, None) => throw InvalidTrigger(arithmetic.head)
       }
     }
 
@@ -852,15 +859,13 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               else
                 body
 
-            // TODO: Should we get the old triggers? And then filter if the triggers contain variables which
-            //  are not there anymore?
             @nowarn("msg=xhaust")
             val forall: Expr[Pre] =
               originalBinder match {
                 case _: Forall[Pre] =>
-                  Forall(bindings.toSeq, Seq(), newBody)(originalBinder.o)
+                  Forall(bindings.toSeq, triggers, newBody)(originalBinder.o)
                 case e: Starall[Pre] =>
-                  Starall(bindings.toSeq, Seq(), newBody)(e.blame)(
+                  Starall(bindings.toSeq, triggers, newBody)(e.blame)(
                     originalBinder.o
                   )
               }
@@ -875,20 +880,6 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
   def indepOf[G](bindings: collection.Set[Variable[G]], e: Expr[G]): Boolean =
     e.collectFirst { case Local(ref) if bindings.contains(ref.decl) => () }
       .isEmpty
-
-  sealed trait Subscript[G] {
-    val index: Expr[G]
-    val subnodes: Seq[Node[G]]
-  }
-
-  case class Array[G](index: Expr[G], subnodes: Seq[Node[G]], array: Expr[G])
-      extends Subscript[G]
-
-  case class Pointer[G](index: Expr[G], subnodes: Seq[Node[G]], array: Expr[G])
-      extends Subscript[G]
-
-  case class Sequence[G](index: Expr[G], subnodes: Seq[Node[G]], array: Expr[G])
-      extends Subscript[G]
 
   // PB/LvdH:in general all terms are allowable in patterns, *except*
   // that z3 disallows all Bool-related operators, and Viper additionally disallows all arithmetic operators. Any
@@ -1285,6 +1276,20 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               val bmgr = fmgr.getBooleanFormulaManager
               val imgr = fmgr.getIntegerFormulaManager
 
+              def tdiv(a: Expr[Pre], b: Expr[Pre]): Expr[Pre] =
+                Select(
+                  a >= const(0) || a % b === const(0),
+                  a / b,
+                  a / b + Select(b > const(0), const(1), const(-1)),
+                )
+
+              def tmod(a: Expr[Pre], b: Expr[Pre]): Expr[Pre] =
+                Select(
+                  a >= const(0) || a % b === const(0),
+                  a % b,
+                  a % b + Select(b > const(0), b, -b),
+                )
+
               def addConstraint(e: Expr[Pre]): Boolean = {
                 addBool(e) match {
                   case Some(b1) => prover.addConstraint(b1); true
@@ -1294,6 +1299,10 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
               def addBool(e: Expr[Pre]): Option[BooleanFormula] = {
                 e match {
+                  case Select(c, t, f) =>
+                    for {
+                      c1 <- addBool(c); t1 <- addBool(t); f1 <- addBool(f)
+                    } yield bmgr.ifThenElse(c1, t1, f1)
                   case SeqMember(e1, Range(from, to)) =>
                     for {
                       i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
@@ -1361,6 +1370,10 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
               def addInt(e: Expr[Pre]): Option[IntegerFormula] = {
                 e match {
+                  case Select(c, t, f) =>
+                    for {
+                      c1 <- addBool(c); t1 <- addInt(t); f1 <- addInt(f)
+                    } yield bmgr.ifThenElse(c1, t1, f1)
                   case Plus(e1, e2) =>
                     for {
                       i1 <- addInt(e1); i2 <- addInt(e2)
@@ -1377,6 +1390,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                     for {
                       i1 <- addInt(e1); i2 <- addInt(e2)
                     } yield imgr.divide(i1, i2)
+                  // Ugly, but the SMT library does not allow us to define functions..
+                  case TruncDiv(e1, e2) => addInt(tdiv(e1, e2))
+                  case TruncMod(e1, e2) => addInt(tmod(e1, e2))
                   case Mod(e1, e2) =>
                     for {
                       i1 <- addInt(e1); i2 <- addInt(e2)
@@ -1403,9 +1419,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
               }
               if (!addConstraint(!test))
                 return false
-
-              val isUnsat = prover.isUnsat()
-              isUnsat
+              prover.isUnsat
             }
           }
         }.get.get

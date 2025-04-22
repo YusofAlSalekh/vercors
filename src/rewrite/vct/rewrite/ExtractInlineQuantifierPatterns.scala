@@ -60,7 +60,7 @@ case class ExtractInlineQuantifierPatterns[Pre <: Generation]()
       case InLinePatternLocation(loc, pat) =>
         dispatch(pat)
         dispatch(loc)
-      case other => rewriteDefault(other)
+      case other => other.rewriteDefault()
     }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] =
