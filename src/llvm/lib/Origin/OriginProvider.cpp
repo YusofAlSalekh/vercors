@@ -267,53 +267,54 @@ col::Origin *llvm2col::generateFuncDefOrigin(llvm::Function &llvmFunction) {
 col::Origin *
 llvm2col::generatePallasFunctionContractOrigin(const llvm::Function &f,
                                                const llvm::MDNode &mdSrcLoc) {
-
-    col::Origin *origin = new col::Origin();
-    col::OriginContent *preferredNameContent = origin->add_content();
-    col::PreferredName *preferredName = new col::PreferredName();
-    preferredName->add_preferred_name("Function contract of " +
-                                      deriveOperandPreferredName(f));
-    preferredNameContent->set_allocated_preferred_name(preferredName);
-
-    if (f.getSubprogram() == nullptr) {
-        return origin;
-    }
-
-    llvm::DIScope *scope = f.getSubprogram();
-    auto startLine = getIntValue(mdSrcLoc.getOperand(1).get());
-    auto startCol = getIntValue(mdSrcLoc.getOperand(2).get());
-    auto endLine =
-        std::make_optional(getIntValue(mdSrcLoc.getOperand(3).get()));
-    auto endCol = std::make_optional(getIntValue(mdSrcLoc.getOperand(4).get()));
-    generateSourceRangeOrigin(origin, *scope, startLine, startCol, endLine,
-                              endCol);
-
-    return origin;
+    auto prefName = "Function contract of " + deriveOperandPreferredName(f);
+    return generatePallasSpecOrigin(mdSrcLoc, f, prefName);
 }
 
 col::Origin *
 llvm2col::generatePallasLoopContractOrigin(const llvm::Loop &loop,
                                            const llvm::MDNode &srcLoc) {
-    col::Origin *origin = new col::Origin();
-    col::OriginContent *preferredNameContent = origin->add_content();
-    col::PreferredName *preferredName = new col::PreferredName();
-    preferredName->add_preferred_name("Loop contract (" + loop.getName().str() +
-                                      ")");
-    preferredNameContent->set_allocated_preferred_name(preferredName);
+    auto prefName = "Loop contract (" + loop.getName().str() + ")";
+    auto &parentFunc = *loop.getHeader()->getParent();
+    return generatePallasSpecOrigin(srcLoc, parentFunc, prefName);
+}
 
-    llvm::Function *parentFunc = loop.getHeader()->getParent();
-    if (parentFunc == nullptr || parentFunc->getSubprogram() == nullptr) {
+col::Origin *
+llvm2col::generatePallasSpecStmntOrigin(const llvm::Instruction &llvmInstr,
+                                        const llvm::MDNode &srcLoc,
+                                        const std::string &stmntType) {
+    auto prefName = stmntType + " statement";
+    auto &parentFunc = *llvmInstr.getParent()->getParent();
+    return generatePallasSpecOrigin(srcLoc, parentFunc, prefName);
+}
+
+col::Origin *
+llvm2col::generatePallasSpecOrigin(const llvm::MDNode &srcLoc,
+                                   const llvm::Function &parentFunc,
+                                   const std::string &preferedName) {
+    col::Origin *origin = new col::Origin();
+    // Preferred name
+    col::OriginContent *preferredNameContent = origin->add_content();
+    col::PreferredName *preferredNameNode = new col::PreferredName();
+    preferredNameNode->add_preferred_name(preferedName);
+    preferredNameContent->set_allocated_preferred_name(preferredNameNode);
+    // Src-loc
+    if (parentFunc.getSubprogram() == nullptr) {
         return origin;
     }
-
-    llvm::DIScope *scope = parentFunc->getSubprogram();
-    auto startLine = getIntValue(srcLoc.getOperand(1).get());
-    auto startCol = getIntValue(srcLoc.getOperand(2).get());
-    auto endLine = std::make_optional(getIntValue(srcLoc.getOperand(3).get()));
-    auto endCol = std::make_optional(getIntValue(srcLoc.getOperand(4).get()));
-    generateSourceRangeOrigin(origin, *scope, startLine, startCol, endLine,
-                              endCol);
+    llvm::DIScope &scope = *parentFunc.getSubprogram();
+    addSourceLocFromPallasMD(origin, srcLoc, scope);
     return origin;
+}
+
+void llvm2col::addSourceLocFromPallasMD(col::Origin *origin,
+                                        const llvm::MDNode &srcLoc,
+                                        const llvm::DIScope &scope) {
+    auto startL = getIntValue(srcLoc.getOperand(1).get());
+    auto startC = getIntValue(srcLoc.getOperand(2).get());
+    auto endL = std::make_optional(getIntValue(srcLoc.getOperand(3).get()));
+    auto endC = std::make_optional(getIntValue(srcLoc.getOperand(4).get()));
+    generateSourceRangeOrigin(origin, scope, startL, startC, endL, endC);
 }
 
 col::Origin *

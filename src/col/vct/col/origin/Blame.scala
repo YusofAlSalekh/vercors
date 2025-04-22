@@ -159,7 +159,9 @@ case class AssignFieldFailed(node: SilverFieldAssign[_])
 }
 
 case class CopyClassFailed(node: Node[_], clazz: ByValueClass[_], field: String)
-    extends PointerDerefError with NodeVerificationFailure {
+    extends PointerDerefError
+    with InvocationFailure
+    with NodeVerificationFailure {
   override def code: String = "copyClassFailed"
   override def descInContext: String =
     s"Insufficient read permission for field '$field' to copy ${clazz.o
@@ -362,9 +364,8 @@ case class DecreaseTerminationMeasureFailed(
     s"${apply.o.inlineContextText} may not terminate, since `${measure.o.inlineContextText}` is not decreased or not bounded"
 }
 
-case class DecreaseTerminationMeasureFailedDueToWhile(
-                                             node: Loop[_],
-                                           ) extends LoopInvariantFailure with NodeVerificationFailure {
+case class DecreaseTerminationMeasureFailedDueToWhile(node: Loop[_])
+    extends LoopInvariantFailure with NodeVerificationFailure {
   override def code: String = "loopTerminationFailed"
   override def position: String = node.o.shortPositionText
   override def descInContext: String =
@@ -373,9 +374,10 @@ case class DecreaseTerminationMeasureFailedDueToWhile(
     s"Loop may not terminate, since ${node.o.inlineContextText} is not proven to be decreasing with a decrease clause"
 }
 
-case class CallTerminationMeasureFailed(apply: InvokingNode[_],
-  calledMethod: ContractApplicable[_],
-  ) extends TerminationMeasureFailed {
+case class CallTerminationMeasureFailed(
+    apply: InvokingNode[_],
+    calledMethod: ContractApplicable[_],
+) extends TerminationMeasureFailed {
   override def code: String = "callDecreasesFailed"
   override def position: String = calledMethod.o.shortPositionText
   override def desc: String =

@@ -15,7 +15,9 @@ namespace pallas {
 enum PallasWrapperContext {
     FuncContractPre,
     FuncContractPost,
-    LoopContractInv
+    LoopContractInv,
+    AssertStmnt,
+    AssumeStmnt
 };
 
 class EWMResult {
@@ -56,6 +58,9 @@ class ExprWrapperMapper : public llvm::AnalysisInfoMixin<ExprWrapperMapper> {
 
     std::optional<PallasWrapperContext>
     getContextForFContractClause(const llvm::MDNode &clause);
+
+    std::optional<PallasWrapperContext>
+    getContextForSpecStmnt(const llvm::MDNode &stmnt);
 };
 
 } // namespace pallas

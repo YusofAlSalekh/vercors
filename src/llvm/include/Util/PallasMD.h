@@ -4,6 +4,7 @@
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Instruction.h>
 #include <llvm/IR/Metadata.h>
 #include <optional>
 #include <string>
@@ -55,6 +56,12 @@ bool isWellformedPallasLocation(const llvm::MDNode *mdNode);
  */
 llvm::MDNode *getPallasLoopContract(const llvm::Loop &llvmLoop);
 
+/**
+ * Attempt to cast the value of the given MDOperand into a pointer
+ * to a wrapper-function.
+ */
+llvm::Function *getWrapperFunc(const llvm::MDOperand &mdOp);
+
 /*
  * Attempts to get the wrapper-function from the given MDNode which
  * represents a Pallas loop-invariant clause.
@@ -66,6 +73,13 @@ llvm::Function *getWrapperFromLoopInv(const llvm::MDNode &invMD);
  * Checks if the given metadata-node refers to a integer-constant.
  */
 bool isConstantInt(llvm::Metadata *md);
+
+/**
+ * Checks if a block if specification-statements is attached to the given
+ * instruction and returns it if it is present. Otherwise, a nullpointer is
+ * returned
+ */
+llvm::MDNode *getSpecStmntBlock(llvm::Instruction &instr);
 
 } // namespace pallas::utils
 

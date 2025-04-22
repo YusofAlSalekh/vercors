@@ -1496,6 +1496,10 @@ final case class PointerAdd[G](pointer: Expr[G], offset: Expr[G])(
     val blame: Blame[PointerAddError]
 )(implicit val o: Origin)
     extends Expr[G] with PointerAddImpl[G]
+final case class PointerToAdt[G](pointer: Expr[G], t: Type[G])(
+    val blame: Blame[PointerNull]
+)(implicit val o: Origin)
+    extends Expr[G] with PointerToAdtImpl[G]
 final case class AddrOf[G](e: Expr[G])(implicit val o: Origin)
     extends Expr[G] with AddrOfImpl[G]
 final case class AddrOfConstCast[G](e: Expr[G])(implicit val o: Origin)

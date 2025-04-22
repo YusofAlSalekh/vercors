@@ -48,7 +48,9 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
   ): Location[Post] =
     expr match {
       case expr if expr.t.asPointer.isDefined =>
-        PointerLocation(dispatch(expr))(blame)
+        if (expr.t.asPointer.get.element.asByValueClass.isDefined) {
+          throw NotALocation(expr)
+        } else { PointerLocation(dispatch(expr))(blame) }
       case expr if expr.t.asByValueClass.isDefined =>
         ByValueClassLocation(dispatch(expr))(blame)
       case DerefHeapVariable(ref) => HeapVariableLocation(succ(ref.decl))
