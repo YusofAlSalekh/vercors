@@ -26,6 +26,7 @@ import vct.col.origin.{
 import vct.col.ref.Ref
 import vct.col.rewrite.SimplifyNestedQuantifiers.{
   InvalidTrigger,
+  InvalidTriggerVars,
   InvalidTriggerPair,
   NotAllowedInTrigger,
 }
@@ -33,6 +34,7 @@ import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
 import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers._
 import vct.col.util.{AstBuildHelpers, Substitute}
+import vct.result.Message
 import vct.result.VerificationError.{Unreachable, UserError}
 
 import scala.collection.mutable
@@ -62,6 +64,18 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def text: String =
       e.o.messageInContext(
         "Arithmetic and logic operators are not allowed in triggers."
+      )
+  }
+
+  case class InvalidTriggerVars(
+      triggers: Seq[Expr[_]],
+      missing: Set[Variable[_]],
+  ) extends UserError {
+    override def code: String = "invalidTriggerVars"
+    override def text: String =
+      Message.messagesInContext(
+        triggers.map(err => err.o -> s"These triggers: ")
+          .appended(missing.head.o -> s"Do not mention this var. "): _*
       )
   }
 
@@ -121,22 +135,11 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       case e: Forall[Pre] =>
         topLevel = false
         equalityChecker = ExpressionEqualityCheck(Some(infoGetter.finalInfo()))
-        mapUnfoldedStar(
-          e.body,
-          (b: Expr[Pre]) =>
-            rewriteBinder(Forall(e.bindings, e.triggers, b)(e.o)),
-        )
+        rewriteBinder(e)
       case e: Starall[Pre] =>
         topLevel = false
         equalityChecker = ExpressionEqualityCheck(Some(infoGetter.finalInfo()))
-        mapUnfoldedStar(
-          e.body,
-          (b: Expr[Pre]) =>
-            if (TBool[Pre]().superTypeOf(b.t))
-              rewriteBinder(Forall(e.bindings, e.triggers, b)(e.o))
-            else
-              rewriteBinder(Starall(e.bindings, e.triggers, b)(e.blame)(e.o)),
-        )
+        rewriteBinder(e)
       case other if topLevel =>
         infoGetter.addInfo(other)
         topLevel = false
@@ -690,13 +693,13 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     case class ForallSubstitute(
         varMap: Map[Variable[Pre], Variable[Post]],
         subs: Map[Variable[Pre], Expr[Post]],
-        indexReplacement: (Expr[Pre], Expr[Post]),
+        indexReplacement: Map[Expr[Pre], Expr[Post]],
     ) extends Rewriter[Pre] {
       override val allScopes = mainRewriter.allScopes
 
       override def dispatch(e: Expr[Pre]): Expr[Post] =
         e match {
-          case expr if expr == indexReplacement._1 => indexReplacement._2
+          case expr if indexReplacement.contains(expr) => indexReplacement(expr)
           case v: Local[Pre] if subs.contains(v.ref.decl) => subs(v.ref.decl)
           case v: Local[Pre] if varMap.contains(v.ref.decl) =>
             Local[Post](varMap(v.ref.decl).ref)(v.o)
@@ -716,7 +719,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       // Collect all variables mentioned by non-arithmetic patterns
       val nonRewriteVars = others.toSeq.map(collectForallVars)
       val rewriteVars = arithmethicSet.toSeq.map(collectForallVars)
-      // The rewriteVars should be a clean partition, and the nonRewriteVars should be
+      // The rewriteVars should be a clean partition.
+      // The nonRewriteVars should be completely separate
       // mentioned by them
       rewriteVars.zipWithIndex.foreach { case (vars, i) =>
         // Check other rewrite candidates
@@ -741,90 +745,157 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
     def lookForLinearAccesses(): Option[Expr[Post]] = {
       val linearAccesses = new FindLinearArrayAccesses(this)
+      // Each trigger set should mention all forall vars
+      triggers.foreach { t =>
+        val mentionedVars = t.flatMap(collectForallVars)
+        val nonMentionedVars: Set[Variable[Pre]] =
+          bindings.toSet -- mentionedVars
+        if (nonMentionedVars.nonEmpty)
+          throw InvalidTriggerVars(t, nonMentionedVars.toSet)
+      }
 
-      triggers.flatten.foreach(validTrigger(_, checkArithmetic = false))
-
-      if (triggers.flatten.forall(!containsArithmetic(_))) {
-        // Regular allowed triggers, do not check further.
+      // We do not do elaborate rewriting for multiple trigger sets
+      if (triggers.size != 1) {
+        triggers.flatten.foreach(validTrigger(_, checkArithmetic = true))
         return result()
       }
-      // Not supported for now
-      if (triggers.size != 1)
-        ???
-      // We get the actual things we try to rewrite, and group them in a set (set because we do not want to repeat work)
+
+      // We split the triggers in 'patterns'. E.g each function argument is a 'pattern' and the index of an array is a
+      // pattern etc. We do not need duplicates, thus we put the result in a set.
       val patternSet: Set[Expr[Pre]] =
         triggers.head.flatMap(t => getPatterns(t)).toSet
+      val (special, otherTriggers) = patternSet.partition(containsSpecial(_))
+      // All patterns with special tokens are now filtered out, so we can get patterns which contain arithmetic
+      val (arithmetic, validPatterns) = otherTriggers
+        .partition(containsSpecial(_, checkArithmetic = true))
+      if (arithmetic.isEmpty && special.isEmpty) { return result() }
 
-      // Only those that contain arithmetic we want to actual rewrite
-      val (arithmetic, others) = patternSet.partition(containsArithmetic)
-      checkTriggersSet(arithmetic, others)
-      // Not supported for now
-      if (arithmetic.size != 1)
-        ???
-      val qvars = collectForallVars(arithmetic.head).toSeq
-      // We should have vars to rewrite
-      if (qvars.isEmpty)
-        ???
-      val remaining = bindings.filterNot(qvars.contains(_))
+      // We want to know which vars are already called correctly, and which need rewriting
+      val mentionedVars = validPatterns.flatMap(collectForallVars)
+      // nonMentionedVars need to be rewritten in the arithmetic patterns
+      val nonMentionedVars: Set[Variable[Pre]] = bindings.toSet -- mentionedVars
 
-      mainRewriter.variables.collect {
-        linearAccesses.linearExpression(arithmetic.head, qvars)
-      } match {
-        case (bindings, Some(substituteForall)) =>
-          if (bindings.size != 1)
-            throw Unreachable(
-              "Only one new variable should be declared with SimplifyNestedQuantifiers."
-            )
-
-          val newVars =
-            remaining.map { v =>
-              val res = mainRewriter.variables.collect {
-                mainRewriter.dispatch(v)
-              }
-              (v, res._1.head)
-            }.toMap
-
-          val sub = ForallSubstitute(
-            newVars,
-            substituteForall.substituteOldVars,
-            substituteForall.substituteIndex,
+      // There are patterns, for which we just want to introduce a new variable.
+      // E.g. (\forall int i; ... {:f(i, i+1, size+3):} ...)
+      // we want to rewrite towards
+      // (\forall int i, j, k; j==i+1 && k==size+3 ... {:f(i, j, k):} ...)
+      // These can be in the set `arithmetic`. These are exactly the patterns
+      // which do not have a nonMentionedVars, since the nonMentionedVars need to be rewritten.
+      var (rewriteArithmetic, introducePatterns) = arithmetic.partition(p =>
+        p.collectFirst {
+          case Local(ref) if nonMentionedVars.contains(ref.decl) => ()
+        }.isDefined
+      )
+      // specials cannot have non mentioned vars
+      special.foreach(p =>
+        p.collectFirst {
+          case Local(ref) if nonMentionedVars.contains(ref.decl) =>
+            throw InvalidTrigger(p)
+        }
+      )
+      introducePatterns = introducePatterns ++ special
+      // We need to check that at the top level, these patterns do not contain extra structure. Otherwise,
+      // we would remove that structure from the trigger, and this is wrong.
+      introducePatterns.foreach(p =>
+        if (allowedInTrigger(p, checkArithmetic = true))
+          throw Unreachable(
+            "We are wrongly removing structure in a trigger. " +
+              "Update getPatterns in SimplifyNestedQuantifiers if this occurs."
           )
-          val newBody = sub.dispatch(body)
-          var select =
-            Seq(substituteForall.newBounds) ++
-              independentConditions.map(sub.dispatch) ++
-              dependentConditions.map(sub.dispatch)
-          for (v <- remaining) {
-            val vNew = Local[Post](newVars(v).ref)(v.o)
-            for (l <- lowerBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]()))
-              select = select :+ (sub.dispatch(l) <= vNew)
-            for (
-              u <- upperExclusiveBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]())
+      )
+
+      // Now some checks if the arithmetic patterns can be used
+      checkTriggersSet(rewriteArithmetic, validPatterns)
+      var remaining = bindings
+
+      val results: Seq[(SubstituteForall, Variable[Post])] = rewriteArithmetic
+        .toSeq.map { pattern =>
+          val qvars = collectForallVars(pattern).toSeq
+          // We should have vars to rewrite, this was checked before, just sanity check
+          if (qvars.isEmpty)
+            throw Unreachable(
+              "Arithmetic rewrite patterns should mention a forall var."
             )
-              select = select :+ (vNew < sub.dispatch(u))
-          }
-
-          val main =
-            if (select.nonEmpty)
-              Implies(AstBuildHelpers.foldAnd(select), newBody)
-            else
-              newBody
-          val newTriggers = triggers.map(_.map(sub.dispatch))
-          val newBindings = bindings ++ newVars.values
-
-          @nowarn("msg=xhaust")
-          val forall: Binder[Post] =
-            originalBinder match {
-              case _: Forall[Pre] =>
-                Forall(newBindings, newTriggers, main)(originalBinder.o)
-              case originalBinder: Starall[Pre] =>
-                Starall(newBindings, newTriggers, main)(originalBinder.blame)(
-                  originalBinder.o
+          remaining = remaining.filterNot(qvars.contains(_))
+          mainRewriter.variables.collect {
+            linearAccesses.linearExpression(pattern, qvars)
+          } match {
+            case (bindings, Some(substituteForall)) =>
+              if (bindings.size != 1)
+                throw Unreachable(
+                  "Only one new variable should be declared with SimplifyNestedQuantifiers."
                 )
-            }
-          Some(forall)
-        case (_, None) => throw InvalidTrigger(arithmetic.head)
+              (substituteForall, bindings.head)
+            case (_, None) => throw InvalidTrigger(arithmetic.head)
+          }
+        }
+      val newVars =
+        remaining.map { v =>
+          val res = mainRewriter.variables.collect { mainRewriter.dispatch(v) }
+          (v, res._1.head)
+        }.toMap
+      val introducedVars = introducePatterns.toSeq.map { p =>
+        val res = mainRewriter.variables.collect {
+          val newName = p.o.getPreferredNameOrElse().camel
+          val t = mainRewriter.dispatch(p.t)
+          val xNew = new Variable[Post](t)(BinderOrigin(newName))
+          mainRewriter.variables.declare(xNew)
+          mainRewriter.dispatch(p)
+        }
+        (res._1.head, res._2)
       }
+
+      val oldVarsMap: Map[Variable[Pre], Expr[Post]] =
+        results.foldLeft(Map[Variable[Pre], Expr[Post]]()) { case (l, r) =>
+          r._1.substituteOldVars ++ l
+        }
+      // Substitute indexes, but also expressions for which we introduced vars
+      val indexMap: Map[Expr[Pre], Expr[Post]] =
+        results.foldLeft(Map[Expr[Pre], Expr[Post]]()) { case (l, r) =>
+          l + r._1.substituteIndex
+        }
+      val introduceMap: Map[Expr[Pre], Expr[Post]] =
+        introducePatterns.toSeq
+          .zip(introducedVars.map(v => Local[Post](v._1.ref))).toMap
+
+      val sub = ForallSubstitute(newVars, oldVarsMap, indexMap ++ introduceMap)
+      var select: Seq[Expr[Post]] =
+        results.foldRight(
+          independentConditions.map(sub.dispatch).toSeq ++
+            dependentConditions.map(sub.dispatch).toSeq
+        ) { case (l, r) => l._1.newBounds +: r }
+      val newBody = sub.dispatch(body)
+      for (v <- remaining) {
+        val vNew = Local[Post](newVars(v).ref)(v.o)
+        for (l <- lowerBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]()))
+          select = select :+ (sub.dispatch(l) <= vNew)
+        for (u <- upperExclusiveBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]()))
+          select = select :+ (vNew < sub.dispatch(u))
+      }
+      select =
+        select ++ introducedVars.map { case (v, e) => Local[Post](v.ref) === e }
+
+      val main =
+        if (select.nonEmpty)
+          Implies(AstBuildHelpers.foldAnd(select), newBody)
+        else
+          newBody
+      val newTriggers = triggers.map(_.map(sub.dispatch))
+      val newBinders =
+        results.foldRight(newVars.values.toSeq) { case (l, r) => l._2 +: r } ++
+          introducedVars.map(_._1)
+
+      @nowarn("msg=xhaust")
+      val forall: Binder[Post] =
+        originalBinder match {
+          case _: Forall[Pre] =>
+            Forall(newBinders, newTriggers, main)(originalBinder.o)
+          case originalBinder: Starall[Pre] =>
+            Starall(newBinders, newTriggers, main)(originalBinder.blame)(
+              originalBinder.o
+            )
+        }
+      Some(forall)
     }
 
     def result(): Option[Expr[Post]] = {
@@ -886,34 +957,39 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
   // other operators is necessarily encoded as a smt function (allowed), or banned due to being a side effect
   // (later dealt with rigorously).
   // Arithmetic can still be rewritten in this pass, so we allow that initially
+  def allowedInTrigger[G](
+      e: Expr[G],
+      checkArithmetic: Boolean = false,
+  ): Boolean =
+    e match {
+      case PolarityDependent(_, _) | Wand(_, _) | _: Forall[G] | _: Starall[G] |
+          _: Exists[G] =>
+        throw NotAllowedInTrigger(e)
+      case And(_, _) | Or(_, _) | Implies(_, _) | Star(_, _) | Eq(_, _) |
+          Neq(_, _) | Less(_, _) | Greater(_, _) | LessEq(_, _) |
+          GreaterEq(_, _) =>
+        false
+      case Plus(_, _) | Minus(_, _) | Mult(_, _) | FloatDiv(_, _) |
+          TruncDiv(_, _) | TruncMod(_, _) | RatDiv(_, _) | FloorDiv(_, _) |
+          Mod(_, _) | UMinus(_) if checkArithmetic =>
+        false
+      case _ => true
+    }
+
   def validTrigger[G](e: Expr[G], checkArithmetic: Boolean = false): Unit = {
-    def valid(e: Expr[G]): Unit =
-      e match {
-        case And(_, _) | Or(_, _) | Implies(_, _) | Star(_, _) | Wand(_, _) |
-            PolarityDependent(_, _) =>
-          throw NotAllowedInTrigger(e)
-        case _: Forall[G] | _: Starall[G] | _: Exists[G] =>
-          throw NotAllowedInTrigger(e)
-        case Eq(_, _) | Neq(_, _) | Less(_, _) | Greater(_, _) | LessEq(_, _) |
-            GreaterEq(_, _) =>
-          throw NotAllowedInTrigger(e)
-        case Plus(_, _) | Minus(_, _) | Mult(_, _) | FloatDiv(_, _) |
-            RatDiv(_, _) | FloorDiv(_, _) | Mod(_, _) if checkArithmetic =>
-          throw NotAllowedInTrigger(e)
-        case _ => ()
-      }
-    e.foreach { case n: Expr[G] => valid(n); case _ => }
+    e.foreach {
+      case n: Expr[G] if !allowedInTrigger(n, checkArithmetic) =>
+        throw NotAllowedInTrigger(n); case _ =>
+    }
   }
 
-  def containsArithmetic[G](e: Expr[G]): Boolean = {
-    def isArithmetic(e: Expr[G]): Boolean =
-      e match {
-        case Plus(_, _) | Minus(_, _) | Mult(_, _) | FloatDiv(_, _) |
-            RatDiv(_, _) | FloorDiv(_, _) | Mod(_, _) =>
-          true
-        case _ => false
-      }
-    e.collectFirst { case e: Expr[G] if isArithmetic(e) => () }.isDefined
+  def containsSpecial[G](
+      e: Expr[G],
+      checkArithmetic: Boolean = false,
+  ): Boolean = {
+    e.collectFirst {
+      case n: Expr[G] if !allowedInTrigger(n, checkArithmetic) => ()
+    }.isDefined
   }
 
   def getPatterns(e: Node[Pre]): Seq[Expr[Pre]] =
