@@ -739,16 +739,30 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val vars = findVars(e)
     val (filteredIdx, otherIdx) = idx.indices.values.zip(dim.indices.values)
       .partition { case (i, _) => vars.contains(i) }
+    val (prevBindings, b, prevBlame) =
+      e match {
+        case s @ Starall(bindings, Nil, b) => (bindings, b, Some(s.blame))
+        case Forall(bindings, Nil, b) => (bindings, b, None)
+        case b => (Seq(), b, None)
+      }
 
     val body =
       otherIdx.map { case (_, range) => range }
-        .foldLeft(e)((newE, scaleFactor) =>
+        .foldLeft(b)((newE, scaleFactor) =>
           Scale(scaleFactor.get, newE)(PanicBlame("Framed positive"))
         )
-    if (filteredIdx.isEmpty) { body }
-    else {
+    if (filteredIdx.isEmpty) {
+      if (prevBindings.isEmpty)
+        body
+      else {
+        prevBlame match {
+          case Some(oldBlame) => Starall(prevBindings, Nil, body)(oldBlame)
+          case None => Forall(prevBindings, Nil, body)
+        }
+      }
+    } else {
       Starall(
-        filteredIdx.map { case (v, _) => v }.toSeq,
+        filteredIdx.map { case (v, _) => v }.toSeq ++ prevBindings,
         Nil,
         Implies(
           foldAnd(filteredIdx.map { case (idx, dim) =>

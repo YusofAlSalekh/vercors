@@ -51,7 +51,9 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
                  extra_cond: Option[Seq[Local[G]] => Expr[G]] = None,
                  c: Option[Expr[G]]=None
                 ): Unit = {
-    testRewriteForall(bounds, index, None, extra_cond, c)
+    assertThrows[SimplifyNestedQuantifiers.InvalidTrigger] {
+      testRewriteForall(bounds, index, None, extra_cond, c)
+    }
   }
 
   def correctNumbers(bounds: Seq[(Expr[G], Expr[G])],

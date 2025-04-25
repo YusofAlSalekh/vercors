@@ -2,6 +2,7 @@ package vct.col.rewrite
 
 import com.google.common.collect.ImmutableList
 import com.typesafe.scalalogging.LazyLogging
+import hre.util.ScopedStack
 import org.sosy_lab.common.{NativeLibraries, ShutdownNotifier}
 import org.sosy_lab.common.configuration.Configuration
 import org.sosy_lab.common.log.LogManager
@@ -26,8 +27,8 @@ import vct.col.origin.{
 import vct.col.ref.Ref
 import vct.col.rewrite.SimplifyNestedQuantifiers.{
   InvalidTrigger,
-  InvalidTriggerVars,
   InvalidTriggerPair,
+  InvalidTriggerVars,
   NotAllowedInTrigger,
 }
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
@@ -74,8 +75,8 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def code: String = "invalidTriggerVars"
     override def text: String =
       Message.messagesInContext(
-        triggers.map(err => err.o -> s"These triggers: ")
-          .appended(missing.head.o -> s"Do not mention this var. "): _*
+        triggers.map(err => err.o -> s"... these triggers.") ++
+          missing.map(v => (v.o, ".. do not mention this var.")): _*
       )
   }
 
@@ -112,10 +113,36 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
   private def one: IntegerValue[Pre] = IntegerValue(1)
 
-  var equalityChecker: ExpressionEqualityCheck[Pre] = ExpressionEqualityCheck()
-  var topLevel: Boolean = false
-  var infoGetter: AnnotationVariableInfoGetter[Pre] =
+  private var equalityChecker: ExpressionEqualityCheck[Pre] =
+    ExpressionEqualityCheck()
+  private var topLevel: Boolean = false
+  private var infoGetter: AnnotationVariableInfoGetter[Pre] =
     new AnnotationVariableInfoGetter[Pre]()
+  val constantInfo: ScopedStack[Option[AnnotationVariableInfoGetter[Pre]]] =
+    ScopedStack()
+  var requiresInfo: Option[AnnotationVariableInfoGetter[Pre]] = None
+
+  def gatherAssigns[G](n: Node[G]): Set[Variable[G]] = {
+    n.flatCollect {
+      case Assign(Local(ref), _) => Set(ref.decl)
+      case PreAssignExpression(Local(ref), _) => Set(ref.decl)
+      case PostAssignExpression(Local(ref), _) => Set(ref.decl)
+      case inv: InvokeProcedure[G] => gatherYields(inv.yields)
+      case inv: InvokeConstructor[G] => gatherYields(inv.yields)
+      case inv: InvokeMethod[G] => gatherYields(inv.yields)
+      case inv: ProcedureInvocation[G] => gatherYields(inv.yields)
+      case inv: MethodInvocation[G] => gatherYields(inv.yields)
+      case inv: ConstructorInvocation[G] => gatherYields(inv.yields)
+      case inv: FunctionInvocation[G] => gatherYields(inv.yields)
+      case inv: InstanceFunctionInvocation[G] => gatherYields(inv.yields)
+    }.toSet
+  }
+
+  def gatherYields[G](
+      yields: Seq[(Expr[G], Ref[G, Variable[G]])]
+  ): Set[Variable[G]] = {
+    yields.collect { case (Local(ref), _) => ref.decl }.toSet
+  }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] = {
     e match {
@@ -134,11 +161,15 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         And(left, right)(e.o)
       case e: Forall[Pre] =>
         topLevel = false
-        equalityChecker = ExpressionEqualityCheck(Some(infoGetter.finalInfo()))
+        equalityChecker = ExpressionEqualityCheck(
+          Some(infoGetter.finalInfo(constantInfo.toSeq.flatten))
+        )
         rewriteBinder(e)
       case e: Starall[Pre] =>
         topLevel = false
-        equalityChecker = ExpressionEqualityCheck(Some(infoGetter.finalInfo()))
+        equalityChecker = ExpressionEqualityCheck(
+          Some(infoGetter.finalInfo(constantInfo.toSeq.flatten))
+        )
         rewriteBinder(e)
       case other if topLevel =>
         infoGetter.addInfo(other)
@@ -172,11 +203,43 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     }
   }
 
+  def useInfoFromContract(
+      contract: ApplicableContract[Pre],
+      body: Option[Statement[Pre]],
+  ): (ApplicableContract[Post], Option[Statement[Post]]) = {
+    val resContract = dispatch(contract)
+    val resBody =
+      if (body.isDefined && requiresInfo.isDefined) {
+        val assigns = gatherAssigns(body.get)
+        requiresInfo.foreach(_.filterInfo(assigns))
+        constantInfo.having(requiresInfo) { body.map(dispatch) }
+      } else { body.map(dispatch) }
+    (resContract, resBody)
+  }
+
+  override def dispatch(decl: Declaration[Pre]): Unit =
+    decl match {
+      case proc: Procedure[Pre] =>
+        globalDeclarations.succeed(
+          proc, {
+            labelDecls.scope {
+              val (contract, body) = useInfoFromContract(
+                proc.contract,
+                proc.body,
+              )
+              proc.rewrite(contract = contract, body = body)
+            }
+          },
+        )
+      case decl => allScopes.anySucceed(decl, decl.rewriteDefault())
+    }
+
   override def dispatch(stat: Statement[Pre]): Statement[Post] = {
     stat match {
       case Exhale(e) =>
       case Inhale(e) =>
       case proof: FramedProof[Pre] => return checkFramedProof(proof)
+      case loop: Loop[Pre] => return checkLoop(loop)
       case _ => return stat.rewriteDefault()
     }
     topLevel = true
@@ -187,19 +250,35 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     result
   }
 
-  def checkFramedProof(proof: FramedProof[Pre]): Statement[Post] = {
+  def checkLoop(loop: Loop[Pre]): Loop[Post] = {
+    val contract = dispatch(loop.contract)
+    val info = requiresInfo
+    val body =
+      if (requiresInfo.isDefined) {
+        val assigns = gatherAssigns(loop.body)
+        requiresInfo.foreach(_.filterInfo(assigns))
+        constantInfo.having(requiresInfo) { dispatch(loop.body) }
+      } else { dispatch(loop.body) }
+    loop.rewrite(contract = contract, body = body)
+  }
+
+  def checkFramedProof(proof: FramedProof[Pre]): FramedProof[Post] = {
     topLevel = true
     infoGetter.setupInfo()
     val pre = dispatch(proof.pre)
     equalityChecker = ExpressionEqualityCheck()
+
+    val info = infoGetter.clone()
+    val assigns = gatherAssigns(proof.body)
+    info.filterInfo(assigns)
+    val body = constantInfo.having(Some(info)) { dispatch(proof.body) }
+
     infoGetter.setupInfo()
     val post = dispatch(proof.post)
     topLevel = false
     equalityChecker = ExpressionEqualityCheck()
 
-    val body = dispatch(proof.body)
-
-    FramedProof[Post](pre, body, post)(proof.blame)(proof.o)
+    proof.rewrite(pre = pre, body = body, post = post)
   }
 
   override def dispatch(
@@ -223,11 +302,10 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     topLevel = true
     infoGetter.setupInfo()
     val invariant = dispatch(loopInvariant.invariant)
+    requiresInfo = Some(infoGetter.clone())
     topLevel = false
     equalityChecker = ExpressionEqualityCheck()
-    val decreases = loopInvariant.decreases.map(element => dispatch(element))
-
-    LoopInvariant(invariant, decreases)(loopInvariant.blame)(loopInvariant.o)
+    loopInvariant.rewrite(invariant = invariant)
   }
 
   override def dispatch(
@@ -241,6 +319,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
     // Reuse information from context everywhere
     val requires = dispatch(contract.requires)
+    requiresInfo = Some(infoGetter.clone())
     equalityChecker = ExpressionEqualityCheck()
 
     // Again reuse information from context everywhere
@@ -249,23 +328,11 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     equalityChecker = ExpressionEqualityCheck()
     topLevel = false
 
-    val signals = contract.signals.map(element => dispatch(element))
-    val givenArgs =
-      variables.collect { contract.givenArgs.foreach(dispatch) }._1
-    val yieldsArgs =
-      variables.collect { contract.yieldsArgs.foreach(dispatch) }._1
-    val decreases = contract.decreases
-      .map(element => rewriter.dispatch(element))
-
-    ApplicableContract(
-      requires,
-      ensures,
-      contextEverywhere,
-      signals,
-      givenArgs,
-      yieldsArgs,
-      decreases,
-    )(contract.blame)(contract.o)
+    contract.rewrite(
+      requires = requires,
+      ensures = ensures,
+      contextEverywhere = contextEverywhere,
+    )
   }
 
   def indepOfV[G](v: Variable[G], e: Expr[G]): Boolean =
