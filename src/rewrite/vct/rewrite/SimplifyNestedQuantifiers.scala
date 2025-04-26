@@ -30,6 +30,7 @@ import vct.col.rewrite.SimplifyNestedQuantifiers.{
   InvalidTriggerPair,
   InvalidTriggerVars,
   NotAllowedInTrigger,
+  NotAllowedInTriggerSet,
 }
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
 import vct.col.typerules.CoercionUtils
@@ -65,6 +66,15 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def text: String =
       e.o.messageInContext(
         "Arithmetic and logic operators are not allowed in triggers."
+      )
+  }
+
+  case class NotAllowedInTriggerSet(e: Expr[_]) extends UserError {
+    override def code: String = "notAllowedInTrigger"
+    override def text: String =
+      e.o.messageInContext(
+        "We tried to rewrite multiple trigger sets for this forall, but that is only possible if they contain exactly the same" +
+          "arithmetic or special experssions "
       )
   }
 
@@ -349,7 +359,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       v: Variable[Pre],
   ): Boolean = {
     triggers.flatten.foreach(e =>
-      if (indepOfV(v, e))
+      if (!indepOfV(v, e))
         return true
     )
     false
@@ -357,13 +367,24 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
   private def hasTriggers(e: Binder[Pre]): Boolean = getTriggers(e).nonEmpty
 
+  def toOneImplies(e: Expr[Pre]): Expr[Pre] =
+    e match {
+      case Star(Implies(e1, e2), Implies(e3, e4)) if e1 == e2 =>
+        Implies(e1, Star(e2, e4))
+      case Star(e, Implies(e3, e4)) =>
+        toOneImplies(e) match {
+          case Implies(e1, e2) if e1 == e3 => Implies(e1, Star(e2, e4))
+          case other => other
+        }
+      case other => other
+    }
+
   def rewriteLinearArray(e: Binder[Pre]): Option[Expr[Post]] = {
-    val originalBody =
-      e match {
-        case Forall(_, _, body) => body
-        case Starall(_, _, body) => body
-        case _ => return None
-      }
+    val originalBody = toOneImplies(e match {
+      case Forall(_, _, body) => body
+      case Starall(_, _, body) => body
+      case _ => return None
+    })
 
     // We can only rewrite quantifiers that contain at least one integer binding
     if (!e.bindings.exists(_.t == TInt()))
@@ -462,32 +483,17 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     ): Seq[Expr[Pre]] = {
       val (allConditions, mainBody) = unfoldImplies[Pre](body)
       val newConditions = prevConditions ++ allConditions
-      val (newVars, secondBody) =
-        mainBody match {
-          case Forall(newVars, _, secondBody) => (newVars, secondBody)
-          case Starall(newVars, _, secondBody) => (newVars, secondBody)
-          // Strip Scales
-          case s @ Scale(scale, res) =>
-            val newScales = scales :+ ((r: Expr[Pre]) => Scale(scale, r)(s.o))
-            body = res
-            return unfoldBody(newConditions, newScales)
-          case _ =>
-            // Re-aply scales from right to left
-            body = scales.foldRight(mainBody)((s, b) => s(b))
-            return newConditions
-        }
-
-      bindings.addAll(newVars)
-
-      for (v <- newVars) {
-        lowerBounds(v) = ArrayBuffer[Expr[Pre]]()
-        upperBounds(v) = ArrayBuffer[Expr[Pre]]()
-        upperExclusiveBounds(v) = ArrayBuffer[Expr[Pre]]()
+      mainBody match {
+        // Strip Scales
+        case s @ Scale(scale, res) =>
+          val newScales = scales :+ ((r: Expr[Pre]) => Scale(scale, r)(s.o))
+          body = res
+          unfoldBody(newConditions, newScales)
+        case _ =>
+          // Re-aply scales from right to left
+          body = scales.foldRight(mainBody)((s, b) => s(b))
+          newConditions
       }
-
-      body = secondBody
-
-      unfoldBody(newConditions, scales)
     }
 
     def containsOtherBinders(e: Expr[Pre]): Boolean = {
@@ -508,49 +514,59 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       for (bound <- potentialBounds) { getSingleBound(bound) }
     }
 
-    def getSingleBound(bound: Expr[Pre]): Unit =
-      Comparison.of(bound) match {
-        // First try to match a simple comparison
-        case Some((_, Comparison.NEQ, _)) => dependentConditions.addOne(bound)
-        case Some((left, comp, right)) =>
-          if (indepOf(bindings, right)) {
-            // x >|>=|==|<=|< 5
-            left match {
-              case Local(Ref(v)) if bindings.contains(v) =>
-                addSingleBound(v, right, comp)
-              case Plus(ll, rr) if indepOf(bindings, rr) =>
-                getSingleBound(comp.make(ll, right - rr))
-              case Plus(ll, rr) if indepOf(bindings, ll) =>
-                getSingleBound(comp.make(rr, right - ll))
-              case Minus(ll, rr) if indepOf(bindings, rr) =>
-                getSingleBound(comp.make(ll, right + rr))
-              case _ => dependentConditions.addOne(bound)
+    def getSingleBound(bound: Expr[Pre]): Unit = {
+      def getSingleBoundRec(bound: Expr[Pre], originalBound: Expr[Pre]): Unit =
+        Comparison.of(bound) match {
+          // First try to match a simple comparison
+          case Some((_, Comparison.NEQ, _)) =>
+            dependentConditions.addOne(originalBound)
+          case Some((left, comp, right)) =>
+            if (indepOf(bindings, right)) {
+              // x >|>=|==|<=|< 5
+              left match {
+                case Local(Ref(v)) if bindings.contains(v) =>
+                  addSingleBound(v, right, comp)
+                case Plus(ll, rr) if indepOf(bindings, rr) =>
+                  getSingleBoundRec(comp.make(ll, right - rr), originalBound)
+                case Plus(ll, rr) if indepOf(bindings, ll) =>
+                  getSingleBoundRec(comp.make(rr, right - ll), originalBound)
+                case Minus(ll, rr) if indepOf(bindings, rr) =>
+                  getSingleBoundRec(comp.make(ll, right + rr), originalBound)
+                case _ => dependentConditions.addOne(originalBound)
+              }
+            } else if (indepOf(bindings, left)) {
+              getSingleBoundRec(comp.flip.make(right, left), originalBound)
+            } else { dependentConditions.addOne(originalBound) }
+          case None =>
+            bound match {
+              // If we do not have a simple comparison, we support one special case: i \in {a..b}
+              case SetMember(Local(Ref(v)), RangeSet(from, to))
+                  if bindings.contains(v) && indepOf(bindings, from) &&
+                    indepOf(bindings, to) =>
+                addSingleBound(v, from, Comparison.GREATER_EQ)
+                addSingleBound(v, to, Comparison.LESS)
+              case SetMember(left, RangeSet(from, to)) =>
+                getSingleBoundRec(
+                  Comparison.GREATER_EQ.make(left, from),
+                  originalBound,
+                )
+                getSingleBoundRec(Comparison.LESS.make(left, to), originalBound)
+              case SeqMember(Local(Ref(v)), Range(from, to))
+                  if bindings.contains(v) && indepOf(bindings, from) &&
+                    indepOf(bindings, to) =>
+                addSingleBound(v, from, Comparison.GREATER_EQ)
+                addSingleBound(v, to, Comparison.LESS)
+              case SeqMember(left, Range(from, to)) =>
+                getSingleBoundRec(
+                  Comparison.GREATER_EQ.make(left, from),
+                  originalBound,
+                )
+                getSingleBoundRec(Comparison.LESS.make(left, to), originalBound)
+              case _ => dependentConditions.addOne(originalBound)
             }
-          } else if (indepOf(bindings, left)) {
-            getSingleBound(comp.flip.make(right, left))
-          } else { dependentConditions.addOne(bound) }
-        case None =>
-          bound match {
-            // If we do not have a simple comparison, we support one special case: i \in {a..b}
-            case SetMember(Local(Ref(v)), RangeSet(from, to))
-                if bindings.contains(v) && indepOf(bindings, from) &&
-                  indepOf(bindings, to) =>
-              addSingleBound(v, from, Comparison.GREATER_EQ)
-              addSingleBound(v, to, Comparison.LESS)
-            case SetMember(left, RangeSet(from, to)) =>
-              getSingleBound(Comparison.GREATER_EQ.make(left, from))
-              getSingleBound(Comparison.LESS.make(left, to))
-            case SeqMember(Local(Ref(v)), Range(from, to))
-                if bindings.contains(v) && indepOf(bindings, from) &&
-                  indepOf(bindings, to) =>
-              addSingleBound(v, from, Comparison.GREATER_EQ)
-              addSingleBound(v, to, Comparison.LESS)
-            case SeqMember(left, Range(from, to)) =>
-              getSingleBound(Comparison.GREATER_EQ.make(left, from))
-              getSingleBound(Comparison.LESS.make(left, to))
-            case _ => dependentConditions.addOne(bound)
-          }
-      }
+        }
+      getSingleBoundRec(bound, bound)
+    }
 
     /** Add a bound like v >= right.
       */
@@ -695,14 +711,12 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 // (forall i; a <= i <= b; ...Perm(ar, x)...) ====> b>=a ==> ...Perm(ar, x*(b-a+1))...
                 independentConditions.addOne(GreaterEq(maxBound, minBound))
 
-                if (body.t == TResource()) {
+                if (body.t == TResource[Pre]()) {
                   body =
-                    Scale(Plus(one, Minus(maxBound, minBound)), body)(
-                      PanicBlame(
-                        "Error in SimplifyNestedQuantifiers class, implication should make sure scale is" +
-                          " never negative when accessed."
-                      )
-                    )
+                    Scale(one + maxBound - minBound, body)(PanicBlame(
+                      "Error in SimplifyNestedQuantifiers class, implication should make sure scale is" +
+                        " never negative when accessed."
+                    ))
                 }
               case _ =>
             }
@@ -821,24 +835,40 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           throw InvalidTriggerVars(t, nonMentionedVars.toSet)
       }
 
-      // We do not do elaborate rewriting for multiple trigger sets
-      if (triggers.size != 1) {
-        triggers.flatten.foreach(validTrigger(_, checkArithmetic = true))
+      // If there are multiple trigger sets, they should contain the same special && arithmetic expressions
+      // We split the triggers in 'patterns'. E.g each function argument is a 'pattern' and the index of an array is a
+      // pattern etc. We do not need duplicates, thus we put the result in a set.
+      val patternSets: Seq[Set[Expr[Pre]]] = triggers
+        .map(_.flatMap(t => getPatterns(t)).toSet)
+      val partitioned: (Seq[(Set[Expr[Pre]], Set[Expr[Pre]])]) = patternSets
+        .map(_.partition(containsSpecial(_)))
+      val (specialSets, otherTriggersSets) =
+        (partitioned.map(_._1), partitioned.map(_._2))
+      // All patterns with special tokens are now filtered out, so we can get patterns which contain arithmetic
+      val partitioned2 = otherTriggersSets
+        .map(s => s.partition(containsSpecial(_, checkArithmetic = true)))
+      val (arithmeticSets, validPatternsSets) =
+        (partitioned2.map(_._1), partitioned2.map(_._2))
+      // If nothing special, just return
+      if (arithmeticSets.forall(_.isEmpty) && specialSets.forall(_.isEmpty)) {
         return result()
       }
 
-      // We split the triggers in 'patterns'. E.g each function argument is a 'pattern' and the index of an array is a
-      // pattern etc. We do not need duplicates, thus we put the result in a set.
-      val patternSet: Set[Expr[Pre]] =
-        triggers.head.flatMap(t => getPatterns(t)).toSet
-      val (special, otherTriggers) = patternSet.partition(containsSpecial(_))
-      // All patterns with special tokens are now filtered out, so we can get patterns which contain arithmetic
-      val (arithmetic, validPatterns) = otherTriggers
-        .partition(containsSpecial(_, checkArithmetic = true))
-      if (arithmetic.isEmpty && special.isEmpty) { return result() }
-
+      // Now we have to do rewriting, but we can only do that if the patterns sets are similar
+      // All specialSets && arithmeticSets must be the same
+      val same1 = specialSets.forall(s => s == specialSets.head)
+      val same2 = arithmeticSets.forall(s => s == arithmeticSets.head)
       // We want to know which vars are already called correctly, and which need rewriting
-      val mentionedVars = validPatterns.flatMap(collectForallVars)
+      val mentionedVarsSets = validPatternsSets
+        .map(_.flatMap(collectForallVars))
+      // All validPatterns should mention the same forall vars
+      val same3 = mentionedVarsSets.forall(s => s == mentionedVarsSets.head)
+      if (!(same1 && same2 && same3)) { NotAllowedInTriggerSet(originalBinder) }
+
+      val special = specialSets.head
+      val arithmetic = arithmeticSets.head
+      val mentionedVars = mentionedVarsSets.head
+
       // nonMentionedVars need to be rewritten in the arithmetic patterns
       val nonMentionedVars: Set[Variable[Pre]] = bindings.toSet -- mentionedVars
 
@@ -872,7 +902,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       )
 
       // Now some checks if the arithmetic patterns can be used
-      checkTriggersSet(rewriteArithmetic, validPatterns)
+      // We can just take a validPattern from the set, since they contain the same forall vars
+      checkTriggersSet(rewriteArithmetic, validPatternsSets.head)
       var remaining = bindings
 
       val results: Seq[(SubstituteForall, Variable[Post])] = rewriteArithmetic
