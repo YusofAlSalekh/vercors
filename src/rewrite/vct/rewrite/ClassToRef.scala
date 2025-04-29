@@ -677,7 +677,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         dispatch(
           value
         ) // Discard for now, should assert instanceOf(value, typeValue)
-      case Cast(value, TypeValue(t)) if value.t == t => { dispatch(value) }
+      case Cast(value, TypeValue(t)) if value.t == t => dispatch(value)
+      case PointerCast(value, t, _, _) if value.t == t => dispatch(value)
       case Result(Ref(app)) =>
         app match {
           case function: Function[Pre] => Result[Post](succ(function))(e.o)

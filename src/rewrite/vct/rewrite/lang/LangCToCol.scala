@@ -1168,7 +1168,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
-  private def getFirstTypes(aggregate: Type[Pre]): Seq[Type[Pre]] =
+  def getFirstTypes(aggregate: Type[Pre]): Seq[Type[Pre]] =
     aggregate match {
       case struct: CTStruct[Pre] =>
         val decls =
@@ -1197,6 +1197,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           t +: getFirstTypes(t)
         }.getOrElse(Nil)
       case TArray(element) => element +: getFirstTypes(element)
+      case LLVMTStruct(_, _, elements) =>
+        elements.headOption.map { field => field +: getFirstTypes(field) }
+          .getOrElse(Nil)
       case LLVMTStruct(_, _, elements) =>
         elements.head +: getFirstTypes(elements.head)
       case LLVMTArray(_, elementType) =>
