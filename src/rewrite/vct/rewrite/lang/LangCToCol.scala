@@ -532,7 +532,13 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case cast @ CCast(_, TOpenCLVector(_, _)) =>
         createOpenCLLiteralVector(cast)
       case CCast(
-            inv @ CInvocation(CLocal("__vercors_malloc"), Seq(arg), Nil, Nil),
+            inv @ CInvocation(
+              CLocal("__vercors_malloc"),
+              Seq(arg),
+              Nil,
+              Nil,
+              false,
+            ),
             tcast,
           ) =>
         val t2 =
@@ -558,7 +564,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         NewPointerArray(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(
           c.o
         )
-      case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _), _) =>
+      case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _, _), _) =>
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
       case CCast(e, t) if e.t.asPointer.isDefined && t.asPointer.isDefined =>
@@ -676,6 +682,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }.get
     val pure = func.specs.collectFirst { case CPure() => () }.isDefined
     val inline = func.specs.collectFirst { case CInline() => () }.isDefined
+    val opaque = func.specs.collectFirst { case COpaque() => () }.isDefined
 
     val (contract, subs: Map[CParam[Pre], CParam[Pre]]) =
       func.ref match {
@@ -711,6 +718,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 contract = rw.dispatch(contract),
                 inline = inline,
                 pure = pure,
+                opaque = opaque,
               )(func.blame)(namedO)
             }
           })
@@ -1232,6 +1240,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     if (isStruct) { rewriteStruct(decl); return }
     val pure = decl.decl.specs.collectFirst { case CPure() => () }.isDefined
     val inline = decl.decl.specs.collectFirst { case CInline() => () }.isDefined
+    val opaque = decl.decl.specs.collectFirst { case COpaque() => () }.isDefined
 
     val t =
       decl.decl.specs.collectFirst { case t: CSpecificationType[Pre] =>
@@ -1255,6 +1264,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 contract = rw.dispatch(decl.decl.contract),
                 pure = pure,
                 inline = inline,
+                opaque = opaque,
               )(AbstractApplicable)(init.o.sourceName(info.name))
             )
           )
@@ -1922,7 +1932,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def invocation(inv: CInvocation[Pre]): Expr[Post] = {
-    val CInvocation(applicable, args, givenMap, yields) = inv
+    val CInvocation(applicable, args, givenMap, yields, reveal) = inv
 
     val newArgs = args.map(a => rw.dispatch(a))
 
@@ -1936,6 +1946,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           args,
           givenMap,
           yields,
+          reveal,
           inv,
           inv.blame,
         )
@@ -1947,6 +1958,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           Nil,
           givenMap.map { case (Ref(v), e) => (rw.succ(v), rw.dispatch(e)) },
           yields.map { case (e, Ref(v)) => (rw.dispatch(e), rw.succ(v)) },
+          reveal = reveal,
         )(inv.blame)
       case e: RefCGlobalDeclaration[Pre] => globalInvocation(e, inv, newArgs)
     }
@@ -2095,7 +2107,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       inv: CInvocation[Pre],
       rewrittenArgs: Seq[Expr[Post]],
   ): Expr[Post] = {
-    val CInvocation(_, args, givenMap, yields) = inv
+    val CInvocation(_, args, givenMap, yields, reveal) = inv
     val RefCGlobalDeclaration(decls, initIdx) = e
     implicit val o: Origin = inv.o
 
@@ -2133,6 +2145,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           Nil,
           givenMap.map { case (Ref(v), e) => (rw.succ(v), rw.dispatch(e)) },
           yields.map { case (e, Ref(v)) => (rw.dispatch(e), rw.succ(v)) },
+          reveal = reveal,
         )(inv.blame)
     }
   }

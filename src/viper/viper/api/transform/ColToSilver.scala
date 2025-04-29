@@ -231,7 +231,16 @@ case class ColToSilver(program: col.Program[_]) {
               function.contract.decreases.toSeq.map(decreases),
             accountedPred(function.contract.ensures),
             function.body.map(exp),
-          )(pos = pos(function), info = NodeInfo(function))
+          )(
+            pos = pos(function),
+            info =
+              if (function.opaque) {
+                silver.ConsInfo(
+                  NodeInfo(function),
+                  silver.AnnotationInfo(Map("opaque" -> Seq())),
+                )
+              } else { NodeInfo(function) },
+          )
         }
       case procedure: col.Procedure[_]
           if procedure.returnType == col.TVoid() && !procedure.inline &&
@@ -561,10 +570,15 @@ case class ColToSilver(program: col.Program[_]) {
           pos = pos(e),
           info = expInfo(e),
         )
-      case col.FunctionInvocation(f, args, Nil, Nil, Nil) =>
+      case col.FunctionInvocation(f, args, Nil, Nil, Nil, reveal) =>
         silver.FuncApp(ref(f), args.map(exp))(
           pos(e),
-          expInfo(e),
+          if (reveal) {
+            silver.ConsInfo(
+              expInfo(e),
+              silver.AnnotationInfo(Map("reveal" -> Seq())),
+            )
+          } else { expInfo(e) },
           typ(f.decl.returnType),
           silver.NoTrafos,
         )
@@ -741,10 +755,10 @@ case class ColToSilver(program: col.Program[_]) {
   def fold(f: col.FoldTarget[_]): silver.PredicateAccessPredicate =
     f match {
       case col.ScaledPredicateApply(inv: col.PredicateApply[_], perm) =>
-        silver.PredicateAccessPredicate(pred(inv, Some(expInfo(f))), Some(exp(perm)))(
-          pos = pos(f),
-          info = expInfo(f),
-        )
+        silver.PredicateAccessPredicate(
+          pred(inv, Some(expInfo(f))),
+          Some(exp(perm)),
+        )(pos = pos(f), info = expInfo(f))
       case col.ValuePredicateApply(inv: col.PredicateApply[_]) =>
         silver.PredicateAccessPredicate(
           pred(inv, Some(expInfo(f))),

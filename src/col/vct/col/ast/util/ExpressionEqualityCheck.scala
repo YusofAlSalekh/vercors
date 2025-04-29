@@ -1007,7 +1007,7 @@ class AnnotationVariableInfoGetter[G](
       case _: Constant[G] => true
       case e: UnExpr[G] => rec(e.arg)
       case e: BinExpr[G] => rec(e.left) && rec(e.right)
-      case FunctionInvocation(_, args, _, given, yields) =>
+      case FunctionInvocation(_, args, _, given, yields, _) =>
         args.forall(rec) && given.map(_._2).forall(rec) && yields.map(_._1)
           .forall(rec)
       case _ => false

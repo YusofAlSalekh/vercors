@@ -156,7 +156,7 @@ case class LangPVLToCol[Pre <: Generation](
   }
 
   def invocation(inv: PVLInvocation[Pre]): Expr[Post] = {
-    val PVLInvocation(obj, _, args, typeArgs, givenMap, yields) = inv
+    val PVLInvocation(obj, _, args, typeArgs, givenMap, yields, reveal) = inv
     implicit val o: Origin = inv.o
 
     inv.ref.get match {
@@ -168,6 +168,7 @@ case class LangPVLToCol[Pre <: Generation](
           args,
           givenMap,
           yields,
+          reveal,
           inv,
           inv.blame,
         )

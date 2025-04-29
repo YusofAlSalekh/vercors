@@ -137,6 +137,7 @@ case class PVLToCol[G](
                   contract.consumeApplicableContract(blame(method)),
                   inline = mods.consume(mods.inline),
                   pure = mods.consume(mods.pure),
+                  opaque = mods.consume(mods.opaque),
                 )(blame(method))(origin(method).sourceName(convert(name)))
               },
             ),
@@ -450,6 +451,7 @@ case class PVLToCol[G](
           typeArgs.map(convert(_)).getOrElse(Nil),
           convertGiven(given),
           convertYields(yields),
+          false,
         )(blame(expr))
       case PostfixExpr1(xs, _, i, _) =>
         AmbiguousSubscript(convert(xs), convert(i))(blame(expr))
@@ -498,8 +500,13 @@ case class PVLToCol[G](
       case PvlString(data) => StringValue(data.substring(1, data.length - 1))
       case PvlChar(s"'$data'") => CharValue(data.codePointAt(0))
       case PvlParens(_, inner, _) => convert(inner)
-      case PvlInvocation(id, None) => local(id, convert(id))
-      case PvlInvocation(id, Some(Call0(typeArgs, args, given, yields))) =>
+      case PvlInvocation(None, id, None) => local(id, convert(id))
+      case PvlInvocation(reveal, id, None) => ??(expr)
+      case PvlInvocation(
+            reveal,
+            id,
+            Some(Call0(typeArgs, args, given, yields)),
+          ) =>
         PVLInvocation(
           None,
           convert(id),
@@ -507,6 +514,7 @@ case class PVLToCol[G](
           typeArgs.map(convert(_)).getOrElse(Nil),
           convertGiven(given),
           convertYields(yields),
+          reveal.isDefined,
         )(blame(expr))
       case PvlValAdtInvocation(inner) => convert(inner)
     }
@@ -1037,6 +1045,7 @@ case class PVLToCol[G](
           case "pure" => collector.pure += mod
           case "inline" => collector.inline += mod
           case "thread_local" => collector.threadLocal += mod
+          case "opaque" => collector.opaque += mod
           case "bip_annotation" =>
             fail(mod, "This modifier is not allowed here.")
         }
@@ -1409,6 +1418,7 @@ case class PVLToCol[G](
                   convert(definition),
                   c.consumeApplicableContract(blame(decl)),
                   m.consume(m.inline),
+                  opaque = m.consume(m.opaque),
                 )(blame(decl))(namedOrigin)
               },
             ),

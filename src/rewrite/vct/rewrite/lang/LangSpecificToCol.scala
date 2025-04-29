@@ -33,6 +33,13 @@ case object LangSpecificToCol extends RewriterBuilderArg[Boolean] {
       value.o.messageInContext("Could not resolve this expression to a value.")
   }
 
+  case class NotValidReveal(value: Expr[_]) extends UserError {
+    override def code: String = "notValidReveal"
+    override def text: String =
+      value.o
+        .messageInContext("Adding reveal to this invocation is not supported.")
+  }
+
   private case class IndeterminableBitVectorSize(op: Expr[_])
       extends UserError {
     override def code: String = "unknownBVSize"
@@ -144,6 +151,7 @@ case class LangSpecificToCol[Pre <: Generation](
       args: Seq[Expr[Pre]],
       givenArgsPre: Seq[(Ref[Pre, Variable[Pre]], Expr[Pre])],
       yieldsPre: Seq[(Expr[Pre], Ref[Pre, Variable[Pre]])],
+      reveal: Boolean,
       e: Expr[Pre],
       blame: Blame[FrontendInvocationError],
   ): Expr[Post] = {
@@ -164,6 +172,7 @@ case class LangSpecificToCol[Pre <: Generation](
           typeArgs.map(dispatch),
           givenArgs,
           yields,
+          reveal = reveal,
         )(blame)
       case RefProcedure(decl) =>
         ProcedureInvocation[Post](
@@ -173,7 +182,9 @@ case class LangSpecificToCol[Pre <: Generation](
           typeArgs.map(dispatch),
           givenArgs,
           yields,
+          reveal = reveal,
         )(blame)
+      case _ if reveal => throw NotValidReveal(e)
       case RefPredicate(decl) =>
         PredicateApplyExpr(PredicateApply[Post](succ(decl), args.map(dispatch)))
       case RefADTFunction(decl) =>

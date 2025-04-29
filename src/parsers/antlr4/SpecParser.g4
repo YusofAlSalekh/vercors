@@ -115,6 +115,7 @@ valWith: 'with' langStatement;
 valThen: 'then' langStatement;
 valGiven: 'given' '{' valGivenMappings '}';
 valYields: 'yields' '{' valYieldsMappings '}';
+valReveal: 'reveal';
 
 valGivenMappings
  : langId '=' langExpr
@@ -420,7 +421,7 @@ valImpureDef
  ;
 
 valModifier
- : ('pure' | 'inline' | 'thread_local' | 'bip_annotation')
+ : ('pure' | 'inline' | 'thread_local' | 'bip_annotation' | 'opaque')
  | langStatic # valStatic
  ;
 
@@ -456,6 +457,7 @@ valEmbedWith: startSpec valWith? endSpec | {specLevel>0}? valWith;
 valEmbedThen: startSpec valThen? endSpec | {specLevel>0}? valThen;
 valEmbedGiven: startSpec valGiven? endSpec | {specLevel>0}? valGiven;
 valEmbedYields: startSpec valYields? endSpec | {specLevel>0}? valYields;
+valEmbedReveal: startSpec valReveal? endSpec | {specLevel>0}? valReveal;
 
 valEmbedGlobalDeclarationBlock
  : startSpec valGlobalDeclaration* endSpec

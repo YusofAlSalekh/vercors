@@ -67,6 +67,7 @@ postfixExpression
     :   annotatedPrimaryExpression
     |   postfixExpression '[' expression ']'
     |   postfixExpression '(' argumentExpressionList? ')' valEmbedGiven? valEmbedYields?
+    |   valEmbedReveal postfixExpression '(' argumentExpressionList? ')' valEmbedGiven? valEmbedYields?
     |   postfixExpression '.' clangIdentifier
     |   postfixExpression '->' clangIdentifier
     |   postfixExpression '++'

@@ -127,6 +127,7 @@ abstract class ToCol[G](
     val inline: mutable.ArrayBuffer[ParserRuleContext] = mutable.ArrayBuffer()
     val threadLocal: mutable.ArrayBuffer[ParserRuleContext] = mutable
       .ArrayBuffer()
+    val opaque: mutable.ArrayBuffer[ParserRuleContext] = mutable.ArrayBuffer()
     val static: mutable.ArrayBuffer[ParserRuleContext] = mutable.ArrayBuffer()
     val bipAnnotation: mutable.ArrayBuffer[ParserRuleContext] = mutable
       .ArrayBuffer()
@@ -138,7 +139,7 @@ abstract class ToCol[G](
     }
 
     def nodes: Seq[ParserRuleContext] =
-      Seq(pure, inline, threadLocal, static, bipAnnotation).flatten
+      Seq(pure, inline, threadLocal, static, bipAnnotation, opaque).flatten
   }
 
   /** Used to convert ParserRuleContext nodes into origin implicitly

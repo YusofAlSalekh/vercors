@@ -74,7 +74,7 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def text: String =
       e.o.messageInContext(
         "We tried to rewrite multiple trigger sets for this forall, but that is only possible if they contain exactly the same" +
-          "arithmetic or special experssions "
+          " arithmetic or special expressions."
       )
   }
 
@@ -369,11 +369,18 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
   def toOneImplies(e: Expr[Pre]): Expr[Pre] =
     e match {
-      case Star(Implies(e1, e2), Implies(e3, e4)) if e1 == e2 =>
+      case And(Implies(e1, e2), Implies(e3, e4)) if e1 == e3 =>
+        Implies(e1, And(e2, e4))
+      case Star(Implies(e1, e2), Implies(e3, e4)) if e1 == e3 =>
         Implies(e1, Star(e2, e4))
       case Star(e, Implies(e3, e4)) =>
         toOneImplies(e) match {
           case Implies(e1, e2) if e1 == e3 => Implies(e1, Star(e2, e4))
+          case other => other
+        }
+      case And(e, Implies(e3, e4)) =>
+        toOneImplies(e) match {
+          case Implies(e1, e2) if e1 == e3 => Implies(e1, And(e2, e4))
           case other => other
         }
       case other => other
@@ -863,7 +870,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         .map(_.flatMap(collectForallVars))
       // All validPatterns should mention the same forall vars
       val same3 = mentionedVarsSets.forall(s => s == mentionedVarsSets.head)
-      if (!(same1 && same2 && same3)) { NotAllowedInTriggerSet(originalBinder) }
+      if (!(same1 && same2 && same3)) {
+        throw NotAllowedInTriggerSet(originalBinder)
+      }
 
       val special = specialSets.head
       val arithmetic = arithmeticSets.head
@@ -958,10 +967,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
       val sub = ForallSubstitute(newVars, oldVarsMap, indexMap ++ introduceMap)
       var select: Seq[Expr[Post]] =
-        results.foldRight(
-          independentConditions.map(sub.dispatch).toSeq ++
-            dependentConditions.map(sub.dispatch).toSeq
-        ) { case (l, r) => l._1.newBounds +: r }
+        results.foldRight(independentConditions.map(sub.dispatch).toSeq) {
+          case (l, r) => l._1.newBounds +: r
+        }
       val newBody = sub.dispatch(body)
       for (v <- remaining) {
         val vNew = Local[Post](newVars(v).ref)(v.o)
@@ -970,8 +978,10 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         for (u <- upperExclusiveBounds.getOrElse(v, ArrayBuffer[Expr[Pre]]()))
           select = select :+ (vNew < sub.dispatch(u))
       }
+
       select =
         select ++ introducedVars.map { case (v, e) => Local[Post](v.ref) === e }
+      select = select ++ dependentConditions.map(sub.dispatch).toSeq
 
       val main =
         if (select.nonEmpty)
@@ -1102,7 +1112,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         getPatterns(subscript) ++ getPatterns(e)
       case PointerAdd(e, offset) => getPatterns(offset) ++ getPatterns(e)
       case VectorSubscript(e, offset) => getPatterns(offset) ++ getPatterns(e)
-      case FunctionInvocation(_, args, Seq(), given, _) =>
+      case FunctionInvocation(_, args, Seq(), given, _, _) =>
         args.flatMap(getPatterns) ++ given.flatMap(g => getPatterns(g._2))
       case e: Expr[Pre] => Seq(e)
       case _ => Seq()
