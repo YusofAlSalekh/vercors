@@ -1462,6 +1462,7 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         kernelRunnerPreCondition,
         kernelRunnerPostCondition,
         tt,
+        tt,
         Nil,
         Nil,
         Nil,
@@ -2059,6 +2060,7 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                     constructorPostConditions.toSeq :+ IdleToken[Post](result)
                   )),
                 ),
+                tt,
                 tt,
                 Seq(),
                 Seq(),

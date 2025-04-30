@@ -1125,7 +1125,7 @@ public class ExpressionTransformer<T> {
 
         // Create completely empty method with appropriate return type
         ApplicableContract<T> contract = new ApplicableContract<>(new UnitAccountedPredicate<>(col_system.TRUE, OriGen.create()),
-                new UnitAccountedPredicate<>(col_system.TRUE, OriGen.create()), col_system.TRUE, col_system.NO_SIGNALS,
+                new UnitAccountedPredicate<>(col_system.TRUE, OriGen.create()), col_system.TRUE, col_system.TRUE, col_system.NO_SIGNALS,
                 col_system.NO_VARS, col_system.NO_VARS, Option.empty(), new GeneratedBlame<>(), OriGen.create());
         InstanceMethod<T> randomizer = new InstanceMethod<>(return_type, col_system.NO_VARS, col_system.NO_VARS, col_system.NO_VARS,
                 Option.empty(), contract, false, true, new GeneratedBlame<>(), OriGen.create(name));

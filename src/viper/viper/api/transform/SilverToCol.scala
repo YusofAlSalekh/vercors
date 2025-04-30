@@ -210,6 +210,7 @@ case class SilverToCol[G](
               foldStar(posts.map(transform))(origin(func))
             )(origin(func)),
           contextEverywhere = tt,
+          kernelInvariant = tt,
           signals = Nil,
           givenArgs = Nil,
           yieldsArgs = Nil,
@@ -256,6 +257,7 @@ case class SilverToCol[G](
               foldStar(posts.map(transform))(origin(proc))
             )(origin(proc)),
           contextEverywhere = tt,
+          kernelInvariant = tt,
           signals = Nil,
           givenArgs = Nil,
           yieldsArgs = Nil,

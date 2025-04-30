@@ -1003,6 +1003,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 UnitAccountedPredicate(ensures)(o),
                 // Context everywhere is already passed down in the body
                 tt,
+                tt, //TODO determine if we need to do something with kernelinvariants
                 contract.signals.map(rw.dispatch),
                 newGivenArgs,
                 newYieldsArgs,

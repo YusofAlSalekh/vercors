@@ -585,6 +585,7 @@ object AstBuildHelpers {
       ensures: AccountedPredicate[G] =
         UnitAccountedPredicate(tt[G])(constOrigin(true)),
       contextEverywhere: Expr[G] = tt[G],
+      kernelInvariant: Expr[G] = tt[G],
       signals: Seq[SignalsClause[G]] = Nil,
       givenArgs: Seq[Variable[G]] = Nil,
       yieldsArgs: Seq[Variable[G]] = Nil,
@@ -594,6 +595,7 @@ object AstBuildHelpers {
       requires,
       ensures,
       contextEverywhere,
+      kernelInvariant,
       signals,
       givenArgs,
       yieldsArgs,
@@ -630,6 +632,7 @@ object AstBuildHelpers {
       ensures: AccountedPredicate[G] =
         UnitAccountedPredicate(tt[G])(constOrigin(true)),
       contextEverywhere: Expr[G] = tt[G],
+      kernelInvariant: Expr[G] = tt[G],
       signals: Seq[SignalsClause[G]] = Nil,
       givenArgs: Seq[Variable[G]] = Nil,
       yieldsArgs: Seq[Variable[G]] = Nil,
@@ -647,6 +650,7 @@ object AstBuildHelpers {
         requires,
         ensures,
         contextEverywhere,
+        kernelInvariant,
         signals,
         givenArgs,
         yieldsArgs,
@@ -668,6 +672,7 @@ object AstBuildHelpers {
       ensures: AccountedPredicate[G] =
         UnitAccountedPredicate(tt[G])(constOrigin(true)),
       contextEverywhere: Expr[G] = tt[G],
+      kernelInvariant: Expr[G] = tt[G],
       signals: Seq[SignalsClause[G]] = Nil,
       givenArgs: Seq[Variable[G]] = Nil,
       yieldsArgs: Seq[Variable[G]] = Nil,
@@ -685,6 +690,7 @@ object AstBuildHelpers {
         requires,
         ensures,
         contextEverywhere,
+        kernelInvariant,
         signals,
         givenArgs,
         yieldsArgs,
@@ -706,6 +712,7 @@ object AstBuildHelpers {
       ensures: AccountedPredicate[G] =
         UnitAccountedPredicate(tt[G])(constOrigin(true)),
       contextEverywhere: Expr[G] = tt[G],
+      kernelInvariant: Expr[G] = tt[G],
       signals: Seq[SignalsClause[G]] = Nil,
       givenArgs: Seq[Variable[G]] = Nil,
       yieldsArgs: Seq[Variable[G]] = Nil,
@@ -724,6 +731,7 @@ object AstBuildHelpers {
         requires,
         ensures,
         contextEverywhere,
+        kernelInvariant,
         signals,
         givenArgs,
         yieldsArgs,

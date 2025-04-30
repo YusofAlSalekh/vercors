@@ -1207,6 +1207,8 @@ case object ResolveReferences extends LazyLogging {
               ),
               applicableContract.contextEverywhere &*
                 substitutedContract.contextEverywhere,
+              applicableContract.kernelInvariant &*
+                substitutedContract.kernelInvariant,
               applicableContract.signals ++ substitutedContract.signals,
               applicableContract.givenArgs ++ substitutedContract.givenArgs,
               applicableContract.yieldsArgs ++ substitutedContract.yieldsArgs,
