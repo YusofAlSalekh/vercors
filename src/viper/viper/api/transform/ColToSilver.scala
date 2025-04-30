@@ -104,8 +104,9 @@ case class ColToSilver(program: col.Program[_]) {
   def name(decl: col.Declaration[_], nameF: Name => String): String =
     if (names.contains(decl)) { ??? }
     else {
-      var (name, index) = unpackName(nameF(decl.o.getPreferredNameOrElse()))
-      name = sanitize(name)
+      var (name, index) = unpackName(
+        sanitize(nameF(decl.o.getPreferredNameOrElse()))
+      )
       while (
         names.values.exists(_ == (name, index)) ||
         silver.utility.Consistency.reservedNames.contains(packName(name, index))
@@ -741,10 +742,10 @@ case class ColToSilver(program: col.Program[_]) {
   def fold(f: col.FoldTarget[_]): silver.PredicateAccessPredicate =
     f match {
       case col.ScaledPredicateApply(inv: col.PredicateApply[_], perm) =>
-        silver.PredicateAccessPredicate(pred(inv, Some(expInfo(f))), Some(exp(perm)))(
-          pos = pos(f),
-          info = expInfo(f),
-        )
+        silver.PredicateAccessPredicate(
+          pred(inv, Some(expInfo(f))),
+          Some(exp(perm)),
+        )(pos = pos(f), info = expInfo(f))
       case col.ValuePredicateApply(inv: col.PredicateApply[_]) =>
         silver.PredicateAccessPredicate(
           pred(inv, Some(expInfo(f))),

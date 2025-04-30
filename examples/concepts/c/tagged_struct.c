@@ -16,8 +16,8 @@ void baz() {
     struct FElement e2;
     e2.e.tag = FLOAT_TAG;
     e2.d = &f; // w
-    //@ assert Perm(e1.d, write);
-    //@ assert Perm(e2.d, write);
+    //@ assert Perm(*e1.d, write);
+    //@ assert Perm(*e2.d, write);
     struct Element *elems[2] = {(struct Element *)&e1, (struct Element *)&e2}; // x
 
     //@ loop_invariant 0 <= i && i <= 2;
@@ -25,10 +25,10 @@ void baz() {
     //@ loop_invariant \pointer(elems, 2, write);
     //@ loop_invariant Perm(e1, write);
     //@ loop_invariant e1.d != NULL;
-    //@ loop_invariant Perm(e1.d, write);
+    //@ loop_invariant Perm(*e1.d, write);
     //@ loop_invariant Perm(e2, write);
     //@ loop_invariant e2.d != NULL;
-    //@ loop_invariant Perm(e2.d, write);
+    //@ loop_invariant Perm(*e2.d, write);
     //@ loop_invariant elems[0] == (struct Element *)&e1;
     //@ loop_invariant elems[1] == (struct Element *)&e2;
     //@ loop_invariant elems[0]->tag == INT_TAG;
