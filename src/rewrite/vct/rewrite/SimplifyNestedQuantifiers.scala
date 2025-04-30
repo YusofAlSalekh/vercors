@@ -90,13 +90,13 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
       )
   }
 
-  case class InvalidTrigger(e: Expr[_]) extends UserError {
+  case class InvalidTrigger(e: Expr[_], reasons: Seq[FailReason])
+      extends UserError {
     override def code: String = "invalidTrigger"
     override def text: String =
       e.o.messageInContext(
-        "We did not succeed in rewriting this part of the trigger. " +
-          "Only linear expressions are possible to rewrite in triggers."
-      )
+        "We did not succeed in rewriting this part of the trigger. Because of the following reasons:"
+      ) ++ reasons.map(_.text).mkString("\n")
   }
 
   case class InvalidTriggerPair(e1: Expr[_], e2: Expr[_]) extends UserError {
@@ -107,6 +107,64 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
           " because the quantifier variables are not partitioned."
       )
   }
+}
+
+// Reasons for not rewriting
+trait FailReason {
+  def text: String
+}
+case class NotLinear(pattern: Expr[_]) extends FailReason {
+  def text: String =
+    pattern.o.messageInContext(
+      "This pattern is not linear, thus we cannot rewrite it."
+    )
+}
+case class VarNotMentioned(v: Variable[_], pattern: Expr[_])
+    extends FailReason {
+  def text: String =
+    Message.messagesInContext(
+      pattern.o -> "This pattern does not mention the variable...",
+      v.o -> "... which is needed to rewrite the pattern",
+    )
+}
+case class VarNoBound(v: Variable[_], pattern: Expr[_]) extends FailReason {
+  def text: String =
+    Message.messagesInContext(
+      pattern.o -> "This pattern needs lower bounds for all its vars...",
+      v.o -> "... but this var has no lower bound",
+    )
+}
+
+case class VarNotProvableZero(
+    v: Variable[_],
+    e: Expr[_],
+    pattern: Expr[_],
+    permutation: Seq[Variable[_]],
+) extends FailReason {
+  def text: String =
+    Message.messagesInContext(
+      permutation.head.o ->
+        ("For this permutation " +
+          permutation.map(_.o.getPreferredNameOrElse().camel).mkString(", ")),
+      v.o -> "... we cannot prove that this var is never zero",
+    )
+}
+case class CannotFindSuitableBound(
+    x0: Variable[_],
+    a0: Expr[_],
+    x1: Variable[_],
+    a1: Expr[_],
+    pattern: Expr[_],
+    permutation: Seq[Variable[_]],
+) extends FailReason {
+  def text: String =
+    Message.messagesInContext(
+      permutation.head.o ->
+        ("For this permutation " +
+          permutation.map(_.o.getPreferredNameOrElse().camel).mkString(", ")),
+      x0.o -> "... we could not prove that this var ...",
+      x1.o -> "... does not interfere with the stride of this var.",
+    )
 }
 
 case class SimplifyNestedQuantifiers[Pre <: Generation]()
@@ -896,7 +954,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       special.foreach(p =>
         p.collectFirst {
           case Local(ref) if nonMentionedVars.contains(ref.decl) =>
-            throw InvalidTrigger(p)
+            throw InvalidTrigger(p, Seq())
         }
       )
       introducePatterns = introducePatterns ++ special
@@ -927,13 +985,14 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           mainRewriter.variables.collect {
             linearAccesses.linearExpression(pattern, qvars)
           } match {
-            case (bindings, Some(substituteForall)) =>
+            case (bindings, Right(substituteForall)) =>
               if (bindings.size != 1)
                 throw Unreachable(
                   "Only one new variable should be declared with SimplifyNestedQuantifiers."
                 )
               (substituteForall, bindings.head)
-            case (_, None) => throw InvalidTrigger(arithmetic.head)
+            case (_, Left(reasons)) =>
+              throw InvalidTrigger(arithmetic.head, reasons)
           }
         }
       val newVars =
@@ -1084,13 +1143,6 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       case _ => true
     }
 
-  def validTrigger[G](e: Expr[G], checkArithmetic: Boolean = false): Unit = {
-    e.foreach {
-      case n: Expr[G] if !allowedInTrigger(n, checkArithmetic) =>
-        throw NotAllowedInTrigger(n); case _ =>
-    }
-  }
-
   def containsSpecial[G](
       e: Expr[G],
       checkArithmetic: Boolean = false,
@@ -1122,7 +1174,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     def linearExpression(
         pattern: Expr[Pre],
         quantVars: Seq[Variable[Pre]],
-    ): Option[SubstituteForall] = {
+    ): Either[Seq[FailReason], SubstituteForall] = {
       val pot = new PotentialLinearExpressions(pattern)
       pot.visit(pattern)
       pot.canRewrite(quantVars)
@@ -1213,18 +1265,17 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
       def canRewrite(
           quantVars: Seq[Variable[Pre]]
-      ): Option[SubstituteForall] = {
-        if (!isLinear) { return None }
+      ): Either[Seq[FailReason], SubstituteForall] = {
+        if (!isLinear) { return Left(Seq(NotLinear(pattern))) }
         // Checking the preconditions of the check_vars_list function
         for (v <- quantVars) {
+          if (!linearExpressions.contains(v))
+            return Left(Seq(VarNotMentioned(v, pattern)))
           if (
-            !( // Must have an a_i
-              linearExpressions.contains(v) &&
-                // must have lower bound
-                quantifierData.upperExclusiveBounds.contains(v) &&
-                quantifierData.upperExclusiveBounds(v).nonEmpty
-            )
-          ) { return None }
+            !(quantifierData.lowerBounds.contains(v) &&
+              quantifierData.lowerBounds(v).nonEmpty)
+          )
+            return Left(Seq(VarNoBound(v, pattern)))
         }
 
         for (v <- linearExpressions.keys) {
@@ -1235,10 +1286,12 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           equalityChecker.isConstantInt(linearExpressions(v)).getOrElse(999999)
         val vars = quantVars.toList.sortBy(sortVar)
 
-        val res = vars.permutations.map(check_vars_list).collectFirst({
-          case Some(subst) => subst
-        })
-        res
+        val res =
+          vars.permutations.map(check_vars_list).foldLeft(Seq[FailReason]()) {
+            case (reasons, Left(reason)) => reasons :+ reason
+            case (_, r @ Right(res)) => return Right(res)
+          }
+        Left(res)
       }
 
       def abs[G](
@@ -1279,7 +1332,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         */
       def check_vars_list(
           vars: Seq[Variable[Pre]]
-      ): Option[SubstituteForall] = {
+      ): Either[FailReason, SubstituteForall] = {
         val x0 = vars.head
         val a0 = linearExpressions(x0)
         // x_{i-1}
@@ -1287,7 +1340,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         var linLast: Expr[Pre] = IntegerValue(0)
         val sign = equalityChecker.getSign(a0)
         // a0 always must be provable non zero
-        equalityChecker.isNonZero(a0).getOrElse(return None)
+        equalityChecker.isNonZero(a0)
+          .getOrElse(return Left(VarNotProvableZero(x0, a0, pattern, vars)))
 
         val xmins: mutable.Map[Variable[Pre], Expr[Pre]] = mutable.Map()
         val remainingLowerBounds: mutable.Map[Variable[Pre], Set[Expr[Pre]]] =
@@ -1297,9 +1351,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         var otherNeededBounds: Set[Expr[Pre]] = Set()
 
         for (x <- vars.tail) {
-          findSuitableBound(x, xPrev, linLast, sign) match {
-            case None => return None
-            case Some(
+          findSuitableBound(x, xPrev, linLast, sign, vars) match {
+            case Left(reason) => return Left(reason)
+            case Right(
                   FoundBound(
                     lowerBounds,
                     upperBounds,
@@ -1414,7 +1468,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         }
         for (b <- otherNeededBounds) { newBounds = And(newGen(b), newBounds) }
 
-        Some(SubstituteForall(newBounds, replaceMap.toMap, replacePattern))
+        Right(SubstituteForall(newBounds, replaceMap.toMap, replacePattern))
       }
 
       case class FoundBound(
@@ -1650,7 +1704,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           xPrev: Variable[Pre],
           linExpr: Expr[Pre],
           sign: Option[ExpressionEqualityCheck.Sign],
-      ): Option[FoundBound] = {
+          permutation: Seq[Variable[Pre]],
+      ): Either[FailReason, FoundBound] = {
         val a = linearExpressions(x)
         val aLast = linearExpressions(xPrev)
         val hasSameSign = equalityChecker.isSameSign(a, aLast).getOrElse(false)
@@ -1683,7 +1738,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 simplifiedMult(aLast, simplifiedMinus(Local(xPrev.ref), low)),
                 linExpr,
               )
-              return Some(FoundBound(
+              return Right(FoundBound(
                 otherLowerBounds,
                 otherUpperBounds,
                 otherNeededBounds,
@@ -1712,7 +1767,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 simplifiedMult(aLast, simplifiedMinus(Local(xPrev.ref), low)),
                 linExpr,
               )
-              return Some(FoundBound(
+              return Right(FoundBound(
                 otherLowerBounds,
                 otherUpperBounds,
                 otherNeededBounds,
@@ -1742,7 +1797,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 isExprUpperBounded(a, linLast))
             ) {
               otherLowerBounds = otherLowerBounds - low
-              return Some(FoundBound(
+              return Right(FoundBound(
                 otherLowerBounds,
                 otherUpperBounds,
                 otherNeededBounds,
@@ -1753,7 +1808,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           }
         }
 
-        None
+        Left(CannotFindSuitableBound(xPrev, aLast, x, a, pattern, permutation))
       }
 
       def getPlusses(e: Expr[Pre]): (Seq[Expr[Pre]], BigInt) = {
