@@ -155,7 +155,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             fieldRef,
             structSize,
             fieldSize,
-            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].casts(1)._2),
+            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].sizes(1)),
           )
         }).getOrElse(Nil)
       }
@@ -371,8 +371,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
                 InlinePattern(PointerCast(
                   a,
                   TNonNullPointer(newT, unique),
-                  dispatch(cls.casts.head._2),
-                  dispatch(cls.casts(1)._2),
+                  dispatch(cls.sizes.head),
+                  dispatch(cls.sizes(1)),
                 )) === adtFunctionInvocation(
                   byValFieldSucc.ref(field),
                   args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
@@ -393,9 +393,9 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
                         dispatch(innerF.t),
                         unique,
                         byValFieldSucc.ref(field),
-                        dispatch(cls.casts.head._2),
-                        dispatch(cls.casts(1)._2),
-                        dispatch(cls.casts(2)._2),
+                        dispatch(cls.sizes.head),
+                        dispatch(cls.sizes(1)),
+                        dispatch(cls.sizes(2)),
                       )
                     }).getOrElse(Nil)
                 case _ => Nil

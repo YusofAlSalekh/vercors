@@ -1221,12 +1221,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }
 
     val casts =
-      (
-        TByValueClass[Post](cStructSuccessor.ref(decl), Nil),
-        sizeOf(CTStruct(decl.ref), decl.o),
-      ) +: getFirstTypes(CTStruct(decl.ref)).map { t =>
-        (rw.dispatch(t), sizeOf(t, decl.o))
-      }
+      sizeOf(CTStruct(decl.ref), decl.o) +: getFirstTypes(CTStruct(decl.ref))
+        .map { t => (sizeOf(t, decl.o)) }
     val newStruct =
       new ByValueClass[Post](
         Seq(),

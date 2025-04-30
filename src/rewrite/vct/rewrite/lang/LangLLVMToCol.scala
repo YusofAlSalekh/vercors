@@ -731,10 +731,9 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   def rewriteStruct(t: LLVMTStruct[Pre]): Unit = {
     val LLVMTStruct(name, packed, elements) = t
     val casts =
-      (TByValueClass[Post](structMap.ref(t), Nil), rw.c.sizeOf(t, t.o)) +:
-        rw.c.getFirstTypes(t).map { ct =>
-          (rw.dispatch(ct), rw.c.sizeOf(ct, t.o))
-        }
+      rw.c.sizeOf(t, t.o) +: rw.c.getFirstTypes(t).map { ct =>
+        rw.c.sizeOf(ct, t.o)
+      }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
