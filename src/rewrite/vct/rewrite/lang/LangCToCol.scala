@@ -13,7 +13,7 @@ import vct.col.resolve.ctx._
 import vct.col.resolve.lang.C.nameFromDeclarator
 import vct.col.rewrite.{Generation, Rewritten}
 import vct.col.typerules.{CoercionUtils, TypeSize}
-import vct.col.util.SuccessionMap
+import vct.col.util.{SuccessionMap, Substitute}
 import vct.col.util.AstBuildHelpers._
 import vct.result.Message
 import vct.result.VerificationError.{Unreachable, UserError}
@@ -281,6 +281,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val cudaCurrentBlockIdx: ScopedStack[CudaVec] = ScopedStack()
   private val cudaCurrentBlockDim: ScopedStack[CudaVec] = ScopedStack()
   private val cudaCurrentGridDim: ScopedStack[CudaVec] = ScopedStack()
+  private val cudaConstantDims: ScopedStack[ConstantCudaVec] = ScopedStack()
 
   private val cudaCurrentGrid: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
   private val cudaCurrentBlock: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
@@ -316,6 +317,33 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           dim -> new Variable[Post](TCInt())(CudaIndexVariableOrigin(dim))
         ): _*
     )
+  }
+
+  class ConstantCudaVec(var indicesConstant: Seq[RefCudaVecDim[Pre]])(
+      implicit val o: Origin
+  ) {
+    var indices: ListMap[RefCudaVecDim[Pre], Variable[Post]] = ListMap(
+      indicesConstant.map(dim =>
+        dim -> new Variable[Post](TCInt())(CudaIndexVariableOrigin(dim))
+      ): _*
+    )
+    // Always keep the x var, if all variables in the block/grid are constant
+    if (
+      indicesConstant.collect {
+        case v: RefCudaVecDim[Pre]
+            if v.vec.isInstanceOf[RefCudaThreadIdx[Pre]] =>
+          v
+      }.size == 3
+    ) { indices = indices.removed(RefCudaVecX[Pre](RefCudaThreadIdx[Pre]())) }
+    if (
+      indicesConstant.collect {
+        case v: RefCudaVecDim[Pre]
+            if v.vec.isInstanceOf[RefCudaBlockIdx[Pre]] =>
+          v
+      }.size == 3
+    ) { indices = indices.removed(RefCudaVecX[Pre](RefCudaBlockIdx[Pre]())) }
+
+    def contains(e: RefCudaVecDim[Pre]): Boolean = indicesConstant.contains(e)
   }
 
   private def hasNoSharedMemNames(node: Node[Pre]): Boolean = {
@@ -744,11 +772,24 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       blame: Blame[ReceiverNotInjective]
   )(idx: CudaVec, dim: CudaVec, e: Expr[Post]): Expr[Post] = {
     implicit val o: Origin = e.o
+
     val vars = findVars(e)
-    val (filteredIdx, otherIdx) = idx.indices.values.zip(dim.indices.values)
-      .partition { case (i, _) => vars.contains(i) }
+    val nonConstant = idx.indices.zip(dim.indices.values).filter {
+      case ((cudaIndex, _), _) => !cudaConstantDims.top.contains(cudaIndex)
+    }.map { case ((_, index), dim) => (index, dim) }
+
+    val (filteredIdx, otherIdx) = nonConstant.partition { case (i, _) =>
+      vars.contains(i)
+    }
+    // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
+    val sub = Substitute[Post](
+      cudaConstantDims.top.indices.values.map(v => (v.get, c_const[Post](0)))
+        .toMap
+    )
+    val eSub = sub.dispatch(e)
+
     val (prevBindings, b, prevBlame) =
-      e match {
+      eSub match {
         case s @ Starall(bindings, Nil, b) => (bindings, b, Some(s.blame))
         case Forall(bindings, Nil, b) => (bindings, b, None)
         case b => (Seq(), b, None)
@@ -861,6 +902,44 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       (declarations, inits)
     }
 
+  // Returns the threadIdx or blockIdx if its dim is a constant 1
+  // E.g. blockDim.x == 1 returns threadIdx.x
+  def dimsOfSize1Expr(e: Expr[Pre]): Option[RefCudaVecDim[Pre]] = {
+    // If it is block or grid dim, get the idx from it
+    def getIdx(dim: RefCudaVec[Pre]): Option[RefCudaVec[Pre]] =
+      dim match {
+        case RefCudaBlockDim() => Some(RefCudaThreadIdx())
+        case RefCudaGridDim() => Some(RefCudaBlockIdx())
+        case _ => None
+      }
+
+    def cudaVec(target: CDerefTarget[Pre]): Option[RefCudaVecDim[Pre]] =
+      target match {
+        case RefCudaVecX(vec) => getIdx(vec).map(RefCudaVecX[Pre])
+        case RefCudaVecY(vec) => getIdx(vec).map(RefCudaVecY[Pre])
+        case RefCudaVecZ(vec) => getIdx(vec).map(RefCudaVecZ[Pre])
+        case _ => None
+      }
+
+    e match {
+      case AmbiguousEq(acc: CFieldAccess[Pre], CIntegerValue(i, _), _, _)
+          if i == 1 =>
+        cudaVec(acc.ref.get)
+      case AmbiguousEq(CIntegerValue(i, _), acc: CFieldAccess[Pre], _, _)
+          if i == 1 =>
+        cudaVec(acc.ref.get)
+      case _ => None
+    }
+  }
+
+  def dimsOfSize1(
+      contract: ApplicableContract[Pre]
+  ): Seq[RefCudaVecDim[Pre]] = {
+    val UnitAccountedPredicate(contractRequires: Expr[Pre]) = contract.requires
+    (unfoldStar(contractRequires).flatMap(dimsOfSize1Expr) ++
+      unfoldStar(contract.contextEverywhere).flatMap(dimsOfSize1Expr)).distinct
+  }
+
   def kernelProcedure(
       o: Origin,
       contract: ApplicableContract[Pre],
@@ -871,169 +950,197 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     dynamicSharedMemNames.clear()
     staticSharedMemNames.clear()
     kernelSpecifier = Some(kernelSpec)
+    val constantIdx = new ConstantCudaVec(dimsOfSize1(contract))(o)
 
     val blockDim = new CudaVec(RefCudaBlockDim())(o)
     val gridDim = new CudaVec(RefCudaGridDim())(o)
-    cudaCurrentBlockDim.having(blockDim) {
-      cudaCurrentGridDim.having(gridDim) {
-        val args =
-          rw.variables.collect { info.params.get.foreach(rw.dispatch) }._1
-        val implFiltered = body.map(init => filterSharedDecl(init))
+    cudaConstantDims.having(constantIdx) {
+      cudaCurrentBlockDim.having(blockDim) {
+        cudaCurrentGridDim.having(gridDim) {
+          val args =
+            rw.variables.collect { info.params.get.foreach(rw.dispatch) }._1
+          val implFiltered = body.map(init => filterSharedDecl(init))
 
-        rw.variables.collect {
-          dynamicSharedMemNames
-            .foreach(d => rw.variables.declare(cNameSuccessor(d)))
-        }
-        rw.variables.collect {
-          staticSharedMemNames
-            .foreach(d => rw.variables.declare(cNameSuccessor(d._1)))
-        }
-        val (
-          sharedMemSizes,
-          (
-            sharedMemDecls: Seq[Variable[Post]],
-            sharedMemInits: Seq[Statement[Post]],
-          ),
-        ) = declareSharedMemory()
+          rw.variables.collect {
+            dynamicSharedMemNames
+              .foreach(d => rw.variables.declare(cNameSuccessor(d)))
+          }
+          rw.variables.collect {
+            staticSharedMemNames
+              .foreach(d => rw.variables.declare(cNameSuccessor(d._1)))
+          }
+          val (
+            sharedMemSizes,
+            (
+              sharedMemDecls: Seq[Variable[Post]],
+              sharedMemInits: Seq[Statement[Post]],
+            ),
+          ) = declareSharedMemory()
 
-        val newArgs =
-          blockDim.indices.values.toSeq ++ gridDim.indices.values.toSeq ++
-            args ++ sharedMemSizes
-        val newGivenArgs = rw.variables.dispatch(contract.givenArgs)
-        val newYieldsArgs = rw.variables.dispatch(contract.yieldsArgs)
-        // We add the requirement that a GPU kernel must always have threads (non zero block or grid dimensions)
-        val nonZeroThreads: Expr[Post] =
-          foldStar(
-            (blockDim.indices.values ++ gridDim.indices.values)
-              .map(v => Less(c_const(0)(o), v.get(o))(o)).toSeq
-          )(o)
-        val UnitAccountedPredicate(contractRequires: Expr[Pre]) =
-          contract.requires
-        val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
-          contract.ensures
+          val newArgs =
+            blockDim.indices.values.toSeq ++ gridDim.indices.values.toSeq ++
+              args ++ sharedMemSizes
+          val newGivenArgs = rw.variables.dispatch(contract.givenArgs)
+          val newYieldsArgs = rw.variables.dispatch(contract.yieldsArgs)
+          // We add the requirement that a GPU kernel must always have threads (non zero block or grid dimensions)
+          val nonZeroThreads: Expr[Post] =
+            foldStar(
+              (blockDim.indices.values ++ gridDim.indices.values)
+                .map(v => Less(c_const(0)(o), v.get(o))(o)).toSeq
+            )(o)
+          val UnitAccountedPredicate(contractRequires: Expr[Pre]) =
+            contract.requires
+          val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
+            contract.ensures
 
-        val parBody = body.map(impl => {
-          implicit val o: Origin = impl.o
-          val threadIdx = new CudaVec(RefCudaThreadIdx())
-          val blockIdx = new CudaVec(RefCudaBlockIdx())
-          val gridDecl = new ParBlockDecl[Post]()
-          val blockDecl = new ParBlockDecl[Post]()
+          val parBody = body.map(impl => {
+            implicit val o: Origin = impl.o
+            val threadIdx = new CudaVec(RefCudaThreadIdx())
+            val blockIdx = new CudaVec(RefCudaBlockIdx())
+            val gridDecl = new ParBlockDecl[Post]()
+            val blockDecl = new ParBlockDecl[Post]()
 
-          cudaCurrentThreadIdx.having(threadIdx) {
-            cudaCurrentBlockIdx.having(blockIdx) {
-              cudaCurrentGrid.having(gridDecl) {
-                cudaCurrentBlock.having(blockDecl) {
-                  val contextBlock = foldStar(
-                    unfoldStar(contract.contextEverywhere)
-                      .filter(hasNoSharedMemNames)
-                      .map(allThreadsInBlock(KernelNotInjective(kernelSpec)))
-                  )
-                  val innerContent = ParStatement(
-                    ParBlock(
-                      decl = blockDecl,
-                      iters =
-                        threadIdx.indices.values.zip(blockDim.indices.values)
-                          .map { case (index, dim) =>
+            cudaCurrentThreadIdx.having(threadIdx) {
+              cudaCurrentBlockIdx.having(blockIdx) {
+                cudaCurrentGrid.having(gridDecl) {
+                  cudaCurrentBlock.having(blockDecl) {
+                    val contextBlock = foldStar(
+                      unfoldStar(contract.contextEverywhere)
+                        .filter(hasNoSharedMemNames)
+                        .map(allThreadsInBlock(KernelNotInjective(kernelSpec)))
+                    )
+                    def getIters(idxs: CudaVec, dims: CudaVec)
+                        : Seq[IterVariable[Post]] = {
+                      var innerIters =
+                        idxs.indices.zip(dims.indices.values)
+                          .filter { case ((cudaIndex, _), _) =>
+                            !constantIdx.contains(cudaIndex)
+                          }.map { case ((_, index), dim) =>
                             IterVariable(index, c_const(0), dim.get)
-                          }.toSeq,
-                      // Context is already inherited
-                      context_everywhere = Star(
-                        nonZeroThreads,
-                        rw.dispatch(contract.contextEverywhere),
-                      ),
-                      requires = rw.dispatch(contractRequires),
-                      ensures = rw.dispatch(contractEnsures),
-                      content = rw.dispatch(implFiltered.get),
-                    )(KernelParFailure(kernelSpec))
-                  )
-                  ParStatement(
-                    ParBlock(
-                      decl = gridDecl,
-                      iters =
-                        blockIdx.indices.values.zip(gridDim.indices.values)
-                          .map { case (index, dim) =>
-                            IterVariable(index, c_const(0), dim.get)
-                          }.toSeq,
-                      // Context is added to requires and ensures here
-                      context_everywhere = tt,
-                      requires = Star(
-                        nonZeroThreads,
-                        Star(
-                          contextBlock,
-                          foldStar(
-                            unfoldStar(contractRequires)
-                              .filter(hasNoSharedMemNames)
-                              .map(allThreadsInBlock(
-                                KernelNotInjective(kernelSpec)
-                              ))
+                          }.toSeq
+                      // Always have atleast the x dimension
+                      if (innerIters.isEmpty) {
+                        innerIters = Seq(IterVariable(
+                          idxs.indices.head._2,
+                          c_const(0),
+                          dims.indices.head._2.get,
+                        ))
+                      }
+                      innerIters
+                    }
+
+                    val innerContent = ParStatement(
+                      ParBlock(
+                        decl = blockDecl,
+                        iters = getIters(threadIdx, blockDim),
+                        // Context is already inherited
+                        context_everywhere = Star(
+                          nonZeroThreads,
+                          rw.dispatch(contract.contextEverywhere),
+                        ),
+                        requires = rw.dispatch(contractRequires),
+                        ensures = rw.dispatch(contractEnsures),
+                        content = rw.dispatch(implFiltered.get),
+                      )(KernelParFailure(kernelSpec))
+                    )
+                    val parStmt = ParStatement[Post](
+                      ParBlock(
+                        decl = gridDecl,
+                        iters = getIters(blockIdx, gridDim),
+                        // Context is added to requires and ensures here
+                        context_everywhere = tt,
+                        requires = Star(
+                          nonZeroThreads,
+                          Star(
+                            contextBlock,
+                            foldStar(
+                              unfoldStar(contractRequires)
+                                .filter(hasNoSharedMemNames)
+                                .map(allThreadsInBlock(
+                                  KernelNotInjective(kernelSpec)
+                                ))
+                            ),
                           ),
                         ),
-                      ),
-                      ensures = Star(
-                        nonZeroThreads,
-                        Star(
-                          contextBlock,
-                          foldStar(
-                            unfoldStar(contractEnsures)
-                              .filter(hasNoSharedMemNames)
-                              .map(allThreadsInBlock(
-                                KernelNotInjective(kernelSpec)
-                              ))
+                        ensures = Star(
+                          nonZeroThreads,
+                          Star(
+                            contextBlock,
+                            foldStar(
+                              unfoldStar(contractEnsures)
+                                .filter(hasNoSharedMemNames)
+                                .map(allThreadsInBlock(
+                                  KernelNotInjective(kernelSpec)
+                                ))
+                            ),
                           ),
                         ),
-                      ),
-                      // Add shared memory initialization before beginning of inner parallel block
-                      content = Scope[Post](
-                        sharedMemDecls,
-                        Block[Post](sharedMemInits ++ Seq(innerContent)),
-                      ),
-                    )(KernelParFailure(kernelSpec))
-                  )
+                        // Add shared memory initialization before beginning of inner parallel block
+                        content = Scope[Post](
+                          sharedMemDecls,
+                          Block[Post](sharedMemInits ++ Seq(innerContent)),
+                        ),
+                      )(KernelParFailure(kernelSpec))
+                    )
+                    // For constant
+                    val constants: Seq[Variable[Post]] =
+                      constantIdx.indices.values.toSeq
+                    if (constants.nonEmpty) {
+                      Scope[Post](
+                        constants,
+                        Block[Post](
+                          constants
+                            .map(c => assignLocal(c.get, c_const[Post](0))) ++
+                            Seq(parStmt)
+                        ),
+                      )
+                    } else { parStmt }
+                  }
                 }
               }
             }
-          }
-        })
+          })
 
-        val gridContext: Expr[Post] =
-          foldStar(
-            unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-        val requires: Expr[Post] =
-          foldStar(
-            Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractRequires)
-              .filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-        val ensures: Expr[Post] =
-          foldStar(
-            Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractEnsures)
-              .filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-        val result =
-          new Procedure[Post](
-            returnType = TVoid(),
-            args = newArgs,
-            outArgs = Nil,
-            typeArgs = Nil,
-            body = parBody,
-            contract =
-              ApplicableContract(
-                UnitAccountedPredicate(requires)(o),
-                UnitAccountedPredicate(ensures)(o),
-                // Context everywhere is already passed down in the body
-                tt,
-                contract.signals.map(rw.dispatch),
-                newGivenArgs,
-                newYieldsArgs,
-                contract.decreases.map(rw.dispatch),
-              )(contract.blame)(contract.o),
-          )(AbstractApplicable)(o)
-        kernelSpecifier = None
+          val gridContext: Expr[Post] =
+            foldStar(
+              unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
+                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          val requires: Expr[Post] =
+            foldStar(
+              Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractRequires)
+                .filter(hasNoSharedMemNames)
+                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          val ensures: Expr[Post] =
+            foldStar(
+              Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractEnsures)
+                .filter(hasNoSharedMemNames)
+                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          val result =
+            new Procedure[Post](
+              returnType = TVoid(),
+              args = newArgs,
+              outArgs = Nil,
+              typeArgs = Nil,
+              body = parBody,
+              contract =
+                ApplicableContract(
+                  UnitAccountedPredicate(requires)(o),
+                  UnitAccountedPredicate(ensures)(o),
+                  // Context everywhere is already passed down in the body
+                  tt,
+                  contract.signals.map(rw.dispatch),
+                  newGivenArgs,
+                  newYieldsArgs,
+                  contract.decreases.map(rw.dispatch),
+                )(contract.blame)(contract.o),
+            )(AbstractApplicable)(o)
+          kernelSpecifier = None
 
-        result
+          result
+        }
       }
     }
   }
@@ -1632,6 +1739,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
     def getCuda(dim: RefCudaVecDim[Pre]): Expr[Post] =
       dim.vec match {
+        case _ if cudaConstantDims.top.indices.contains(dim) =>
+          cudaConstantDims.top.indices(dim).get
         case RefCudaThreadIdx() => cudaCurrentThreadIdx.top.indices(dim).get
         case RefCudaBlockIdx() => cudaCurrentBlockIdx.top.indices(dim).get
         case RefCudaBlockDim() => cudaCurrentBlockDim.top.indices(dim).get
@@ -2009,7 +2118,14 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaLocalThread(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentThreadIdx.top.indices.values.toSeq.apply(index).get
+    val idxs = Seq(
+      RefCudaVecX[Pre](RefCudaThreadIdx()),
+      RefCudaVecY[Pre](RefCudaThreadIdx()),
+      RefCudaVecZ[Pre](RefCudaThreadIdx()),
+    )
+    val v = idxs(index)
+    cudaConstantDims.top.indices
+      .getOrElse(v, cudaCurrentThreadIdx.top.indices(v)).get
   }
 
   /** Returns the group id of a thread in a given dimension.
@@ -2022,7 +2138,14 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaGroupThread(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentBlockIdx.top.indices.values.toSeq.apply(index).get
+    val idxs = Seq(
+      RefCudaVecX[Pre](RefCudaBlockIdx()),
+      RefCudaVecY[Pre](RefCudaBlockIdx()),
+      RefCudaVecZ[Pre](RefCudaBlockIdx()),
+    )
+    val v = idxs(index)
+    cudaConstantDims.top.indices
+      .getOrElse(v, cudaCurrentBlockIdx.top.indices(v)).get
   }
 
   /** Returns the local size of a given dimension.

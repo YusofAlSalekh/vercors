@@ -6,7 +6,7 @@
 
 /*@
     context_everywhere a != NULL && \pointer_length(a) >= blockDim.x;
-    context gridDim.x == 1 && gridDim.y == 1 && gridDim.z == 1;
+    context blockDim.y == 1 && blockDim.z == 1 && gridDim.x == 1 && gridDim.y == 1 && gridDim.z == 1;
     context Perm({:&a[threadIdx.x]:}, write);
 @*/
 __global__ void example(int a[]) {
