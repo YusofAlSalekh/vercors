@@ -29,7 +29,7 @@ int main() {
   int size = 100;
   int* d_a = vercorsCudaMallocInt(size);
   int* out = vercorsCudaMallocInt(1);
-  example<<<size,1>>>(d_a, size, out);
+  example<<<1,size>>>(d_a, size, out);
   //@ assert Perm(&out[0], write);
 
   vercorsCudaFreeInt(d_a);

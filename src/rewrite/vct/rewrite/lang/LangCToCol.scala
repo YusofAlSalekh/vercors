@@ -1999,7 +1999,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case ref: RefCFunctionDefinition[Pre] =>
         ProcedureInvocation[Post](
           cFunctionSuccessor.ref(ref.decl),
-          rw.dispatch(blocks) +: one +: one +: rw.dispatch(threads) +: one +:
+          rw.dispatch(threads) +: one +: one +: rw.dispatch(blocks) +: one +:
             one +: args.map(rw.dispatch),
           Nil,
           Nil,
