@@ -338,7 +338,7 @@ case class InlineApplicables[Pre <: Generation]()
 
         // TODO: consider type arguments
         apply match {
-          case ProcedureInvocation(Ref(proc), _, _, typeArgs, _, _) =>
+          case ProcedureInvocation(Ref(proc), _, _, typeArgs, _, _, _) =>
             dispatch((args + givenArgs).stat(
               apply.t,
               checkCycle(apply, apply.ref.decl) {
@@ -346,7 +346,7 @@ case class InlineApplicables[Pre <: Generation]()
               },
               outArgs + yields,
             ))
-          case FunctionInvocation(Ref(func), _, typeArgs, _, _) =>
+          case FunctionInvocation(Ref(func), _, typeArgs, _, _, _) =>
             dispatch((args + givenArgs).expr(checkCycle(apply, apply.ref.decl) {
               func.body.getOrElse(throw AbstractInlineable(apply, func))
             }))

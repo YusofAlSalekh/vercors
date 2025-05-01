@@ -735,6 +735,7 @@ final class Function[G](
     val contract: ApplicableContract[G],
     val inline: Boolean = false,
     val threadLocal: Boolean = false,
+    val opaque: Boolean = false,
 )(val blame: Blame[ContractedFailure])(implicit val o: Origin)
     extends GlobalDeclaration[G] with AbstractFunction[G] with FunctionImpl[G]
 @scopes[LabelDecl]
@@ -747,6 +748,7 @@ final class Procedure[G](
     val contract: ApplicableContract[G],
     val inline: Boolean = false,
     val pure: Boolean = false,
+    val opaque: Boolean = false,
     val vesuv_entry: Boolean = false,
     val pallasWrapper: Boolean = false,
     val pallasFunction: Boolean = false,
@@ -1585,6 +1587,7 @@ final case class ProcedureInvocation[G](
     typeArgs: Seq[Type[G]],
     givenMap: Seq[(Ref[G, Variable[G]], Expr[G])],
     yields: Seq[(Expr[G], Ref[G, Variable[G]])],
+    reveal: Boolean = false,
 )(val blame: Blame[InvocationFailure])(implicit val o: Origin)
     extends AnyMethodInvocation[G] with ProcedureInvocationImpl[G]
 final case class MethodInvocation[G](
@@ -1618,6 +1621,7 @@ final case class FunctionInvocation[G](
     typeArgs: Seq[Type[G]],
     givenMap: Seq[(Ref[G, Variable[G]], Expr[G])],
     yields: Seq[(Expr[G], Ref[G, Variable[G]])],
+    reveal: Boolean = false,
 )(val blame: Blame[InvocationFailure])(implicit val o: Origin)
     extends AnyFunctionInvocation[G] with FunctionInvocationImpl[G]
 final case class InstanceFunctionInvocation[G](
@@ -2798,6 +2802,8 @@ final case class CPure[G]()(implicit val o: Origin)
     extends CSpecificationModifier[G] with CPureImpl[G]
 final case class CInline[G]()(implicit val o: Origin)
     extends CSpecificationModifier[G] with CInlineImpl[G]
+final case class COpaque[G]()(implicit val o: Origin)
+    extends CSpecificationModifier[G] with COpaqueImpl[G]
 
 sealed trait CStorageClassSpecifier[G]
     extends CDeclarationSpecifier[G] with CStorageClassSpecifierImpl[G]
@@ -3039,6 +3045,7 @@ final case class CInvocation[G](
     args: Seq[Expr[G]],
     givenArgs: Seq[(Ref[G, Variable[G]], Expr[G])],
     yields: Seq[(Expr[G], Ref[G, Variable[G]])],
+    reveal: Boolean,
 )(val blame: Blame[FrontendInvocationError])(implicit val o: Origin)
     extends CExpr[G] with CInvocationImpl[G] {
   var ref: Option[CInvocationTarget[G]] = None
@@ -4190,6 +4197,7 @@ final case class PVLInvocation[G](
     typeArgs: Seq[Type[G]],
     givenMap: Seq[(Ref[G, Variable[G]], Expr[G])],
     yields: Seq[(Expr[G], Ref[G, Variable[G]])],
+    reveal: Boolean,
 )(val blame: Blame[FrontendInvocationError])(implicit val o: Origin)
     extends PVLExpr[G] with PVLInvocationImpl[G] {
   var ref: Option[PVLInvocationTarget[G]] = None

@@ -63,6 +63,7 @@ case class PureMethodsToFunctions[Pre <: Generation]() extends Rewriter[Pre] {
               },
             contract = dispatch(proc.contract),
             inline = proc.inline,
+            opaque = proc.opaque,
           )(proc.blame)(proc.o),
         )
       case method: InstanceMethod[Pre] if method.pure =>
@@ -113,6 +114,7 @@ case class PureMethodsToFunctions[Pre <: Generation]() extends Rewriter[Pre] {
             typeArgs,
             givenMap,
             yields,
+            reveal,
           ) =>
         if (proc.pure)
           FunctionInvocation[Post](
@@ -121,6 +123,7 @@ case class PureMethodsToFunctions[Pre <: Generation]() extends Rewriter[Pre] {
             typeArgs.map(dispatch),
             givenMap.map { case (Ref(v), e) => (succ(v), dispatch(e)) },
             yields.map { case (e, Ref(v)) => (dispatch(e), succ(v)) },
+            reveal,
           )(inv.blame)(e.o)
         else
           rewriteDefault(inv)

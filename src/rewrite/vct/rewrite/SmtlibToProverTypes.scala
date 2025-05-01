@@ -70,7 +70,7 @@ case class SmtlibToProverTypes[Pre <: Generation]() extends Rewriter[Pre] {
     )
   }
 
-  def getExpr(e: Expr[Pre], f: String, args: Expr[Pre]*)(
+  def getExprWithName(e: Expr[Pre], f: String, name: String, args: Expr[Pre]*)(
       implicit o: Origin
   ): Expr[Post] =
     ProverFunctionInvocation(
@@ -81,12 +81,16 @@ case class SmtlibToProverTypes[Pre <: Generation]() extends Rewriter[Pre] {
               Seq(SmtLib[Post]() -> f),
               args.map(arg => new Variable(dispatch(arg.t))),
               dispatch(e.t),
-            )(o.where(name = f))
+            )(o.where(name = name))
           )
         },
       ).ref,
       args.map(dispatch),
     )
+
+  def getExpr(e: Expr[Pre], f: String, args: Expr[Pre]*)(
+      implicit o: Origin
+  ): Expr[Post] = getExprWithName(e, f, f, args: _*)
 
   override def dispatch(t: Type[Pre]): Type[Post] =
     t match {
@@ -180,7 +184,8 @@ case class SmtlibToProverTypes[Pre <: Generation]() extends Rewriter[Pre] {
           case SmtlibFpToUInt(arg, bits) =>
             getExpr(e, s"(_ fp.to_ubv $bits)", arg)
           case SmtlibIsInt(arg) => getExpr(e, "is_int", arg)
-          case SmtlibPow(left, right) => getExpr(e, "^", left, right)
+          case SmtlibPow(left, right) =>
+            getExprWithName(e, "^", "pow", left, right)
           case SmtlibToInt(arg) => getExpr(e, "to_int", arg)
           case SmtlibToReal(arg) => getExpr(e, "to_real", arg)
           case SmtlibLiteralString(data) =>

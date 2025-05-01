@@ -89,8 +89,10 @@ case class ImportOption[Pre <: Generation](importer: ImportADTImporter)
                       _,
                       _,
                       _,
+                      _,
                     )
                   ),
+                  _,
                   _,
                   _,
                   _,
@@ -108,18 +110,22 @@ case class ImportOption[Pre <: Generation](importer: ImportADTImporter)
                 add.typeArgs,
                 add.givenMap,
                 add.yields,
+                add.reveal,
               )(add.blame)(add.o)
             ),
             as.typeArgs,
             as.givenMap,
             as.yields,
+            as.reveal,
           )(as.blame)(as.o)
         )
       case og1 @ OptGet(
             Select(
               OptEmpty(a),
               OptNone() | OptNoneTyped(_),
-              OptSome(f @ FunctionInvocation(_, Seq(og2 @ OptGet(b)), _, _, _)),
+              OptSome(
+                f @ FunctionInvocation(_, Seq(og2 @ OptGet(b)), _, _, _, _)
+              ),
             )
           ) if a == b =>
         preCoerce(
@@ -129,6 +135,7 @@ case class ImportOption[Pre <: Generation](importer: ImportADTImporter)
             f.typeArgs,
             f.givenMap,
             f.yields,
+            f.reveal,
           )(f.blame)(f.o)
         )
       case OptEmpty(OptNone()) => tt

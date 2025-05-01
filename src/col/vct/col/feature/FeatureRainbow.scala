@@ -33,7 +33,8 @@ class FeatureRainbow[G] {
       case node: ArrayLocation[G] => Arrays
       case node: NewArray[G] => Arrays
       case node: NewPointerArray[G] => Arrays
-      case node: NewConstPointerArray[G] => return Seq(Arrays, AxiomaticLibraryType)
+      case node: NewConstPointerArray[G] =>
+        return Seq(Arrays, AxiomaticLibraryType)
       case node: ArraySubscript[G] => Arrays
       case node: Length[G] => Arrays
       case node: TArray[G] => Arrays
@@ -186,6 +187,7 @@ class FeatureRainbow[G] {
       case node: CLocalDeclaration[G] => CSpecific
       case node: CLong[G] => CSpecific
       case node: CName[G] => CSpecific
+      case node: COpaque[G] => CSpecific
       case node: CParam[G] => CSpecific
       case node: CPrimitiveType[G] => CSpecific
       case node: CPure[G] => CSpecific

@@ -168,6 +168,8 @@ case class CToCol[G](
               CPure[G]()
             else if (m.consume(m.inline))
               CInline[G]()
+            else if (m.consume(m.opaque))
+              COpaque[G]()
             else
               fail(
                 m.nodes.head,
@@ -911,30 +913,39 @@ case class CToCol[G](
           args.map(convert(_)) getOrElse Nil,
           convertEmbedGiven(given),
           convertEmbedYields(yields),
+          false,
         )(blame(expr))
-      case PostfixExpression3(struct, _, field) =>
-        CFieldAccess(convert(struct), convert(field))(blame(expr))
+      case PostfixExpression3(_, f, _, args, _, given, yields) =>
+        CInvocation(
+          convert(f),
+          args.map(convert(_)) getOrElse Nil,
+          convertEmbedGiven(given),
+          convertEmbedYields(yields),
+          true,
+        )(blame(expr))
       case PostfixExpression4(struct, _, field) =>
+        CFieldAccess(convert(struct), convert(field))(blame(expr))
+      case PostfixExpression5(struct, _, field) =>
         CStructDeref(convert(struct), convert(field))(blame(expr))
-      case PostfixExpression5(targetNode, _) =>
+      case PostfixExpression6(targetNode, _) =>
         val target = convert(targetNode)
         PostAssignExpression(
           target,
           col.AmbiguousPlus(target, c_const(1))(blame(expr)),
         )(blame(expr))
-      case PostfixExpression6(targetNode, _) =>
+      case PostfixExpression7(targetNode, _) =>
         val target = convert(targetNode)
         PostAssignExpression(
           target,
           col.AmbiguousMinus(target, c_const(1))(blame(expr)),
         )(blame(expr))
-      case PostfixExpression7(e, SpecPostfix0(postfix)) =>
+      case PostfixExpression8(e, SpecPostfix0(postfix)) =>
         convert(expr, postfix, convert(e))
-      case PostfixExpression8(_, _, _, _, _, _) => ??(expr)
-      case PostfixExpression9(_, _, _, _, _, _, _) => ??(expr)
+      case PostfixExpression9(_, _, _, _, _, _) => ??(expr)
       case PostfixExpression10(_, _, _, _, _, _, _) => ??(expr)
-      case PostfixExpression11(_, _, _, _, _, _, _, _) => ??(expr)
-      case PostfixExpression12(
+      case PostfixExpression11(_, _, _, _, _, _, _) => ??(expr)
+      case PostfixExpression12(_, _, _, _, _, _, _, _) => ??(expr)
+      case PostfixExpression13(
             GpgpuCudaKernelInvocation0(
               name,
               _,
@@ -1221,6 +1232,7 @@ case class CToCol[G](
           case "pure" => collector.pure += mod
           case "inline" => collector.inline += mod
           case "thread_local" => collector.threadLocal += mod
+          case "opaque" => collector.opaque += mod
           case "bip_annotation" =>
             fail(mod, "This modifier is not allowed here.")
         }
@@ -1606,6 +1618,7 @@ case class CToCol[G](
                   convert(definition),
                   c.consumeApplicableContract(blame(decl)),
                   m.consume(m.inline),
+                  opaque = m.consume(m.opaque),
                 )(blame(decl))(namedOrigin)
               },
             ),

@@ -21,10 +21,10 @@
 }
 
 /*@
-  context get_local_size(0) > 0 && get_local_size(1) == 1 && get_local_size(2) == 1;
+  context get_local_size(0) == 32 && get_local_size(1) == 1 && get_local_size(2) == 1;
   context get_num_groups(0) > 0 && get_num_groups(1) == 1 && get_num_groups(2) == 1;
   context a != NULL && \pointer_length(a) >= 1;
-  context (\gtid < 1 ==> Perm(a[\gtid], write));
+  context (\gtid < 1 ==> Perm({:a[\gtid]:}, write));
 @*/
 __kernel void test_vectors(__global bool* a) {
   int2 v_iA = (int2)(7, -3);

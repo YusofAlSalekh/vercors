@@ -1232,8 +1232,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
         )
       case CCast(e, t) => CCast(e, t)
       case c @ CharValue(_) => c
-      case inv @ CInvocation(applicable, args, givenArgs, yields) =>
-        CInvocation(applicable, args, givenArgs, yields)(inv.blame)
+      case inv @ CInvocation(applicable, args, givenArgs, yields, reveal) =>
+        CInvocation(applicable, args, givenArgs, yields, reveal)(inv.blame)
       case choose @ Choose(xs) => Choose(set(xs)._1)(choose.blame)
       case choose @ ChooseFresh(xs) => ChooseFresh(set(xs)._1)(choose.blame)
       case CLiteralArray(exprs) => CLiteralArray(exprs)
@@ -1331,7 +1331,14 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case ForPerm(bindings, loc, body) => ForPerm(bindings, loc, bool(body))
       case ForPermWithValue(binding, body) =>
         ForPermWithValue(binding, bool(body))
-      case inv @ FunctionInvocation(ref, args, typeArgs, givenMap, yields) =>
+      case inv @ FunctionInvocation(
+            ref,
+            args,
+            typeArgs,
+            givenMap,
+            yields,
+            reveal,
+          ) =>
         arity(
           FunctionInvocation(
             ref,
@@ -1339,6 +1346,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
             typeArgs,
             coerceGiven(givenMap, canCDemote = true),
             coerceYields(yields, inv),
+            reveal,
           )(inv.blame)
         )
       case get @ GetLeft(e) => GetLeft(either(e)._1)(get.blame)
@@ -1702,6 +1710,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
             typeArgs,
             givenMap,
             yields,
+            reveal,
           ) =>
         arity(
           ProcedureInvocation(
@@ -1711,6 +1720,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
             typeArgs,
             coerceGiven(givenMap, canCDemote = true),
             coerceYields(yields, inv),
+            reveal,
           )(inv.blame)
         )
       case inv @ LLVMFunctionInvocation(ref, args, givenMap, yields) =>
@@ -1737,7 +1747,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case p @ PVLChorPerm(endpoint, loc, perm) =>
         PVLChorPerm(endpoint, loc, rat(perm))
       case PVLDeref(obj, field) => e
-      case PVLInvocation(obj, method, args, typeArgs, givenArgs, yields) => e
+      case PVLInvocation(obj, method, args, typeArgs, givenArgs, yields, _) => e
       case PVLLocal(name) => e
       case PVLNew(t, typeArgs, args, givenMap, yields) => e
       case Range(from, to) => Range(int(from), int(to))
@@ -2457,8 +2467,9 @@ abstract class CoercingRewriter[Pre <: Generation]()
           function.typeArgs,
           function.body.map(coerce(_, function.returnType)),
           function.contract,
-          function.inline,
-          function.threadLocal,
+          inline = function.inline,
+          threadLocal = function.threadLocal,
+          opaque = function.opaque,
         )(function.blame)
       case procedure: Procedure[Pre] => procedure
       case main_method: VeSUVMainMethod[Pre] => main_method
@@ -2825,6 +2836,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
   def coerce(node: CDeclarationSpecifier[Pre]): CDeclarationSpecifier[Pre] = {
     implicit val o: Origin = node.o
     node match {
+      case COpaque() => COpaque()
       case CPure() => CPure()
       case CInline() => CInline()
       case CTypedef() => CTypedef()

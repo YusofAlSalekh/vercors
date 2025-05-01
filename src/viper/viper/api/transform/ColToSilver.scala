@@ -232,7 +232,16 @@ case class ColToSilver(program: col.Program[_]) {
               function.contract.decreases.toSeq.map(decreases),
             accountedPred(function.contract.ensures),
             function.body.map(exp),
-          )(pos = pos(function), info = NodeInfo(function))
+          )(
+            pos = pos(function),
+            info =
+              if (function.opaque) {
+                silver.ConsInfo(
+                  NodeInfo(function),
+                  silver.AnnotationInfo(Map("opaque" -> Seq())),
+                )
+              } else { NodeInfo(function) },
+          )
         }
       case procedure: col.Procedure[_]
           if procedure.returnType == col.TVoid() && !procedure.inline &&
@@ -562,10 +571,15 @@ case class ColToSilver(program: col.Program[_]) {
           pos = pos(e),
           info = expInfo(e),
         )
-      case col.FunctionInvocation(f, args, Nil, Nil, Nil) =>
+      case col.FunctionInvocation(f, args, Nil, Nil, Nil, reveal) =>
         silver.FuncApp(ref(f), args.map(exp))(
           pos(e),
-          expInfo(e),
+          if (reveal) {
+            silver.ConsInfo(
+              expInfo(e),
+              silver.AnnotationInfo(Map("reveal" -> Seq())),
+            )
+          } else { expInfo(e) },
           typ(f.decl.returnType),
           silver.NoTrafos,
         )

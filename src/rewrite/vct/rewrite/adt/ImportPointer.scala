@@ -389,7 +389,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       case loc @ PointerLocation(pointer) =>
         val arg =
           unwrapOption(pointer, loc.blame) match {
-            case inv @ FunctionInvocation(ref, _, _, _, _)
+            case inv @ FunctionInvocation(ref, _, _, _, _, _)
                 if ref.decl == pointerAdd.ref.decl =>
               inv
             case ptr =>
