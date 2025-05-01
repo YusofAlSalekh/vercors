@@ -15,8 +15,6 @@
   context get_local_size(0) * get_num_groups(0) >= n;
   context Perm(in[0], write \ (get_local_size(0) * get_num_groups(0)));
   context \gtid<n ==> Perm({:out[\gtid]:}, write);
-  context Perm(in[0], write \ (get_local_size(0) * get_num_groups(0)));
-  context \gtid<n ==> Perm({:out[\gtid]:}, write);
 
   context \shared_mem_size(s) == 1;
   requires \ltid == 0 ==> Perm(s[0], write);
