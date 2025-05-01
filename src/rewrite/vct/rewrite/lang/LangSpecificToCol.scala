@@ -396,6 +396,14 @@ case class LangSpecificToCol[Pre <: Generation](
       case Cast(inner, TypeValue(t))
           if t == Java.float[Pre] || t == Java.double[Pre] =>
         CastFloat(dispatch(inner), dispatch(t))(e.o)
+      case Cast(inner, TypeValue(t))
+          if inner.t.asPointer.isDefined && t.asPointer.isDefined =>
+        PointerCast(
+          dispatch(inner),
+          dispatch(t),
+          c.sizeOf(inner.t.asPointer.get.element, e.o),
+          c.sizeOf(t.asPointer.get.element, e.o),
+        )(e.o)
 
       case local: PVLLocal[Pre] => pvl.local(local)
       case deref: PVLDeref[Pre] => pvl.deref(deref)

@@ -29,6 +29,7 @@ import vct.resources.Resources
 import vct.result.VerificationError.SystemError
 import vct.rewrite.adt.{EncodeBitVectors, ImportSetCompat}
 import vct.rewrite.{
+  DisambiguateLocation,
   DisambiguatePredicateExpression,
   EncodeAssuming,
   EncodeAutoValue,
@@ -62,7 +63,6 @@ import vct.rewrite.veymont.verification.EncodePermissionStratification.{
 
 import java.nio.file.Path
 import java.nio.file.Files
-import java.nio.file.Paths
 
 object Transformation extends LazyLogging {
   case class TransformationCheckError(

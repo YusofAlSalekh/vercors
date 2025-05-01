@@ -104,8 +104,9 @@ case class ColToSilver(program: col.Program[_]) {
   def name(decl: col.Declaration[_], nameF: Name => String): String =
     if (names.contains(decl)) { ??? }
     else {
-      var (name, index) = unpackName(nameF(decl.o.getPreferredNameOrElse()))
-      name = sanitize(name)
+      var (name, index) = unpackName(
+        sanitize(nameF(decl.o.getPreferredNameOrElse()))
+      )
       while (
         names.values.exists(_ == (name, index)) ||
         silver.utility.Consistency.reservedNames.contains(packName(name, index))

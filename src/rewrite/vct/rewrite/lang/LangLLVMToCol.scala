@@ -671,9 +671,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           if (
             givenType != requiredType && givenType.asPointer.isDefined &&
             requiredType.asPointer.isDefined
-          ) { Cast(a, TypeValue(requiredType)) }
-          else { a }
-      }.map(rw.dispatch),
+          ) {
+            PointerCast(
+              rw.dispatch(a),
+              rw.dispatch(requiredType),
+              rw.c.sizeOf(givenType.asPointer.get.element, inv.o),
+              rw.c.sizeOf(requiredType.asPointer.get.element, inv.o),
+            )
+          } else { rw.dispatch(a) }
+      },
       givenMap = inv.givenMap.map { case (Ref(v), e) =>
         (rw.succ(v), rw.dispatch(e))
       },
@@ -724,6 +730,10 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def rewriteStruct(t: LLVMTStruct[Pre]): Unit = {
     val LLVMTStruct(name, packed, elements) = t
+    val casts =
+      rw.c.sizeOf(t, t.o) +: rw.c.getFirstTypes(t).map { ct =>
+        rw.c.sizeOf(ct, t.o)
+      }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
@@ -737,6 +747,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         t.packed,
+        casts,
       )(t.o.withContent(TypeName("struct")))
 
     rw.globalDeclarations.declare(newStruct)
@@ -973,9 +984,15 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
               rw.dispatch(gep.pointer),
               pointerInferredType,
               t,
-            ).getOrElse(
-              (Cast(rw.dispatch(gep.pointer), TypeValue(rw.dispatch(t))), t)
-            )
+            ).getOrElse((
+              PointerCast(
+                rw.dispatch(gep.pointer),
+                rw.dispatch(t),
+                rw.c.sizeOf(gep.pointer.t.asPointer.get.element, gep.o),
+                rw.c.sizeOf(t.asPointer.get.element, gep.o),
+              ),
+              t,
+            ))
             val structPointer =
               DerefPointer(
                 PointerAdd(pointer, rw.dispatch(gep.indices.head))(InvalidGEP)
@@ -1205,16 +1222,23 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     ).map { case (pointer, typ) =>
       if (typ == pointerInferredType) { DerefPointer(pointer)(store.blame) }
       else {
-        DerefPointer(Cast(pointer, TypeValue(rw.dispatch(typ))))(store.blame)
+        DerefPointer(PointerCast(
+          pointer,
+          rw.dispatch(typ),
+          rw.c.sizeOf(store.pointer.t.asPointer.get.element, store.o),
+          rw.c.sizeOf(typ.asPointer.get.element, store.o),
+        ))(store.blame)
       }
     }.getOrElse {
       if (store.value.t.asPointer.isDefined) {
         // TODO: How do we deal with this
         ???
       } else {
-        DerefPointer(Cast(
+        DerefPointer(PointerCast(
           rw.dispatch(store.pointer),
-          TypeValue(TPointer(rw.dispatch(valueInferredType), None)),
+          TPointer(rw.dispatch(valueInferredType), None),
+          rw.c.sizeOf(store.pointer.t.asPointer.get.element, store.o),
+          rw.c.sizeOf(valueInferredType, store.o),
         ))(store.blame)
       }
     }
@@ -1241,17 +1265,21 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         if (destinationInferredType.asPointer.isDefined) {
           // We need to dereference before casting
           (
-            Cast(
+            PointerCast(
               DerefPointer(rw.dispatch(load.pointer))(load.blame),
-              TypeValue(rw.dispatch(destinationInferredType)),
+              rw.dispatch(destinationInferredType),
+              rw.c.sizeOf(load.pointer.t.asPointer.get.element, load.o),
+              rw.c.sizeOf(destinationInferredType.asPointer.get.element, load.o),
             ),
             pointerInferredType,
           )
         } else {
           (
-            DerefPointer(Cast(
+            DerefPointer(PointerCast(
               rw.dispatch(load.pointer),
-              TypeValue(TPointer(rw.dispatch(destinationInferredType), None)),
+              TPointer(rw.dispatch(destinationInferredType), None),
+              rw.c.sizeOf(load.pointer.t.asPointer.get.element, load.o),
+              rw.c.sizeOf(destinationInferredType, load.o),
             ))(load.blame),
             pointerInferredType,
           )
@@ -1376,7 +1404,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     implicit val o: Origin = llvmPerm.o
     val locExpr = Local[Post](rw.succ(llvmPerm.loc.decl))
     Perm[Post](
-      AmbiguousLocation[Post](locExpr)(llvmPerm.blame),
+      PointerLocation[Post](locExpr)(llvmPerm.blame),
       Local[Post](rw.succ(llvmPerm.perm.decl)),
     )
   }
@@ -1571,7 +1599,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         } else { ReadPerm[Post]() }
       extendedInv =
         Perm(
-          AmbiguousLocation[Post](Local(rw.succ(v)))(PanicBlame(
+          PointerLocation[Post](Local(rw.succ(v)))(PanicBlame(
             "Generated locals always have permission"
           )),
           perm,

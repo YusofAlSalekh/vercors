@@ -594,17 +594,6 @@ case class EncodeArrayValues[Pre <: Generation]() extends Rewriter[Pre] {
           ensures &* foldStar(permFields.map(_._1))
 
       val innerType = dispatch(elementType)
-      // TODO: Ask alexander what this is supposed to add. I did not want to copy all the
-      // applyAsTypeFunction in ImportPointer towards ImportConstPointer to get this to work
-      if (!isConst) {
-        ensures =
-          ensures &* makeStruct.makeCast(
-            i => PointerAdd(result, i.get)(FramedPtrOffset),
-            innerType,
-            unique,
-            isConst,
-          )
-      }
 
       ensures =
         if (nullable) { Star(Implies(result !== Null(), ensures), tt) }

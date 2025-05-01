@@ -720,6 +720,7 @@ final class ByValueClass[G](
     val typeArgs: Seq[Variable[G]],
     val decls: Seq[ClassDeclaration[G]],
     val packed: Boolean,
+    val sizes: Seq[Expr[G]],
 )(implicit val o: Origin)
     extends Class[G] with ByValueClassImpl[G]
 final class Model[G](val declarations: Seq[ModelDeclaration[G]])(
@@ -2290,9 +2291,16 @@ final case class InstanceOf[G](value: Expr[G], typeValue: Expr[G])(
 final case class Cast[G](value: Expr[G], typeValue: Expr[G])(
     implicit val o: Origin
 ) extends Expr[G] with CastImpl[G]
+final case class PointerCast[G](
+    value: Expr[G],
+    t: Type[G],
+    fromSize: Expr[G],
+    toSize: Expr[G],
+)(implicit val o: Origin)
+    extends Expr[G] with PointerCastImpl[G]
 final case class IntegerPointerCast[G](
     value: Expr[G],
-    typeValue: Expr[G],
+    t: Type[G],
     elementSize: Expr[G],
 )(implicit val o: Origin)
     extends Expr[G] with IntegerPointerCastImpl[G]

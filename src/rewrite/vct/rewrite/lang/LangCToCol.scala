@@ -484,7 +484,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def sizeOf(t: Type[Pre], sizeOfOrigin: Origin): Expr[Post] = {
     implicit val o: Origin = t.o
-    rw.dispatch(t).bits match {
+    t.bits match {
       case TypeSize.Exact(size) => c_const(size / 8)(sizeOfOrigin)
       case b @ (TypeSize.Unknown() | TypeSize.Minimally(_)) =>
         functionInvocation(
@@ -596,20 +596,28 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
       case CCast(e, t) if e.t.asPointer.isDefined && t.asPointer.isDefined =>
-        val newEElement = getBaseType(rw.dispatch(e.t.asPointer.get.element))
-        val newTElement = getBaseType(rw.dispatch(t.asPointer.get.element))
+        val eElement = e.t.asPointer.get.element
+        val tElement = t.asPointer.get.element
+        val newEElement = getBaseType(rw.dispatch(eElement))
+        val newTElement = getBaseType(rw.dispatch(tElement))
         if (
           newEElement == TVoid[Post]() || newTElement == TVoid[Post]() ||
           CoercionUtils.firstElementIsType(newEElement, newTElement) ||
           CoercionUtils.firstElementIsType(newTElement, newEElement)
-        ) { Cast(rw.dispatch(e), TypeValue(rw.dispatch(t))(t.o))(c.o) }
-        else { throw UnsupportedCast(c) }
+        ) {
+          PointerCast(
+            rw.dispatch(e),
+            rw.dispatch(t),
+            sizeOf(eElement, c.o),
+            sizeOf(tElement, c.o),
+          )(c.o)
+        } else { throw UnsupportedCast(c) }
       case CCast(e, t @ TCInt()) if e.t.asPointer.isDefined =>
         if (isUniquePointerElement(e.t.asPointer.get.element))
           throw UnsupportedCast(c)
         IntegerPointerCast(
           rw.dispatch(e),
-          TypeValue(rw.dispatch(t))(t.o),
+          rw.dispatch(t),
           getStride(e.t.asPointer.get.element, c.o),
         )(c.o)
       case CCast(e, t @ CTPointer(innerType))
@@ -617,7 +625,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             !isUniquePointerElement(innerType) =>
         IntegerPointerCast(
           rw.dispatch(e),
-          TypeValue(TPointer(rw.dispatch(innerType), None))(t.o),
+          TPointer(rw.dispatch(innerType), None),
           getStride(innerType, c.o),
         )(c.o)
       case _ => throw UnsupportedCast(c)
@@ -1295,6 +1303,45 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  def getFirstTypes(aggregate: Type[Pre]): Seq[Type[Pre]] =
+    aggregate match {
+      case struct: CTStruct[Pre] =>
+        val decls =
+          struct.ref.decl.decl match {
+            case CDeclaration(
+                  _,
+                  _,
+                  Seq(CStructDeclaration(Some(_), decls)),
+                  Seq(),
+                ) =>
+              decls
+            case _ => throw WrongStructType(struct.ref.decl)
+          }
+        decls.headOption.map { fieldDecl =>
+          val CStructMemberDeclarator(
+            specs: Seq[CDeclarationSpecifier[Pre]],
+            Seq(_),
+          ) = fieldDecl
+          val t =
+            specs.collectFirst { case t: CSpecificationType[Pre] =>
+              t.t match {
+                case TUnique(inner, _) => inner
+                case inner => inner
+              }
+            }.get
+          t +: getFirstTypes(t)
+        }.getOrElse(Nil)
+      case TArray(element) => element +: getFirstTypes(element)
+      case LLVMTStruct(_, _, elements) =>
+        elements.headOption.map { field => field +: getFirstTypes(field) }
+          .getOrElse(Nil)
+      case LLVMTStruct(_, _, elements) =>
+        elements.head +: getFirstTypes(elements.head)
+      case LLVMTArray(_, elementType) =>
+        elementType +: getFirstTypes(elementType)
+      case _ => Nil
+    }
+
   def rewriteStruct(decl: CGlobalDeclaration[Pre]): Unit = {
     val (decls, sdecl) =
       decl.decl match {
@@ -1307,6 +1354,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           (decls, sdecl)
         case _ => throw WrongStructType(decl)
       }
+
+    val casts =
+      sizeOf(CTStruct(decl.ref), decl.o) +: getFirstTypes(CTStruct(decl.ref))
+        .map { t => (sizeOf(t, decl.o)) }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
@@ -1339,6 +1390,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         false,
+        casts,
       )(CStructOrigin(sdecl))
 
     rw.globalDeclarations.declare(newStruct)

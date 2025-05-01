@@ -11,13 +11,13 @@
   context \pointer_length(in) == n;
   context \pointer_length(out) == n-2;
   context blockDim.x * gridDim.x >= n;
-  context (\forall* int i; 0<=i && i<n; Perm({:&in[i]:}, write \ (blockDim.x * gridDim.x)));
+  context (\forall* int i; 0<=i && i<n; Perm({:in[i]:}, write \ (blockDim.x * gridDim.x)));
 
-  context \gtid<n-2 ==> Perm({:&out[\gtid]:}, write);
+  context \gtid<n-2 ==> Perm({:out[\gtid]:}, write);
 
   context \shared_mem_size(s) == blockDim.x+2;
-  requires Perm({:&s[\ltid]:}, write);
-  requires threadIdx.x < 2 ==> Perm({:&s[\ltid + blockDim.x]:}, write);
+  requires Perm({:s[\ltid]:}, write);
+  requires threadIdx.x < 2 ==> Perm({:s[\ltid + blockDim.x]:}, write);
 
   ensures \gtid<n-2 ==>{:out[\gtid]:} == (in[\gtid] + in[\gtid+1] + in[\gtid+2])/3;
   
@@ -33,11 +33,11 @@ __global__ void blur_x(int* in, int* out, int n) {
   }
 
   /*@
-    context (\forall* int i; 0<=i && i<n; Perm({:&in[i]:}, write \ (blockDim.x * gridDim.x)));
-    context blockIdx.x * blockDim.x + threadIdx.x<n-2 ==> Perm({:&out[blockIdx.x * blockDim.x + threadIdx.x]:}, write);
+    context (\forall* int i; 0<=i && i<n; Perm({:in[i]:}, write \ (blockDim.x * gridDim.x)));
+    context blockIdx.x * blockDim.x + threadIdx.x<n-2 ==> Perm({:out[blockIdx.x * blockDim.x + threadIdx.x]:}, write);
 
-    requires Perm({:&s[threadIdx.x]:}, write);
-    requires threadIdx.x < 2 ==> Perm({:&s[threadIdx.x + blockDim.x]:}, write);
+    requires Perm({:s[threadIdx.x]:}, write);
+    requires threadIdx.x < 2 ==> Perm({:s[threadIdx.x + blockDim.x]:}, write);
 
     requires blockIdx.x * blockDim.x + threadIdx.x < n
       ==> {:s[threadIdx.x]:} == in[blockIdx.x * blockDim.x + threadIdx.x];
@@ -45,9 +45,9 @@ __global__ void blur_x(int* in, int* out, int n) {
       ==> {:s[threadIdx.x+blockDim.x]:} == in[blockIdx.x * blockDim.x + threadIdx.x+blockDim.x];
 
 
-    ensures (\forall* int i; 0 <= i && i < blockDim.x+2; Perm({:&s[i]:}, write \ (blockDim.x+2)));
+    ensures (\forall* int i; 0 <= i && i < blockDim.x+2; Perm({:s[i]:}, write \ (blockDim.x+2)));
 
-    ensures 
+    ensures
       (\forall int i; 0 <= i && i < blockDim.x+2 && blockIdx.x*blockDim.x + i <n
         ==> {:s[i]:} == in[blockIdx.x * blockDim.x+i]);
   @*/
