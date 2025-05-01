@@ -156,7 +156,7 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
   it should "Rewrite (forall int x=0..n; xs[n-x-1]>0)" in correctNumbers(
     Seq((c(0), ns(0))),
     {case Seq(x) => ns(0) - x + c(-1)},
-    (xyz: Local[G]) => c(-1) * ns(0) < (xyz - (c(-1) + ns(0))) && (xyz - (c(-1) + ns(0))) <= c(0)
+    (xyz: Local[G]) => c(0) <= -(xyz - (c(-1) + ns(0))) && -(xyz - (c(-1) + ns(0))) < ns(0)
   )
 
   // It has no proof that ns0 ns1 and ns0 are bigger than zero.

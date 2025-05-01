@@ -40,10 +40,10 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
   var replacerDepth = 0
   val max_depth = 100
 
-  def usefullConditions(): Set[Expr[G]] = {
+  def usefulConditions(): Set[Expr[G]] = {
     info match {
       case None => Set()
-      case Some(info) => info.usefullConditions
+      case Some(info) => info.usefulConditions
     }
   }
 
@@ -611,7 +611,7 @@ case class AnnotationVariableInfo[G](
     lessThanEqVars: Map[Local[G], Set[Local[G]]],
     upperBound: Map[Local[G], BigInt],
     lowerBound: Map[Local[G], BigInt],
-    usefullConditions: Set[Expr[G]],
+    usefulConditions: Set[Expr[G]],
 )
 
 /** This class gathers information about variables, such as: `requires x == 0`
@@ -630,7 +630,7 @@ class AnnotationVariableInfoGetter[G](
     val upperBound: mutable.Map[Local[G], BigInt],
     // lowerBound(v) = 5 Captures that variable v is greater than or equal to 5
     val lowerBound: mutable.Map[Local[G], BigInt],
-    val usefullConditions: mutable.ArrayBuffer[Expr[G]],
+    val usefulConditions: mutable.ArrayBuffer[Expr[G]],
 ) {
 
   def this() = {
@@ -863,12 +863,12 @@ class AnnotationVariableInfoGetter[G](
         Map[Local[G], Set[Local[G]]](),
         Map[Local[G], BigInt](),
         Map[Local[G], BigInt](),
-        usefullConditions.toSet,
+        usefulConditions.toSet,
       )
 
       equalCheck = ExpressionEqualityCheck(Some(res))
       extractComparisons(annotation)
-      usefullConditions.addOne(annotation)
+      usefulConditions.addOne(annotation)
     }
   }
 
@@ -940,7 +940,7 @@ class AnnotationVariableInfoGetter[G](
       prev.map(_.lowerBound) :+ lowerBound,
       (_, l, r) => l.max(r),
     )
-    val usefull = (prev.flatMap(_.usefullConditions) ++ usefullConditions).toSet
+    val useful = (prev.flatMap(_.usefulConditions) ++ usefulConditions).toSet
 
     AnnotationVariableInfo(
       varEq.view.mapValues(_.toSet).toMap,
@@ -950,7 +950,7 @@ class AnnotationVariableInfoGetter[G](
       varLessThen.view.mapValues(_.toSet).toMap,
       varUpper,
       varLower,
-      usefull,
+      useful,
     )
   }
 
@@ -964,7 +964,7 @@ class AnnotationVariableInfoGetter[G](
         lessThanEqVars.clone(),
         upperBound.clone(),
         lowerBound.clone(),
-        usefullConditions.clone(),
+        usefulConditions.clone(),
       )
     res
   }
@@ -978,7 +978,7 @@ class AnnotationVariableInfoGetter[G](
     lessThanEqVars.clear()
     upperBound.clear()
     lowerBound.clear()
-    usefullConditions.clear()
+    usefulConditions.clear()
   }
 
   def filterInfo(assignedVars: Set[Variable[G]]): Unit = {
@@ -995,7 +995,7 @@ class AnnotationVariableInfoGetter[G](
     lessThanEqVars.mapValuesInPlace((_, eqs) => eqs.filterInPlace(constantVar))
     upperBound.filterInPlace((l, _) => constantVar(l))
     lowerBound.filterInPlace((l, _) => constantVar(l))
-    usefullConditions.filterInPlace(const)
+    usefulConditions.filterInPlace(const)
   }
 
   def isConstant(e: Expr[G], assignedVars: Set[Variable[G]]): Boolean = {

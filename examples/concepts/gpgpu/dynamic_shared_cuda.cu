@@ -29,7 +29,7 @@ __global__ void blur_x(int* in, int* out, int n) {
   }
 
   /*@
-    context Perm(&n[0], write \ (blockDim.x * gridDim.x));
+    context Perm(in[0], write \ (blockDim.x * gridDim.x));
     context blockIdx.x * blockDim.x + threadIdx.x<n ==> Perm({:out[blockIdx.x * blockDim.x + threadIdx.x]:}, write);
     context blockIdx.x * blockDim.x + threadIdx.x<n ==> \old(out[blockIdx.x * blockDim.x + threadIdx.x]) == {:out[blockIdx.x * blockDim.x + threadIdx.x]:};
 

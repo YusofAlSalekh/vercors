@@ -70,6 +70,17 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
       implicit o: Origin
   ): Location[Post] =
     expr match {
+      case InlinePattern(inner, pattern, group) =>
+        if (inner.t.asByValueClass.isDefined) {
+          throw InvalidPatternLocation(
+            expr,
+            inner.t.asByValueClass.get.cls.decl,
+          )
+        }
+        InLinePatternLocation(
+          exprToLoc(inner, blame),
+          InlinePattern(dispatch(inner), pattern, group)(expr.o),
+        )(expr.o)
       case expr if expr.t.asByValueClass.isDefined =>
         ByValueClassLocation(dispatch(expr))(blame)
       case dp @ DerefPointer(p) => PointerLocation(dispatch(p))(dp.blame)

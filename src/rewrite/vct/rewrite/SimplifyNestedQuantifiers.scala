@@ -554,7 +554,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         }
       }
       for (e <- dependentConditions) { constraints = constraints.appended(e) }
-      constraints = constraints ++ equalityChecker.usefullConditions()
+      constraints = constraints ++ equalityChecker.usefulConditions()
     }
 
     def unfoldBody(
@@ -1391,7 +1391,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           else
             Seq()
 
-        if (!is_value(a0, 1))
+        if (is_value(a0, -1))
+          base = -base
+        else if (!is_value(a0, 1))
           base = FloorDiv(base, newGen(a0))(PanicBlame("a not zero"))
 
         val replaceMap: mutable.Map[Variable[Pre], Expr[Post]] = mutable.Map()
