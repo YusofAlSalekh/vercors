@@ -4,6 +4,7 @@ import vct.test.integration.helper.VercorsSpec
 
 class GpgpuSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/gpgpu/cuda.cu"
+  vercors should verify using silicon example "concepts/gpgpu/cuda_atomic.cu"
   vercors should verify using silicon example "concepts/gpgpu/simple_vector_cuda.cu"
   vercors should verify using silicon example "concepts/gpgpu/opencl_vector_simple.cl"
   vercors should verify using silicon example "concepts/gpgpu/opencl_vector_add.cl"
