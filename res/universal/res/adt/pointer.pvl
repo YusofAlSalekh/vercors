@@ -1,3 +1,5 @@
+adt PointerCastHelper {}
+
 adt `block` {
   pure int block_length(`block` b);
   pure ref loc(`block` b, int i);

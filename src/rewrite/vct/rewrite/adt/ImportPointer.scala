@@ -4,7 +4,7 @@ import vct.col.ast._
 import ImportADT.typeText
 import hre.util.ScopedStack
 import vct.col.origin._
-import vct.col.ref.Ref
+import vct.col.ref.{LazyRef, Ref}
 import vct.col.rewrite.{ClassToRef, Generation}
 import vct.col.util.AstBuildHelpers.{functionInvocation, _}
 import vct.col.util.SuccessionMap
@@ -105,6 +105,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerFile,
     "ptr_from_address",
   )
+  private lazy val pointerCastHelperAdt = find[AxiomaticDataType[Post]](
+    pointerFile,
+    "PointerCastHelper",
+  )
 
   private val pointerField
       : mutable.Map[(Type[Post], Option[BigInt]), SilverField[Post]] = mutable
@@ -119,9 +123,44 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       : mutable.Map[(AxiomaticDataType[Pre], Seq[Type[Pre]]), Function[Post]] =
     mutable.Map()
   private val context: ScopedStack[Context] = ScopedStack()
-  private var casts: Set[(Type[Pre], Type[Pre], Expr[Pre], Expr[Pre])] =
-    Set.empty
-  private var inMakeAsType: ScopedStack[Unit] = ScopedStack()
+  private var casts: Set[Type[Pre]] = Set.empty
+  private val inMakeAsType: ScopedStack[Unit] = ScopedStack()
+  private val fromCastHelperFunctions
+      : SuccessionMap[Type[Pre], Function[Post]] = SuccessionMap()
+  private val toCastHelperFunctions: SuccessionMap[Type[Pre], Function[Post]] =
+    SuccessionMap()
+
+  private def makeFromCastHelperFunction(t: Type[Pre]): Function[Post] = {
+    implicit val o: Origin = AsTypeOrigin
+      .where(name = "from_cast_helper_" + t.toString)
+    val value =
+      new Variable[Post](TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil))(
+        AsTypeOrigin.where(name = "helper")
+      )
+    globalDeclarations.declare(function[Post](
+      AbstractApplicable,
+      TrueSatisfiable,
+      returnType = TAxiomatic(new LazyRef(pointerAdt), Nil),
+      args = Seq(value),
+    ))
+  }
+
+  private def makeToCastHelperFunction(t: Type[Pre]): Function[Post] = {
+    implicit val o: Origin = AsTypeOrigin
+      .where(name = "to_cast_helper_" + t.toString)
+    val value =
+      new Variable[Post](TAxiomatic(new LazyRef(pointerAdt), Nil))(
+        AsTypeOrigin.where(name = "ptr")
+      )
+    globalDeclarations.declare(withResult((result: Result[Post]) =>
+      function[Post](
+        AbstractApplicable,
+        TrueSatisfiable,
+        returnType = TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil),
+        args = Seq(value),
+      )
+    ))
+  }
 
   private def makeAsTypeFunction(
       from: Type[Pre],
@@ -131,15 +170,6 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   ): Function[Post] = {
     implicit val o: Origin = AsTypeOrigin
       .where(name = "as_" + to.toString + "_from_" + from.toString)
-//        val orig = new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(o.where(name = "orig"))
-//        val inv: Function[Post] = globalDeclarations.declare(
-//          function[Post](
-//            AbstractApplicable,
-//            TrueSatisfiable,
-//            returnType = TAxiomatic(pointerAdt.ref, Nil),
-//            args = Seq(orig),
-//          )(o.where(name = "as_" + toName + "_from_" + fromName + "_inv"))
-//        )
     if (inMakeAsType.isEmpty && !asTypeFunctions.contains((to, from))) {
       inMakeAsType.having(()) {
         asTypeFunctions((to, from)) = makeAsTypeFunction(
@@ -158,25 +188,26 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       function[Post](
         AbstractApplicable,
         TrueSatisfiable,
-//        ensures = UnitAccountedPredicate(foldAnd(casts.map(t =>
-//          functionInvocation[Post](
-//            TrueSatisfiable,
-//            asTypeFunctions.ref(t),
-//            Seq(result),
-//          ) === value.get
-//        ))),
-        ensures = UnitAccountedPredicate(
-//                  And(
-//                  functionInvocation[Post](TrueSatisfiable, inv.ref, args=Seq(result)) === value.get,
+        ensures = UnitAccountedPredicate(And(
+          result === functionInvocation[Post](
+            TrueSatisfiable,
+            fromCastHelperFunctions
+              .getOrElseUpdate(to, makeFromCastHelperFunction(to)).ref,
+            Seq(functionInvocation[Post](
+              TrueSatisfiable,
+              toCastHelperFunctions
+                .getOrElseUpdate(from, makeToCastHelperFunction(from)).ref,
+              Seq(value.get),
+            )),
+          ),
           adtFunctionInvocation[Post](
             pointerAddress.ref,
             args = Seq(result, dispatch(toSize)),
           ) === adtFunctionInvocation[Post](
             pointerAddress.ref,
             args = Seq(value.get, dispatch(fromSize)),
-          )
-//                  )
-        ),
+          ),
+        )),
         returnType = TAxiomatic(pointerAdt.ref, Nil),
         args = Seq(value),
       )
@@ -286,13 +317,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
 
   override def postCoerce(program: Program[Pre]): Program[Post] = {
     casts =
-      program.collect { case PointerCast(from, to, fromSize, toSize) =>
-        (
-          from.t.asPointer.get.element,
-          to.asPointer.get.element,
-          fromSize,
-          toSize,
-        )
+      program.flatCollect { case PointerCast(from, to, _, _) =>
+        Seq(from.t.asPointer.get.element, to.asPointer.get.element)
       }.toSet
     super.postCoerce(program)
   }
@@ -303,13 +329,6 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
         context.having(InAxiom()) {
           allScopes.anySucceed(axiom, axiom.rewriteDefault())
         }
-//      // TODO: This is an ugly way to exempt this one bit of generated code from having ptrAdd's added
-//      case proc: Procedure[Pre]
-//          if proc.o.find[LabelContext]
-//            .exists(_.label == "classToRef cast helpers") =>
-//        context.having(InAxiom()) {
-//          allScopes.anySucceed(proc, proc.rewriteDefault())
-//        }
       case adt: AxiomaticDataType[Pre]
           if adt.o.find[SourceName].exists(_.name == "pointer") =>
         implicit val o: Origin = adt.o
@@ -325,30 +344,40 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               }.get)
               aDTDeclarations.collect {
                 adt.decls.foreach(dispatch)
-                casts.map { case (from1, to1, _, _) =>
+                casts.map { t =>
+                  aDTDeclarations.declare(new ADTAxiom[Post](forall(
+                    TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil),
+                    body = { p =>
+                      InlinePattern(functionInvocation[Post](
+                        TrueSatisfiable,
+                        toCastHelperFunctions
+                          .getOrElseUpdate(t, makeToCastHelperFunction(t)).ref,
+                        Seq(functionInvocation[Post](
+                          TrueSatisfiable,
+                          fromCastHelperFunctions
+                            .getOrElseUpdate(t, makeFromCastHelperFunction(t))
+                            .ref,
+                          Seq(p),
+                        )),
+                      )) === p
+                    },
+                  )))
                   aDTDeclarations.declare(new ADTAxiom[Post](forall(
                     TAxiomatic(adtSucc, Nil),
                     body = { p =>
-                      functionInvocation[Post](
+                      InlinePattern(functionInvocation[Post](
                         TrueSatisfiable,
-                        asTypeFunctions.ref((to1, from1)),
+                        fromCastHelperFunctions
+                          .getOrElseUpdate(t, makeFromCastHelperFunction(t))
+                          .ref,
                         Seq(functionInvocation[Post](
                           TrueSatisfiable,
-                          asTypeFunctions.ref((from1, to1)),
+                          toCastHelperFunctions
+                            .getOrElseUpdate(t, makeToCastHelperFunction(t))
+                            .ref,
                           Seq(p),
                         )),
-                      ) === p
-                    },
-                    triggers = { p =>
-                      Seq(Seq(functionInvocation[Post](
-                        TrueSatisfiable,
-                        asTypeFunctions.ref((to1, from1)),
-                        Seq(functionInvocation[Post](
-                          TrueSatisfiable,
-                          asTypeFunctions.ref((from1, to1)),
-                          Seq(p),
-                        )),
-                      )))
+                      )) === p
                     },
                   )))
                 }
