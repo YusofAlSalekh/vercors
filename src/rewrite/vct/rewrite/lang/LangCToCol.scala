@@ -1029,6 +1029,12 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                       innerIters
                     }
 
+                    // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
+                    val sub = Substitute[Post](
+                      cudaConstantDims.top.indices.values
+                        .map(v => (v.get, c_const[Post](0))).toMap
+                    )
+
                     val innerContent = ParStatement(
                       ParBlock(
                         decl = blockDecl,
@@ -1036,10 +1042,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                         // Context is already inherited
                         context_everywhere = Star(
                           nonZeroThreads,
-                          rw.dispatch(contract.contextEverywhere),
+                          sub.dispatch(rw.dispatch(contract.contextEverywhere)),
                         ),
-                        requires = rw.dispatch(contractRequires),
-                        ensures = rw.dispatch(contractEnsures),
+                        requires = sub.dispatch(rw.dispatch(contractRequires)),
+                        ensures = sub.dispatch(rw.dispatch(contractEnsures)),
                         content = rw.dispatch(implFiltered.get),
                       )(KernelParFailure(kernelSpec))
                     )

@@ -764,7 +764,18 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
             val maxBound = extremeValue(name, maximizing = true)
             val minBound = extremeValue(name, maximizing = false)
             (maxBound, minBound) match {
-              case (Some(maxBound), Some(minBound)) =>
+              case (Some((maxBound, _)), Some((minBound, _)))
+                  if body.t != TResource[Pre]() =>
+                newBinder = true
+                // Do not quantify over name anymore
+                bindings.remove(name)
+                lowerBounds.remove(name)
+                upperBounds.remove(name)
+                upperExclusiveBounds.remove(name)
+                independentConditions.addOne(GreaterEq(maxBound, minBound))
+              // We have exact min and max bounds in this case, so we can scale the permission
+              case (Some((maxBound, true)), Some((minBound, true)))
+                  if body.t == TResource[Pre]() =>
                 newBinder = true
                 // Do not quantify over name anymore
                 bindings.remove(name)
@@ -775,14 +786,11 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
                 // We remove the forall variable i, but need to rewrite some expressions
                 // (forall i; a <= i <= b; ...Perm(ar, x)...) ====> b>=a ==> ...Perm(ar, x*(b-a+1))...
                 independentConditions.addOne(GreaterEq(maxBound, minBound))
-
-                if (body.t == TResource[Pre]()) {
-                  body =
-                    Scale(one + maxBound - minBound, body)(PanicBlame(
-                      "Error in SimplifyNestedQuantifiers class, implication should make sure scale is" +
-                        " never negative when accessed."
-                    ))
-                }
+                body =
+                  Scale(one + maxBound - minBound, body)(PanicBlame(
+                    "Error in SimplifyNestedQuantifiers class, implication should make sure scale is" +
+                      " never negative when accessed."
+                  ))
               case _ =>
             }
           }
@@ -793,7 +801,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     def extremeValue(
         name: Variable[Pre],
         maximizing: Boolean,
-    ): Option[Expr[Pre]] = {
+    ): Option[(Expr[Pre], Boolean)] = {
       if (maximizing && upperBounds(name).nonEmpty)
         Some(extremes(upperBounds(name).toSeq, maximizing))
       else if (!maximizing && lowerBounds(name).nonEmpty)
@@ -802,19 +810,47 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
         None
     }
 
-    def extremes(xs: Seq[Expr[Pre]], maximizing: Boolean): Expr[Pre] = {
+    // The boolean returned value indicates that minimum/maximum is provably exact. E.g. with [2,5,3], 2 is the exact
+    // maximum (so when we are maximizing). In other cases, the extreme value depends on the context
+    def extremes(
+        xs: Seq[Expr[Pre]],
+        maximizing: Boolean,
+    ): (Expr[Pre], Boolean) = {
       xs match {
-        case expr +: Nil => expr
+        case expr +: Nil => (expr, true)
         case left +: right +: tail =>
-          Select(
-            condition =
-              if (maximizing)
-                left > right
-              else
-                left < right,
-            whenTrue = extremes(left +: tail, maximizing),
-            whenFalse = extremes(right +: tail, maximizing),
-          )
+          val lt = equalityChecker.lessThenEq(left, right)
+          if (lt.isDefined) {
+            if (lt.get)
+              (
+                if (maximizing)
+                  left
+                else
+                  right,
+                true,
+              )
+            else
+              (
+                if (maximizing)
+                  right
+                else
+                  left,
+                true,
+              )
+          } else {
+            (
+              Select(
+                condition =
+                  if (maximizing)
+                    left > right
+                  else
+                    left < right,
+                whenTrue = extremes(left +: tail, maximizing)._1,
+                whenFalse = extremes(right +: tail, maximizing)._1,
+              ),
+              false,
+            )
+          }
       }
     }
 
