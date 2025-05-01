@@ -96,7 +96,8 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
     override def text: String =
       e.o.messageInContext(
         "We did not succeed in rewriting this part of the trigger. Because of the following reasons:"
-      ) ++ reasons.map(_.text).mkString("\n")
+      ) ++ reasons.collectFirst { case r: VarNoUpperBound => Seq(r) }
+        .getOrElse(reasons).map(_.text).mkString("\n")
   }
 
   case class InvalidTriggerPair(e1: Expr[_], e2: Expr[_]) extends UserError {
@@ -132,6 +133,20 @@ case class VarNoBound(v: Variable[_], pattern: Expr[_]) extends FailReason {
     Message.messagesInContext(
       pattern.o -> "This pattern needs lower bounds for all its vars...",
       v.o -> "... but this var has no lower bound",
+    )
+}
+
+case class VarNoUpperBound(
+    v: Variable[_],
+    pattern: Expr[_],
+    permutation: Seq[Variable[_]],
+) extends FailReason {
+  def text: String =
+    Message.messagesInContext(
+      permutation.head.o ->
+        ("For this permutation " +
+          permutation.map(_.o.getPreferredNameOrElse().camel).mkString(", ")),
+      v.o -> ".. we need an upperbound for this var to rewrite correctly",
     )
 }
 
@@ -1303,6 +1318,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           quantVars: Seq[Variable[Pre]]
       ): Either[Seq[FailReason], SubstituteForall] = {
         if (!isLinear) { return Left(Seq(NotLinear(pattern))) }
+        if (quantVars.size == 1) { return rewriteSingleVar(quantVars.head) }
+
         // Checking the preconditions of the check_vars_list function
         for (v <- quantVars) {
           if (!linearExpressions.contains(v))
@@ -1339,6 +1356,60 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           case Some(ExpressionEqualityCheck.Neg()) => -e
           case None => Select(e >= const(0), e, -e)
         }
+      }
+
+      def rewriteSingleVar(
+          x0: Variable[Pre]
+      ): Either[Seq[FailReason], SubstituteForall] = {
+        val a0 = linearExpressions(x0)
+        val sign = equalityChecker.getSign(a0)
+        // a0 always must be provable non zero
+        equalityChecker.isNonZero(a0).getOrElse(
+          return Left(Seq(VarNotProvableZero(x0, a0, pattern, Seq(x0))))
+        )
+
+        // We found a replacement!
+        // Make the variable & declaration
+        val newName = x0.o.getPreferredNameOrElse().camel
+        val xNew = new Variable[Post](TInt())(BinderOrigin(newName))
+        quantifierData.mainRewriter.variables.declare(xNew)
+
+        val newGen: Expr[Pre] => Expr[Post] =
+          quantifierData.mainRewriter.dispatch
+
+        val xNewVar: Expr[Post] = Local(xNew.ref)
+        var base: Expr[Post] =
+          if (
+            !constantExpression.isDefined || is_value(constantExpression.get, 0)
+          )
+            xNewVar
+          else
+            Minus(xNewVar, newGen(constantExpression.get))
+        var newBounds: Seq[Expr[Post]] =
+          if (!is_value(a0, 1) && !is_value(a0, -1))
+            Seq(base % newGen(a0) === const(0))
+          else
+            Seq()
+
+        if (!is_value(a0, 1))
+          base = FloorDiv(base, newGen(a0))(PanicBlame("a not zero"))
+
+        val replaceMap: mutable.Map[Variable[Pre], Expr[Post]] = mutable.Map()
+        replaceMap(x0) = base
+        val replacePattern = (pattern, xNewVar)
+
+        for (lowerBound <- quantifierData.lowerBounds(x0)) {
+          newBounds = newBounds :+ (newGen(lowerBound) <= base)
+        }
+        for (upperBound <- quantifierData.upperExclusiveBounds(x0)) {
+          newBounds = newBounds :+ (base < newGen(upperBound))
+        }
+
+        Right(SubstituteForall(
+          AstBuildHelpers.foldAnd(newBounds),
+          replaceMap.toMap,
+          replacePattern,
+        ))
       }
 
       /** This function determines if the vars in this specific order allow the
@@ -1422,6 +1493,9 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           quantifierData.lowerBounds(xPrev).tail.toSet
 
         // Get a random upperbound for x_i_last;
+        if (quantifierData.upperExclusiveBounds(xPrev).isEmpty)
+          return Left(VarNoUpperBound(xPrev, pattern, vars))
+
         val upLast = quantifierData.upperExclusiveBounds(xPrev).head
         remainingUpperBounds(xPrev) =
           quantifierData.upperExclusiveBounds(xPrev).tail.toSet
