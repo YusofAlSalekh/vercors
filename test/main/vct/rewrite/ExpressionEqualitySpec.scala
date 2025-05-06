@@ -51,10 +51,10 @@ class ExpressionEqualitySpec extends AnyFlatSpec with Matchers {
 
   it should "SMT should prove correct about (c def) 10%3==1 " in {
     val smt = AskSMTSolver(Seq(),
-      TruncDiv(c(10), c(3))(blame) === c(1) &&
-        TruncDiv(c(10), c(-3))(blame) === c(1) &&
-        TruncDiv(c(-10), c(3))(blame) === c(-1) &&
-        TruncDiv(c(-10), c(-3))(blame) === c(-1)
+      TruncMod(c(10), c(3))(blame) === c(1) &&
+        TruncMod(c(10), c(-3))(blame) === c(1) &&
+        TruncMod(c(-10), c(3))(blame) === c(-1) &&
+        TruncMod(c(-10), c(-3))(blame) === c(-1)
     )
     assert(smt.check())
   }

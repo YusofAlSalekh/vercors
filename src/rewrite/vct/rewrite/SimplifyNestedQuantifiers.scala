@@ -259,15 +259,21 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           case Starall(_, Nil, _) =>
             val trigger = e.o.inlineContext(false).map(_.last)
               .getOrElse("unknown context")
-            logger.warn(
-              f"The binder `${e.o.shortPositionText}`:`${trigger} contains no triggers`"
-            )
+            // Do not warn for generated non-user code
+            if (trigger != "(empty source region)") {
+              logger.warn(
+                f"The binder ${e.o.shortPositionText}: '${trigger}' contains no triggers"
+              )
+            }
           case Forall(_, Nil, body) =>
             val trigger = e.o.inlineContext(false).map(_.last)
               .getOrElse("unknown context")
-            logger.warn(
-              f"The binder `${e.o.shortPositionText}`:`${trigger} contains no triggers`"
-            )
+            // Do not warn for generated non-user code
+            if (trigger != "(empty source region)") {
+              logger.warn(
+                f"The binder ${e.o.shortPositionText}: '${trigger}' contains no triggers"
+              )
+            }
           case _ =>
         }
         res
