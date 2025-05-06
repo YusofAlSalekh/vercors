@@ -189,7 +189,7 @@ axiom starall_bool {
     (∀* T t; (body!t)) == (∀ T t; (body!t)))
 }
 /* LvdH: I Think it is actually quite bad to split quantifiers here, when a user specified a trigger. Since it removes
-   control over the triggering of the quantifier. I think we should not allow this. */
+   control over the triggering of the quantifier. I think we should not allow this.
 axiom forall_and {
   (∀type<any> T, boolean b1, boolean b2;
     (∀T t; (b1!t) && (b2!t)) ==

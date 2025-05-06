@@ -935,6 +935,25 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case _ => None
       }
 
+    def openClVec(name: String, idx: Expr[Pre]): Option[RefCudaVecDim[Pre]] = {
+      val dims = Seq[RefCudaVec[Pre] => RefCudaVecDim[Pre]](
+        RefCudaVecX[Pre],
+        RefCudaVecY[Pre],
+        RefCudaVecZ[Pre],
+      )
+      idx match {
+        case CIntegerValue(i, _) if i >= 0 && i < 3 =>
+          val dim = dims(i.toInt)
+          if (name == "get_local_size")
+            Some(dim(RefCudaThreadIdx()))
+          else if (name == "get_num_groups")
+            Some(dim(RefCudaBlockIdx()))
+          else
+            None
+        case _ => None
+      }
+    }
+
     e match {
       case AmbiguousEq(acc: CFieldAccess[Pre], CIntegerValue(i, _), _, _)
           if i == 1 =>
@@ -942,6 +961,12 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case AmbiguousEq(CIntegerValue(i, _), acc: CFieldAccess[Pre], _, _)
           if i == 1 =>
         cudaVec(acc.ref.get)
+      case AmbiguousEq(CIntegerValue(i, _), inv: CInvocation[Pre], _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
+      case AmbiguousEq(inv: CInvocation[Pre], CIntegerValue(i, _), _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
       case _ => None
     }
   }
