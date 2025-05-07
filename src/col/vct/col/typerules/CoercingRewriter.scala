@@ -1772,12 +1772,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case ScaleByParBlock(ref, r) => ScaleByParBlock(ref, res(r))
       case ScopedExpr(locals, body) => ScopedExpr(locals, body)
       case Select(condition, whenTrue, whenFalse) =>
-        val sharedType = Types.leastCommonSuperType(whenTrue.t, whenFalse.t)
-        Select(
-          bool(condition),
-          coerce(whenTrue, sharedType),
-          coerce(whenFalse, sharedType),
-        )
+        nonAny(e, whenTrue, whenFalse, Select(bool(condition), _, _))
       case SeqMember(x, xs) =>
         val (coercedSeq, seqType) = seq(xs)
         val sharedType = Types.leastCommonSuperType(x.t, seqType.element)
