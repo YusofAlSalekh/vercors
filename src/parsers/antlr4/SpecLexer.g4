@@ -58,6 +58,7 @@ VAL_STRING: 'string';
 VAL_PURE: 'pure';
 VAL_THREAD_LOCAL: 'thread_local';
 VAL_BIP_ANNOTATION: 'bip_annotation';
+VAL_OPAQUE:  'opaque';
 VAL_UNIQUE: 'unique';
 VAL_UNIQUE_POINTER_FIELD: 'unique_pointer_field';
 
@@ -65,6 +66,7 @@ VAL_WITH: 'with';
 VAL_THEN: 'then';
 VAL_GIVEN: 'given';
 VAL_YIELDS: 'yields';
+VAL_REVEAL: 'reveal';
 
 VAL_AXIOM: 'axiom';
 VAL_MODEL: 'model';

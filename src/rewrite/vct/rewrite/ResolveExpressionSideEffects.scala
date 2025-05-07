@@ -519,7 +519,8 @@ case class ResolveExpressionSideEffects[Pre <: Generation]()
           ArraySubscript[Post](notInlined(arr), notInlined(index))(
             SubscriptAssignTarget
           )(target.o)
-        case PointerSubscript(arr, index) if arr.t.isInstanceOf[TConstPointer[_]] =>
+        case PointerSubscript(arr, index)
+            if arr.t.isInstanceOf[TConstPointer[_]] =>
           throw DisallowedAssignmentTarget(target)
         case PointerSubscript(arr, index) =>
           PointerSubscript[Post](notInlined(arr), notInlined(index))(
@@ -632,6 +633,7 @@ case class ResolveExpressionSideEffects[Pre <: Generation]()
             typeArgs,
             givenMap,
             yields,
+            _,
           ) =>
         val res =
           new Variable[Post](dispatch(

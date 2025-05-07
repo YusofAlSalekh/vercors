@@ -58,6 +58,7 @@ object Utils {
             typeArgs,
             givenMap,
             yields,
+            _,
           ) =>
         Seq(
           InvokeProcedure(ref, args, outArgs, typeArgs, givenMap, yields)(

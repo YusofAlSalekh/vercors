@@ -51,7 +51,9 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
                  extra_cond: Option[Seq[Local[G]] => Expr[G]] = None,
                  c: Option[Expr[G]]=None
                 ): Unit = {
-    testRewriteForall(bounds, index, None, extra_cond, c)
+    assertThrows[SimplifyNestedQuantifiers.InvalidTrigger] {
+      testRewriteForall(bounds, index, None, extra_cond, c)
+    }
   }
 
   def correctNumbers(bounds: Seq[(Expr[G], Expr[G])],
@@ -70,7 +72,7 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
                      extra_cond: Option[Seq[Local[G]] => Expr[G]] = None,
                      c: Option[Expr[G]]=None
                     ): Unit = {
-    val vars = Seq.fill(bounds.size)(TInt[G])
+    val vars = Seq.fill(bounds.size)(TInt[G]())
 
     val before = block(foralls[G](vars,
       {
@@ -81,6 +83,13 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
           domain = extra_cond.map(c => domain && c(locals)).getOrElse(domain)
           domain ==> ArraySubscript(xs, index(locals))(blame) > const(0)
       },
+      {
+        case locals =>
+          Seq(Seq(
+            ArraySubscript(xs, index(locals))(blame)
+          ))
+
+      }
     ), c)
     val rw = SimplifyNestedQuantifiers[G]()
     if(res_domain.isEmpty){
@@ -147,7 +156,7 @@ class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
   it should "Rewrite (forall int x=0..n; xs[n-x-1]>0)" in correctNumbers(
     Seq((c(0), ns(0))),
     {case Seq(x) => ns(0) - x + c(-1)},
-    (xyz: Local[G]) => c(-1) * ns(0) < (xyz - (c(-1) + ns(0))) && (xyz - (c(-1) + ns(0))) <= c(0)
+    (xyz: Local[G]) => c(0) <= -(xyz - (c(-1) + ns(0))) && -(xyz - (c(-1) + ns(0))) < ns(0)
   )
 
   // It has no proof that ns0 ns1 and ns0 are bigger than zero.

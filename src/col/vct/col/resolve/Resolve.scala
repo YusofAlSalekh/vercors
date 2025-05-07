@@ -206,13 +206,19 @@ case object ResolveTypes {
       case _ => ctx
     }
 
-  def addUniquePointerFieldRef[G](specifiers: Seq[CDeclarationSpecifier[G]], ctx: TypeResolutionContext[G], blameNode: Node[G]): Unit = {
-    val pf: Seq[CUniquePointerField[G]] = specifiers.collect
-    { case CTypeQualifierDeclarationSpecifier(s: CUniquePointerField[G]) => s}
+  def addUniquePointerFieldRef[G](
+      specifiers: Seq[CDeclarationSpecifier[G]],
+      ctx: TypeResolutionContext[G],
+      blameNode: Node[G],
+  ): Unit = {
+    val pf: Seq[CUniquePointerField[G]] = specifiers.collect {
+      case CTypeQualifierDeclarationSpecifier(s: CUniquePointerField[G]) => s
+    }
     pf.foreach(f =>
-      f.ref = Some(C.getUniquePointerStructFieldRef(specifiers, f, ctx).getOrElse(
-        throw NotSupportedStructUniqueField(blameNode)
-      ))
+      f.ref = Some(
+        C.getUniquePointerStructFieldRef(specifiers, f, ctx)
+          .getOrElse(throw NotSupportedStructUniqueField(blameNode))
+      )
     )
   }
 
@@ -235,10 +241,13 @@ case object ResolveTypes {
             .getOrElse(throw NoSuchNameError("struct", name, t))
         )
       case d: CParam[G] => addUniquePointerFieldRef(d.specifiers, ctx, d)
-      case d: CStructMemberDeclarator[G] => addUniquePointerFieldRef(d.specs, ctx, d)
+      case d: CStructMemberDeclarator[G] =>
+        addUniquePointerFieldRef(d.specs, ctx, d)
       case d: CDeclaration[G] => addUniquePointerFieldRef(d.specs, ctx, d)
-      case d: CFunctionDefinition[G] => addUniquePointerFieldRef(d.specs, ctx, d)
-      case t: CPrimitiveType[G] => addUniquePointerFieldRef(t.specifiers, ctx, t)
+      case d: CFunctionDefinition[G] =>
+        addUniquePointerFieldRef(d.specs, ctx, d)
+      case t: CPrimitiveType[G] =>
+        addUniquePointerFieldRef(t.specifiers, ctx, t)
 
       case t @ CPPTypedefName(nestedName, _) =>
         t.ref = Some(CPP.findCPPTypeName(nestedName, ctx).getOrElse(
@@ -763,7 +772,7 @@ case object ResolveReferences extends LazyLogging {
             .getOrElse(throw NoSuchNameError("field", name, deref))
         )
 
-      case inv @ CInvocation(obj, _, givenMap, yields) =>
+      case inv @ CInvocation(obj, _, givenMap, yields, _) =>
         inv.ref = Some(C.resolveInvocation(obj, ctx))
         Spec.resolveGiven(givenMap, inv.ref.get, inv)
         Spec.resolveYields(ctx, yields, inv.ref.get, inv)
@@ -810,6 +819,7 @@ case object ResolveReferences extends LazyLogging {
             typeArgs,
             givenMap,
             yields,
+            _,
           ) =>
         inv.ref = Some(
           PVL.findMethod(method, args, typeArgs, ctx)
@@ -824,6 +834,7 @@ case object ResolveReferences extends LazyLogging {
             typeArgs,
             givenMap,
             yields,
+            _,
           ) =>
         inv.ref = Some(
           PVL.findInstanceMethod(obj, method, args, typeArgs, inv.blame)
@@ -897,14 +908,14 @@ case object ResolveReferences extends LazyLogging {
         )
         Spec.resolveGiven(givenMap, RefProcedure(ref.decl), inv)
         Spec.resolveYields(ctx, yields, RefProcedure(ref.decl), inv)
-      case inv @ ProcedureInvocation(ref, _, _, _, givenMap, yields) =>
+      case inv @ ProcedureInvocation(ref, _, _, _, givenMap, yields, _) =>
         ref.tryResolve(name =>
           Spec.findProcedure(name, ctx)
             .getOrElse(throw NoSuchNameError("procedure", name, inv))
         )
         Spec.resolveGiven(givenMap, RefProcedure(ref.decl), inv)
         Spec.resolveYields(ctx, yields, RefProcedure(ref.decl), inv)
-      case inv @ FunctionInvocation(ref, _, _, givenMap, yields) =>
+      case inv @ FunctionInvocation(ref, _, _, givenMap, yields, _) =>
         ref.tryResolve(name =>
           Spec.findFunction(name, ctx)
             .getOrElse(throw NoSuchNameError("function", name, inv))

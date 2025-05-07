@@ -446,6 +446,8 @@ case class SilverTransformation(
         EncodeBreakReturn,
       ) ++ simplifyBeforeRelations ++ Seq(
         SimplifyQuantifiedRelations,
+        // We extract quantifier patterns before simplifying nested ones
+        ExtractInlineQuantifierPatterns,
         SimplifyNestedQuantifiers,
         TupledQuantifiers,
       ) ++ simplifyAfterRelations ++ Seq(
@@ -473,7 +475,6 @@ case class SilverTransformation(
         CheckContractSatisfiability.withArg(checkSat),
         DesugarCollectionOperators,
         EncodeNdIndex,
-        ExtractInlineQuantifierPatterns,
         EncodeBitVectors.withArg(opaqueBitwiseOperators),
         // Translate internal types to domains
         ImportVector.withArg(adtImporter),
