@@ -15,6 +15,18 @@ class GpgpuSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/gpgpu/static_shared_opencl.cl"
 
   vercors should verify using silicon example "concepts/gpgpu/global_fence_opencl.cl"
+
+  vercors should error withCode "wrongGPUDimension" in "Wrong gpu dimension" c """
+#include <opencl.h>
+
+
+/*@
+  context get_local_size(4) == 32;
+@*/
+__kernel void addArrays(__global int* a) {
+    return;
+}
+    """
   // https://github.com/utwente-fmt/vercors/issues/852
   // vercors should verify using silicon example "concepts/gpgpu/GPGPU-Example-updates.cu"
   // https://github.com/utwente-fmt/vercors/issues/856

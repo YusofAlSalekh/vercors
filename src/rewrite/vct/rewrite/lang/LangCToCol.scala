@@ -49,6 +49,12 @@ case object LangCToCol {
       )
   }
 
+  private case class WrongGPUDimension(o: Origin) extends UserError {
+    override def code: String = "wrongGPUDimension"
+    override def text: String =
+      o.messageInContext(s"We only support GPU dimensions up to size 3.")
+  }
+
   private case class WrongCType(decl: Declaration[_]) extends UserError {
     override def code: String = "wrongCType"
     override def text: String =
@@ -929,6 +935,25 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case _ => None
       }
 
+    def openClVec(name: String, idx: Expr[Pre]): Option[RefCudaVecDim[Pre]] = {
+      val dims = Seq[RefCudaVec[Pre] => RefCudaVecDim[Pre]](
+        RefCudaVecX[Pre],
+        RefCudaVecY[Pre],
+        RefCudaVecZ[Pre],
+      )
+      idx match {
+        case CIntegerValue(i, _) if i >= 0 && i < 3 =>
+          val dim = dims(i.toInt)
+          if (name == "get_local_size")
+            Some(dim(RefCudaThreadIdx()))
+          else if (name == "get_num_groups")
+            Some(dim(RefCudaBlockIdx()))
+          else
+            None
+        case _ => None
+      }
+    }
+
     e match {
       case AmbiguousEq(acc: CFieldAccess[Pre], CIntegerValue(i, _), _, _)
           if i == 1 =>
@@ -936,7 +961,52 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case AmbiguousEq(CIntegerValue(i, _), acc: CFieldAccess[Pre], _, _)
           if i == 1 =>
         cudaVec(acc.ref.get)
+      case AmbiguousEq(CIntegerValue(i, _), inv: CInvocation[Pre], _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
+      case AmbiguousEq(inv: CInvocation[Pre], CIntegerValue(i, _), _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
       case _ => None
+    }
+  }
+
+  def workDimConstrained(e: Expr[Pre]): Seq[RefCudaVecDim[Pre]] = {
+    def res(i: BigInt): Seq[RefCudaVecDim[Pre]] = {
+      var res = Seq[RefCudaVecDim[Pre]]()
+      if (i > 3)
+        throw WrongGPUDimension(e.o)
+      if (i < 3)
+        res =
+          res ++ Seq(
+            RefCudaVecZ[Pre](RefCudaThreadIdx()),
+            RefCudaVecZ[Pre](RefCudaBlockIdx()),
+          )
+      if (i < 2)
+        res =
+          res ++ Seq(
+            RefCudaVecY[Pre](RefCudaThreadIdx()),
+            RefCudaVecY[Pre](RefCudaBlockIdx()),
+          )
+      res
+    }
+
+    e match {
+      case AmbiguousEq(
+            inv @ CInvocation(_, Nil, Nil, Nil, _),
+            CIntegerValue(i, _),
+            _,
+            _,
+          ) if inv.ref.get.name == "get_work_dim" =>
+        res(i)
+      case AmbiguousEq(
+            CIntegerValue(i, _),
+            inv @ CInvocation(_, Nil, Nil, Nil, _),
+            _,
+            _,
+          ) if inv.ref.get.name == "get_work_dim" =>
+        res(i)
+      case _ => Seq()
     }
   }
 
@@ -944,8 +1014,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       contract: ApplicableContract[Pre]
   ): Seq[RefCudaVecDim[Pre]] = {
     val UnitAccountedPredicate(contractRequires: Expr[Pre]) = contract.requires
-    (unfoldStar(contractRequires).flatMap(dimsOfSize1Expr) ++
-      unfoldStar(contract.contextEverywhere).flatMap(dimsOfSize1Expr)).distinct
+    (unfoldStar(contractRequires)
+      .flatMap(e => dimsOfSize1Expr(e) ++ workDimConstrained(e)) ++
+      unfoldStar(contract.contextEverywhere)
+        .flatMap(e => dimsOfSize1Expr(e) ++ workDimConstrained(e))).distinct
   }
 
   def kernelProcedure(
@@ -2166,6 +2238,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  def getGpuIdx[A](s: Seq[A], i: Int, o: Origin): A = {
+    s.applyOrElse(i, (_: Int) => throw WrongGPUDimension(o))
+  }
+
   /** Returns the local id of a thread in a given dimension.
     * @param index
     *   \- the dimension for which we want the thread id
@@ -2181,7 +2257,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       RefCudaVecY[Pre](RefCudaThreadIdx()),
       RefCudaVecZ[Pre](RefCudaThreadIdx()),
     )
-    val v = idxs(index)
+    val v = getGpuIdx(idxs, index, o)
     cudaConstantDims.top.indices
       .getOrElse(v, cudaCurrentThreadIdx.top.indices(v)).get
   }
@@ -2201,7 +2277,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       RefCudaVecY[Pre](RefCudaBlockIdx()),
       RefCudaVecZ[Pre](RefCudaBlockIdx()),
     )
-    val v = idxs(index)
+    val v = getGpuIdx(idxs, index, o)
     cudaConstantDims.top.indices
       .getOrElse(v, cudaCurrentBlockIdx.top.indices(v)).get
   }
@@ -2216,7 +2292,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaLocalSize(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentBlockDim.top.indices.values.toSeq.apply(index).get
+    getGpuIdx(cudaCurrentBlockDim.top.indices.values.toSeq, index, o).get
   }
 
   /** Returns the global size of a given dimension.
@@ -2229,7 +2305,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaGroupSize(index: Int, o: Origin): Expr[Post] = {
     implicit val origin: Origin = o
-    cudaCurrentGridDim.top.indices.values.toSeq.apply(index).get
+    getGpuIdx(cudaCurrentGridDim.top.indices.values.toSeq, index, o).get
   }
 
   /** Rewrites a LocalThreadId and translates it to a linear ID value. The
@@ -2302,7 +2378,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val arg =
       if (args.size == 1) {
         args.head match {
-          case CIntegerValue(i, _) if i >= 0 && i < 3 => Some(i.toInt)
+          case CIntegerValue(i, _) => Some(i.toInt)
           case _ => None
         }
       } else
