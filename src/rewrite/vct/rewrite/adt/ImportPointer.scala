@@ -760,19 +760,40 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           ref =
             toAdtFunctions.getOrElseUpdate(
               (adt, args), {
-                globalDeclarations.declare(
+                val name =
+                  "ptr_to_" + adt.o.find[SourceName].map(_.name)
+                    .getOrElse("unknown")
+                val inv = globalDeclarations.declare(
+                  function[Post](
+                    AbstractApplicable,
+                    TrueSatisfiable,
+                    TAxiomatic(pointerAdt.ref, Nil),
+                    Seq(
+                      new Variable[Post](
+                        TAxiomatic(succ(adt), args.map(dispatch))
+                      )(PointerToAdtOrigin.where(name = "a"))
+                    ),
+                  )(PointerToAdtOrigin.where(name = name + "_inv"))
+                )
+                val p =
+                  new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
+                    PointerToAdtOrigin.where(name = "p")
+                  )
+                globalDeclarations.declare(withResult((result: Result[Post]) =>
                   function[Post](
                     AbstractApplicable,
                     TrueSatisfiable,
                     TAxiomatic(succ(adt), args.map(dispatch)),
-                    Seq(new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
-                      PointerToAdtOrigin.where(name = "p")
-                    )),
-                  )(PointerToAdtOrigin.where(name =
-                    "ptr_to_" + adt.o.find[SourceName].map(_.name)
-                      .getOrElse("unknown")
-                  ))
-                )
+                    Seq(p),
+                    ensures = UnitAccountedPredicate(
+                      p.get === functionInvocation(
+                        TrueSatisfiable,
+                        ref = inv.ref,
+                        args = Seq(result),
+                      )
+                    ),
+                  )(PointerToAdtOrigin.where(name = name))
+                ))
               },
             ).ref,
           args = Seq(p match {
