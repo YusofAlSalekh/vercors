@@ -31,11 +31,13 @@ struct List {
                     |nodes| == length + 2 ** nodes[0] == head ** nodes[length + 1] == tail **
                     (\forall int i = 0 .. length+2, int j = 0 .. length+2; i != j && {:Trigger.injection_a(i):} && {:Trigger.injection_a(j):} ==> nodes[i] != nodes[j]) **
                     (\forall int i = 0 .. length+2; {:nodes[i]:} != NULL) **
+                    (\forall int i = 0 .. length+2; {:\pointer_block_offset(nodes[i]):} == 0) **
+                    (\forall int i = 0 .. length+2; {:\pointer_block_length(nodes[i]):} == 1) **
                     (\forall* int i = 0 .. length+2; Trigger.injection_a(i) ==> Perm(*{:nodes[i]:}, write)) **
                     (\forall* int i = 0 .. length+2; 0 <= {:nodes[i]->link:} && {:nodes[i]->link:} <= 18446744073709551615);
 */
 // 1 <= i && i < |nodes| -1 &&
-/*@ inline resource valid_link(seq<struct Node*> nodes, int i, int link) = link == ((uintptr_t)nodes[i-1] ^  (uintptr_t)nodes[i+1]); */
+/*@ inline resource valid_link(seq<struct Node*> nodes, int i, int link) = (link == ((uintptr_t)nodes[i-1] ^  (uintptr_t)nodes[i+1])); */
 
 
 
@@ -157,7 +159,6 @@ void insert(struct List *list, size_t index, int data) {
     //@ assume node != NULL;
     node->data = data;
     //@ assume (\forall int i = 0 .. list->length + 2; {:nodes[i]:} != node);
-    // ghost seq<int> inLinks = toLinks(nodes);
 
     if (list->length == 0) {
         list->head->link = (uintptr_t)node ^ (uintptr_t)list->tail;
@@ -181,7 +182,7 @@ void insert(struct List *list, size_t index, int data) {
         //@ ghost if (index < list->length) { assume next->link == ((uintptr_t)node ^ (uintptr_t)nodes[index+2]); }
         list->length++;
         //@ ghost outNodes = nodes[0 .. (index + 1)] + [node] + nodes[(index + 1) .. ];
-
+        //@ assert (\forall int i = 1 .. |outNodes| - 2; {:outNodes[i]:} != NULL);
     }
 }
 
@@ -199,13 +200,22 @@ int get(struct List *list, size_t index) {
 }
 
 
-#if 0
 //@ given seq<struct Node*> nodes;
+//@ yields seq<struct Node*> outNodes;
 //@ context list != NULL ** Perm(*list, write);
-//@ context list_basic(list->length, list->head, list->tail, nodes);
-//@ context (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, nodes[i]->link));
+//@ requires list_basic(list->length, list->head, list->tail, nodes);
+//@ ensures list_basic(list->length, list->head, list->tail, outNodes);
+//@ requires (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, {:nodes[i]->link:}));
+//@ ensures (\forall* int i = 1 .. list->length + 1; valid_link(outNodes, i, {:outNodes[i]->link:}));
+//@ requires 0 <= index && index < list->length;
+//@ requires list->length > 0;
+//@ ensures list->length == \old(list->length) - 1;
+//@ ensures (\forall int i = 0 .. index + 1; {:nodes[i]:} == {:outNodes[i]:});
+//@ ensures (\forall int i = 1 .. index + 1; \old({:nodes[i]->data:}) == {:outNodes[i]->data:});
+//@ ensures (\forall int i = index + 1 .. list->length + 1; nodes[i + 1] == {:outNodes[i]:});
+//@ ensures (\forall int i = index + 1 .. list->length + 1; \old(nodes[i + 1]->data) == {:outNodes[i]->data:});
+//@ ensures \result == \old(nodes[index + 1]->data);
 int delete(struct List *list, size_t index) {
-    //@ assume false;
     struct Node *prev;
     if (index == 0) {
         prev = list->head;
@@ -216,16 +226,20 @@ int delete(struct List *list, size_t index) {
     struct Node *next = find_node(list, index + 1) /*@ given {nodes = nodes} */;
 
     prev->link = prev->link ^ (uintptr_t)node ^ (uintptr_t)next;
+    //@ ghost if (index > 0) { assume prev->link == ((uintptr_t)nodes[index-1] ^ (uintptr_t)next); }
     next->link = next->link ^ (uintptr_t)node ^ (uintptr_t)prev;
+    //@ ghost if (index < list->length - 1) { assume next->link == ((uintptr_t)prev ^ (uintptr_t)nodes[index+3]); }
 
     int data = node->data;
     free(node);
 
     list->length--;
+    //@ ghost outNodes = nodes[0 .. (index + 1)] + nodes[(index + 2) .. ];
+    //@ ghost if (index > 0) { assert valid_link(outNodes, index, prev->link); }
+    //@ ghost if (index < list->length) { assert valid_link(outNodes, index+1, next->link); }
 
     return data;
 }
-#endif
 
 
 int main(void) {
@@ -252,7 +266,6 @@ int main(void) {
     //@ assert 1 == get(list, 2) /*@ given {nodes = nodes} */;
     //@ assert 5 == get(list, 3) /*@ given {nodes = nodes} */;
     //@ assert 2 == get(list, 4) /*@ given {nodes = nodes} */;
-#if 0
     //@ assert 5 == delete(list, 3) /*@ given {nodes = nodes} */ /*@ yields {nodes = outNodes}*/;
     //@ assert 3 == get(list, 0) /*@ given {nodes = nodes} */;
     //@ assert 4 == get(list, 1) /*@ given {nodes = nodes} */;
@@ -269,7 +282,6 @@ int main(void) {
     //@ assert 4 == get(list, 0) /*@ given {nodes = nodes} */;
     //@ assert 4 == delete(list, 0) /*@ given {nodes = nodes} */ /*@ yields {nodes = outNodes}*/;
     //@ assert 0 == list->length;
-#endif
     return 0;
 }
 
