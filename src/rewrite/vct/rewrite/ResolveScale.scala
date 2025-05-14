@@ -101,6 +101,11 @@ case class ResolveScale[Pre <: Generation]() extends Rewriter[Pre] {
         )
       case a @ Assuming(assn, inner) =>
         a.rewrite(assn = scale(assn, amount), inner = scale(inner, amount))
+      case pd @ PolarityDependent(onInhale, onExhale) =>
+        pd.rewrite(
+          onInhale = scale(onInhale, amount),
+          onExhale = scale(onExhale, amount),
+        )
       case other => throw WrongScale(other)
     }
   }
