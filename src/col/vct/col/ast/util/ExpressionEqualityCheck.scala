@@ -1,13 +1,22 @@
 package vct.col.ast.util
 
+import org.sosy_lab.common.ShutdownNotifier
+import org.sosy_lab.common.configuration.Configuration
+import org.sosy_lab.common.log.LogManager
+import org.sosy_lab.java_smt.SolverContextFactory
+import org.sosy_lab.java_smt.SolverContextFactory.Solvers
+import org.sosy_lab.java_smt.api.NumeralFormula.IntegerFormula
+import org.sosy_lab.java_smt.api._
 import vct.col.ast.util.ExpressionEqualityCheck.isConstantInt
 import vct.col.ast._
+import vct.col.origin._
 import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers._
 import vct.result.VerificationError.UserError
 
 import scala.collection.mutable
 import scala.reflect.ClassTag
+import scala.util.Using
 
 object ExpressionEqualityCheck {
   def apply[G](
@@ -25,6 +34,190 @@ object ExpressionEqualityCheck {
   trait Sign
   case class Pos() extends Sign
   case class Neg() extends Sign
+
+  case class AskSMTSolver[G](constraints: Iterable[Expr[G]], test: Expr[G]) {
+    private implicit val o: Origin = Origin(
+      Seq(PreferredName(Seq("unknown")), LabelContext("simplification"))
+    )
+
+    def isBool(e: Expr[_]): Boolean = {
+      CoercionUtils.getCoercion(e.t, TBool()).isDefined
+    }
+
+    def isInt(e: Expr[_]): Boolean = {
+      CoercionUtils.getCoercion(e.t, TInt()).isDefined
+    }
+
+    def check(): Boolean = {
+      val options = Configuration.builder()
+        .setOption("solver.nonLinearArithmetic", "APPROXIMATE_FALLBACK");
+      val config = options.build()
+      val logManager = LogManager.createNullLogManager
+      val shutDown = ShutdownNotifier.createDummy
+      var id = 0
+
+      Using(SolverContextFactory.createSolverContext(
+        config,
+        logManager,
+        shutDown,
+        Solvers.SMTINTERPOL,
+      )) { ctx =>
+        Using(ctx.newProverEnvironment()) { prover =>
+          val fmgr = ctx.getFormulaManager
+          val varIntMap: mutable.Map[Variable[G], IntegerFormula] = mutable
+            .Map()
+          val varBoolMap: mutable.Map[Variable[G], BooleanFormula] = mutable
+            .Map()
+          val bmgr = fmgr.getBooleanFormulaManager
+          val imgr = fmgr.getIntegerFormulaManager
+
+          def tdiv(a: Expr[G], b: Expr[G]): Expr[G] =
+            Select(
+              a >= const(0) || a % b === const(0),
+              a / b,
+              a / b + Select(b > const(0), const(1), const(-1)),
+            )
+
+          def tmod(a: Expr[G], b: Expr[G]): Expr[G] =
+            Select(
+              a >= const(0) || a % b === const(0),
+              a % b,
+              a % b - Select(b > const(0), b, -b),
+            )
+
+          def addConstraint(e: Expr[G]): Boolean = {
+            addBool(e) match {
+              case Some(b1) => prover.addConstraint(b1); true
+              case None => false
+            }
+          }
+
+          def addBool(e: Expr[G]): Option[BooleanFormula] = {
+            e match {
+              case Select(c, t, f) =>
+                for {
+                  c1 <- addBool(c); t1 <- addBool(t); f1 <- addBool(f)
+                } yield bmgr.ifThenElse(c1, t1, f1)
+              case SeqMember(e1, Range(from, to)) =>
+                for {
+                  i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
+                } yield bmgr
+                  .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
+              case SetMember(e1, RangeSet(from, to)) =>
+                for {
+                  i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
+                } yield bmgr
+                  .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
+              case Or(e1, e2) =>
+                for {
+                  b1 <- addBool(e1); b2 <- addBool(e2)
+                } yield bmgr.or(b1, b2)
+              case And(e1, e2) =>
+                for {
+                  b1 <- addBool(e1); b2 <- addBool(e2)
+                } yield bmgr.and(b1, b2)
+              case Implies(e1, e2) =>
+                for {
+                  b1 <- addBool(e1); b2 <- addBool(e2)
+                } yield bmgr.implication(b1, b2)
+              case Not(e1) => for { b1 <- addBool(e1) } yield bmgr.not(b1)
+              case Eq(e1, e2) if isBool(e1) && isBool(e2) =>
+                for {
+                  b1 <- addBool(e1); b2 <- addBool(e2)
+                } yield bmgr.equivalence(b1, b2)
+              case Eq(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield imgr.equal(b1, b2)
+              case Neq(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield bmgr.not(imgr.equal(b1, b2))
+              case Less(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield imgr.lessThan(b1, b2)
+              case LessEq(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield imgr.lessOrEquals(b1, b2)
+              case Greater(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield imgr.greaterThan(b1, b2)
+              case GreaterEq(e1, e2) if isInt(e1) && isInt(e2) =>
+                for {
+                  b1 <- addInt(e1); b2 <- addInt(e2)
+                } yield imgr.greaterOrEquals(b1, b2)
+              case BooleanValue(b) => Some(bmgr.makeBoolean(b))
+              case Local(ref) if isBool(e) =>
+                if (varBoolMap.contains(ref.decl))
+                  Some(varBoolMap(ref.decl))
+                else {
+                  val x = bmgr.makeVariable(s"b$id")
+                  id += 1
+                  varBoolMap(ref.decl) = x
+                  Some(x)
+                }
+              case _ => None
+            }
+          }
+
+          def addInt(e: Expr[G]): Option[IntegerFormula] = {
+            e match {
+              case Select(c, t, f) =>
+                for {
+                  c1 <- addBool(c); t1 <- addInt(t); f1 <- addInt(f)
+                } yield bmgr.ifThenElse(c1, t1, f1)
+              case Plus(e1, e2) =>
+                for {
+                  i1 <- addInt(e1); i2 <- addInt(e2)
+                } yield imgr.add(i1, i2)
+              case Minus(e1, e2) =>
+                for {
+                  i1 <- addInt(e1); i2 <- addInt(e2)
+                } yield imgr.subtract(i1, i2)
+              case Mult(e1, e2) =>
+                for {
+                  i1 <- addInt(e1); i2 <- addInt(e2)
+                } yield imgr.multiply(i1, i2)
+              case FloorDiv(e1, e2) =>
+                for {
+                  i1 <- addInt(e1); i2 <- addInt(e2)
+                } yield imgr.divide(i1, i2)
+              // Ugly, but the SMT library does not allow us to define functions..
+              case TruncDiv(e1, e2) => addInt(tdiv(e1, e2))
+              case TruncMod(e1, e2) => addInt(tmod(e1, e2))
+              case Mod(e1, e2) =>
+                for {
+                  i1 <- addInt(e1); i2 <- addInt(e2)
+                } yield imgr.modulo(i1, i2)
+              case UMinus(e1) => for { i1 <- addInt(e1) } yield imgr.negate(i1)
+              case IntegerValue(i) => Some(imgr.makeNumber(i.toInt))
+              case Local(ref) if isInt(e) =>
+                if (varIntMap.contains(ref.decl))
+                  Some(varIntMap(ref.decl))
+                else {
+                  val x = imgr.makeVariable(s"i$id")
+                  id += 1
+                  varIntMap(ref.decl) = x
+                  Some(x)
+                }
+              case _ => None
+            }
+          }
+
+          for (c <- constraints) {
+            if (!addConstraint(c))
+              return false
+          }
+          if (!addConstraint(!test))
+            return false
+          prover.isUnsat
+        }
+      }
+    }.get.get
+  }
 }
 
 case class InconsistentVariableEquality(v: Local[_], x: BigInt, y: BigInt)
@@ -260,7 +453,13 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
           }
         }
       case Mod(e1, e2) if isLower => return Some(0)
-      case Mod(e1, e2) => isConstantIntRecurse(e2)
+      case Mod(e1, e2) => isConstantIntRecurse(e2).map(_.abs - 1)
+      case TruncMod(e1, e2) if isLower =>
+        lowerBoundRecurse(e1) match {
+          case Some(l1) if l1 >= 0 => return Some(0)
+          case _ => return isConstantIntRecurse(e2).map(i => -(i.abs - 1))
+        }
+      case TruncMod(e1, e2) => return isConstantIntRecurse(e2).map(_.abs - 1)
       case FloorDiv(e1, e2) if isConstantIntRecurse(e2).isDefined =>
         val divisor = isConstantIntRecurse(e2).get
         if (divisor == 0)

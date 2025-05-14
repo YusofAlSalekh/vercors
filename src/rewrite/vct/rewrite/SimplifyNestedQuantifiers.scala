@@ -1,29 +1,12 @@
 package vct.col.rewrite
 
-import com.google.common.collect.ImmutableList
 import com.typesafe.scalalogging.LazyLogging
 import hre.util.ScopedStack
-import org.sosy_lab.common.{NativeLibraries, ShutdownNotifier}
-import org.sosy_lab.common.configuration.Configuration
-import org.sosy_lab.common.log.LogManager
-import org.sosy_lab.java_smt.SolverContextFactory
-import org.sosy_lab.java_smt.SolverContextFactory.Solvers
-import org.sosy_lab.java_smt.api.{BooleanFormula, FormulaType}
-import org.sosy_lab.java_smt.api.NumeralFormula.IntegerFormula
-import org.sosy_lab.java_smt.api.SolverContext.ProverOptions
 import vct.col.ast.{Variable, _}
-import vct.col.ast.util.ExpressionEqualityCheck.{Neg, Pos}
+import vct.col.ast.util.ExpressionEqualityCheck.{Neg, Pos, AskSMTSolver}
 import vct.col.ast.util.{AnnotationVariableInfoGetter, ExpressionEqualityCheck}
 import vct.col.rewrite.util.Comparison
-import vct.col.origin.{
-  ArrayInsufficientPermission,
-  DiagnosticOrigin,
-  LabelContext,
-  Origin,
-  PanicBlame,
-  PointerBounds,
-  PreferredName,
-}
+import vct.col.origin.{LabelContext, Origin, PanicBlame, PreferredName}
 import vct.col.ref.Ref
 import vct.col.rewrite.SimplifyNestedQuantifiers.{
   InvalidTrigger,
@@ -59,10 +42,12 @@ import scala.util.Using
   */
 case object SimplifyNestedQuantifiers extends RewriterBuilder {
   override def key: String = "simplifyNestedQuantifiers"
+
   override def desc: String = "Simplify nested quantifiers."
 
   case class NotAllowedInTrigger(e: Expr[_]) extends UserError {
     override def code: String = "notAllowedInTrigger"
+
     override def text: String =
       e.o.messageInContext(
         "Arithmetic and logic operators are not allowed in triggers."
@@ -71,6 +56,7 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
 
   case class NotAllowedInTriggerSet(e: Expr[_]) extends UserError {
     override def code: String = "notAllowedInTrigger"
+
     override def text: String =
       e.o.messageInContext(
         "We tried to rewrite multiple trigger sets for this forall, but that is only possible if they contain exactly the same" +
@@ -83,6 +69,7 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
       missing: Set[Variable[_]],
   ) extends UserError {
     override def code: String = "invalidTriggerVars"
+
     override def text: String =
       Message.messagesInContext(
         triggers.map(err => err.o -> s"... these triggers.") ++
@@ -93,15 +80,17 @@ case object SimplifyNestedQuantifiers extends RewriterBuilder {
   case class InvalidTrigger(e: Expr[_], reasons: Seq[FailReason])
       extends UserError {
     override def code: String = "invalidTrigger"
+
     override def text: String =
       e.o.messageInContext(
-        "We did not succeed in rewriting this part of the trigger. Because of the following reasons:"
+        "We did not succeed in rewriting this part of the trigger. Because of the following reason:"
       ) ++ reasons.collectFirst { case r: VarNoUpperBound => Seq(r) }
-        .getOrElse(reasons).map(_.text).mkString("\n")
+        .getOrElse(reasons).head.text
   }
 
   case class InvalidTriggerPair(e1: Expr[_], e2: Expr[_]) extends UserError {
     override def code: String = "invalidTrigger"
+
     override def text: String =
       e1.o.messageInContext(
         "We cannot rewrite this pair of triggers, which contain arithmetic," +
@@ -270,15 +259,21 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           case Starall(_, Nil, _) =>
             val trigger = e.o.inlineContext(false).map(_.last)
               .getOrElse("unknown context")
-            logger.warn(
-              f"The binder `${e.o.shortPositionText}`:`${trigger} contains no triggers`"
-            )
+            // Do not warn for generated non-user code
+            if (trigger != "(empty source region)") {
+              logger.warn(
+                f"The binder ${e.o.shortPositionText}: '${trigger}' contains no triggers"
+              )
+            }
           case Forall(_, Nil, body) =>
             val trigger = e.o.inlineContext(false).map(_.last)
               .getOrElse("unknown context")
-            logger.warn(
-              f"The binder `${e.o.shortPositionText}`:`${trigger} contains no triggers`"
-            )
+            // Do not warn for generated non-user code
+            if (trigger != "(empty source region)") {
+              logger.warn(
+                f"The binder ${e.o.shortPositionText}: '${trigger}' contains no triggers"
+              )
+            }
           case _ =>
         }
         res
@@ -467,7 +462,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     })
 
     // We can only rewrite quantifiers that contain at least one integer binding
-    if (!e.bindings.exists(_.t == TInt()))
+    if (!e.bindings.exists(_.t == TInt[Pre]()))
       return None
 
     // We can always try to remove independent variables
@@ -1591,198 +1586,14 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
           linExpr: Expr[Pre],
       )
 
-      def isBool(e: Expr[_]): Boolean = {
-        CoercionUtils.getCoercion(e.t, TBool()).isDefined
-      }
-
-      def isInt(e: Expr[_]): Boolean = {
-        CoercionUtils.getCoercion(e.t, TInt()).isDefined
-      }
-
-      case class askSMTSolver(
-          constraints: Iterable[Expr[Pre]],
-          test: Expr[Pre],
-      ) {
-        def check(): Boolean = {
-          val options = Configuration.builder()
-            .setOption("solver.nonLinearArithmetic", "APPROXIMATE_FALLBACK");
-          val config = options.build()
-          val logManager = LogManager.createNullLogManager
-          val shutDown = ShutdownNotifier.createDummy
-          var id = 0
-
-          Using(SolverContextFactory.createSolverContext(
-            config,
-            logManager,
-            shutDown,
-            Solvers.SMTINTERPOL,
-          )) { ctx =>
-            Using(ctx.newProverEnvironment()) { prover =>
-              val fmgr = ctx.getFormulaManager
-              val varIntMap: mutable.Map[Variable[Pre], IntegerFormula] =
-                mutable.Map()
-              val varBoolMap: mutable.Map[Variable[Pre], BooleanFormula] =
-                mutable.Map()
-              val bmgr = fmgr.getBooleanFormulaManager
-              val imgr = fmgr.getIntegerFormulaManager
-
-              def tdiv(a: Expr[Pre], b: Expr[Pre]): Expr[Pre] =
-                Select(
-                  a >= const(0) || a % b === const(0),
-                  a / b,
-                  a / b + Select(b > const(0), const(1), const(-1)),
-                )
-
-              def tmod(a: Expr[Pre], b: Expr[Pre]): Expr[Pre] =
-                Select(
-                  a >= const(0) || a % b === const(0),
-                  a % b,
-                  a % b + Select(b > const(0), b, -b),
-                )
-
-              def addConstraint(e: Expr[Pre]): Boolean = {
-                addBool(e) match {
-                  case Some(b1) => prover.addConstraint(b1); true
-                  case None => false
-                }
-              }
-
-              def addBool(e: Expr[Pre]): Option[BooleanFormula] = {
-                e match {
-                  case Select(c, t, f) =>
-                    for {
-                      c1 <- addBool(c); t1 <- addBool(t); f1 <- addBool(f)
-                    } yield bmgr.ifThenElse(c1, t1, f1)
-                  case SeqMember(e1, Range(from, to)) =>
-                    for {
-                      i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
-                    } yield bmgr
-                      .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
-                  case SetMember(e1, RangeSet(from, to)) =>
-                    for {
-                      i1 <- addInt(e1); fromi <- addInt(from); toi <- addInt(to)
-                    } yield bmgr
-                      .and(imgr.lessOrEquals(fromi, i1), imgr.lessThan(i1, toi))
-                  case Or(e1, e2) =>
-                    for {
-                      b1 <- addBool(e1); b2 <- addBool(e2)
-                    } yield bmgr.or(b1, b2)
-                  case And(e1, e2) =>
-                    for {
-                      b1 <- addBool(e1); b2 <- addBool(e2)
-                    } yield bmgr.and(b1, b2)
-                  case Implies(e1, e2) =>
-                    for {
-                      b1 <- addBool(e1); b2 <- addBool(e2)
-                    } yield bmgr.implication(b1, b2)
-                  case Not(e1) => for { b1 <- addBool(e1) } yield bmgr.not(b1)
-                  case Eq(e1, e2) if isBool(e1) && isBool(e2) =>
-                    for {
-                      b1 <- addBool(e1); b2 <- addBool(e2)
-                    } yield bmgr.equivalence(b1, b2)
-                  case Eq(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield imgr.equal(b1, b2)
-                  case Neq(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield bmgr.not(imgr.equal(b1, b2))
-                  case Less(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield imgr.lessThan(b1, b2)
-                  case LessEq(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield imgr.lessOrEquals(b1, b2)
-                  case Greater(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield imgr.greaterThan(b1, b2)
-                  case GreaterEq(e1, e2) if isInt(e1) && isInt(e2) =>
-                    for {
-                      b1 <- addInt(e1); b2 <- addInt(e2)
-                    } yield imgr.greaterOrEquals(b1, b2)
-                  case BooleanValue(b) => Some(bmgr.makeBoolean(b))
-                  case Local(ref) if isBool(e) =>
-                    if (varBoolMap.contains(ref.decl))
-                      Some(varBoolMap(ref.decl))
-                    else {
-                      val x = bmgr.makeVariable(s"b$id")
-                      id += 1
-                      varBoolMap(ref.decl) = x
-                      Some(x)
-                    }
-                  case _ => None
-                }
-              }
-
-              def addInt(e: Expr[Pre]): Option[IntegerFormula] = {
-                e match {
-                  case Select(c, t, f) =>
-                    for {
-                      c1 <- addBool(c); t1 <- addInt(t); f1 <- addInt(f)
-                    } yield bmgr.ifThenElse(c1, t1, f1)
-                  case Plus(e1, e2) =>
-                    for {
-                      i1 <- addInt(e1); i2 <- addInt(e2)
-                    } yield imgr.add(i1, i2)
-                  case Minus(e1, e2) =>
-                    for {
-                      i1 <- addInt(e1); i2 <- addInt(e2)
-                    } yield imgr.subtract(i1, i2)
-                  case Mult(e1, e2) =>
-                    for {
-                      i1 <- addInt(e1); i2 <- addInt(e2)
-                    } yield imgr.multiply(i1, i2)
-                  case FloorDiv(e1, e2) =>
-                    for {
-                      i1 <- addInt(e1); i2 <- addInt(e2)
-                    } yield imgr.divide(i1, i2)
-                  // Ugly, but the SMT library does not allow us to define functions..
-                  case TruncDiv(e1, e2) => addInt(tdiv(e1, e2))
-                  case TruncMod(e1, e2) => addInt(tmod(e1, e2))
-                  case Mod(e1, e2) =>
-                    for {
-                      i1 <- addInt(e1); i2 <- addInt(e2)
-                    } yield imgr.modulo(i1, i2)
-                  case UMinus(e1) =>
-                    for { i1 <- addInt(e1) } yield imgr.negate(i1)
-                  case IntegerValue(i) => Some(imgr.makeNumber(i.toInt))
-                  case Local(ref) if isInt(e) =>
-                    if (varIntMap.contains(ref.decl))
-                      Some(varIntMap(ref.decl))
-                    else {
-                      val x = imgr.makeVariable(s"i$id")
-                      id += 1
-                      varIntMap(ref.decl) = x
-                      Some(x)
-                    }
-                  case _ => None
-                }
-              }
-
-              for (c <- constraints) {
-                if (!addConstraint(c))
-                  return false
-              }
-              if (!addConstraint(!test))
-                return false
-              prover.isUnsat
-            }
-          }
-        }.get.get
-      }
-
       // Check in the other bounds if the specific expressions is present by a bound
       def isExprUpperBounded(
           e: Expr[Pre],
           boundRequired: Expr[Pre],
       ): Boolean = {
         // We are now officially desperate, so we are going to call the help of an SMT solver
-        val smt = askSMTSolver(quantifierData.constraints, e < boundRequired)
-        return smt.check()
+        val smt = AskSMTSolver(quantifierData.constraints, e < boundRequired)
+        smt.check()
       }
 
       /* We try to find a bound for x_{i-1} (xPrev). Thus a 'low' and 'up': low_{i-1} <= x_{i-1} < up_{i-1}
@@ -1836,7 +1647,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
             // Check 1
             val rhs = simplifiedMult(aLast, nLastCandidate)
-            val smt = askSMTSolver(quantifierData.constraints, Eq(a, rhs))
+            val smt = AskSMTSolver(quantifierData.constraints, Eq(a, rhs))
             if (equalityChecker.equalExpressions(a, rhs) || smt.check()) {
               // For this check, it doesn't matter that n could be zero.
               // But if it is possibly zero, we need to make sure the quantifier domain is empty
@@ -1862,7 +1673,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
             // Check 2
             val right = simplifiedMult(abs(aLast, sign), nLastCandidate)
             val left = abs(a, sign)
-            val smt2 = askSMTSolver(quantifierData.constraints, right <= left)
+            val smt2 = AskSMTSolver(quantifierData.constraints, right <= left)
             if (
               hasSameSign &&
               (equalityChecker.lessThenEq(right, left).getOrElse(false) ||

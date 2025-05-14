@@ -5,13 +5,13 @@
 #include <opencl.h>
 
 /*@
-  context get_local_size(0) == 32 && get_local_size(1) == 1 && get_local_size(2) == 1;
-  context get_num_groups(0) == 4 && get_num_groups(1) == 1 && get_num_groups(2) == 1;
+  context get_work_dim() == 1;
+  context get_local_size(0) == 32;
+  context get_num_groups(0) == 4;
 
   context in != NULL && out != NULL;
   context \pointer_length(in) == 1;
   context \pointer_length(out) == n;
-  context n > 0;
   context get_local_size(0) * get_num_groups(0) >= n;
   context Perm(in[0], write \ (get_local_size(0) * get_num_groups(0)));
   context \gtid<n ==> Perm({:out[\gtid]:}, write);
@@ -29,8 +29,8 @@ __kernel void blur_x(global int* in, global int* out, int n, global int* s) {
 
   /*@
     context Perm(in[0], write \ (get_local_size(0) * get_num_groups(0)));
-    context get_group_id(0) * get_local_size(0) + get_local_id(0)<n ==> Perm({:out[get_group_id(0) * get_local_size(0) + get_local_id(0)]:}, write);
-    context get_group_id(0) * get_local_size(0) + get_local_id(0)<n ==> \old(out[get_group_id(0) * get_local_size(0) + get_local_id(0)]) == {:out[get_group_id(0) * get_local_size(0) + get_local_id(0)]:};
+    context \gtid<n ==> Perm({:out[\gtid]:}, write);
+    context \gtid<n ==> \old(out[\gtid]) == {:out[get_group_id(0) * get_local_size(0) + get_local_id(0)]:};
 
     requires get_local_id(0) == 0 ==> Perm(s[get_group_id(0)], write);
     requires get_local_id(0) == 0 ==> s[get_group_id(0)] == in[0];

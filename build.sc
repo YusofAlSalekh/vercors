@@ -400,7 +400,7 @@ object vercors extends Module {
     }
 
     def key = "col"
-    def deps = T { Agg.empty }
+    def deps = T { Agg(ivy"org.sosy-lab:java-smt:3.14.3") }
     override def sources = T {
       helpers.implTraits.run()
       super.sources()

@@ -9,7 +9,6 @@ import vct.col.rewrite.InitialGeneration
 import vct.col.util.AstBuildHelpers._
 import vct.helper.ColHelper
 
-
 class NestedQuantifiersRewrite extends AnyFlatSpec with Matchers {
   type G = InitialGeneration
   implicit val o: Origin = DiagnosticOrigin
