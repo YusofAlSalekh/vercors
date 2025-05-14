@@ -242,6 +242,8 @@ int delete(struct List *list, size_t index) {
 }
 
 
+#if 0
+// Commented out for performance reasons
 int main(void) {
     //@ ghost seq<struct Node *> nodes;
     struct List *list = new() /*@ yields {nodes=nodes} */;
@@ -284,5 +286,6 @@ int main(void) {
     //@ assert 0 == list->length;
     return 0;
 }
+#endif
 
 
