@@ -19,11 +19,8 @@ struct List {
     pure _Bool injection_a(int i);
     axiom (\forall int i; {:injection_a(i):});
 
-    pure _Bool valid_in(int i);
-    axiom (\forall int i; {:valid_in(i):});
-
-    pure _Bool valid_out(int i);
-    axiom (\forall int i; {:valid_out(i):});
+    pure _Bool valid_link_trigger(struct Node *i, struct Node *j, struct Node *k);
+    axiom (\forall struct Node *i, struct Node *j, struct Node *k; {:valid_link_trigger(i, j, k):});
 }*/
 
 
@@ -36,8 +33,7 @@ struct List {
                     (\forall* int i = 0 .. length+2; Trigger.injection_a(i) ==> Perm(*{:nodes[i]:}, write)) **
                     (\forall* int i = 0 .. length+2; 0 <= {:nodes[i]->link:} && {:nodes[i]->link:} <= 18446744073709551615);
 */
-// 1 <= i && i < |nodes| -1 &&
-/*@ inline resource valid_link(seq<struct Node*> nodes, int i, int link) = (link == ((uintptr_t)nodes[i-1] ^  (uintptr_t)nodes[i+1])); */
+/*@ inline resource valid_link(seq<struct Node*> nodes, int i, int j, int link) = (link == ((uintptr_t)nodes[i] ^  (uintptr_t)nodes[j])); */
 
 
 
@@ -45,7 +41,7 @@ struct List {
     requires 0 <= link && link <= 18446744073709551615;
     requires nodes[index+1] != NULL;
     requires Value(*nodes[index+1]);
-    requires valid_link(nodes, index+1, nodes[index+1]->link);
+    requires Trigger.valid_link_trigger(nodes[index + 1], nodes[index], nodes[index + 2]) ==> valid_link(nodes, index, index + 2, nodes[index+1]->link);
     requires prev == (uintptr_t)nodes[index+2];
     requires next == ((uintptr_t)link ^ (uintptr_t)prev);
     requires link == nodes[index+1]->link;
@@ -57,7 +53,7 @@ pure _Bool node_lemma_backward(seq<struct Node*> nodes, int link, int index, int
     requires 0 <= link && link <= 18446744073709551615;
     requires nodes[index+1] != NULL;
     requires Value(*nodes[index+1]);
-    requires valid_link(nodes, index+1, nodes[index+1]->link);
+    requires Trigger.valid_link_trigger(nodes[index + 1], nodes[index], nodes[index + 2]) ==> valid_link(nodes, index, index+2, nodes[index+1]->link);
     requires prev == (uintptr_t)nodes[index];
     requires next == ((uintptr_t)link ^ (uintptr_t)prev);
     requires link == nodes[index+1]->link;
@@ -68,7 +64,7 @@ pure _Bool node_lemma_forward(seq<struct Node*> nodes, int link, int index, int 
 //@ given seq<struct Node*> nodes;
 //@ context_everywhere list != NULL ** Perm(*list, 1\2);
 //@ context_everywhere [1\2]list_basic(list->length, list->head, list->tail, nodes);
-//@ context_everywhere (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, {:nodes[i]->link:}));
+//@ context_everywhere (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(nodes[i], nodes[j], nodes[k]):} ==> valid_link(nodes, j, k, nodes[i]->link));
 //@ requires 0 <= index && index <= list->length;
 //@ requires list->length > 0;
 //@ ensures (\forall int i = 0 .. list->length + 2; \old(nodes[i]->data) == {:nodes[i]->data:});
@@ -145,8 +141,8 @@ struct List *new() {
 //@ context list != NULL ** Perm(*list, write);
 //@ requires list_basic(list->length, list->head, list->tail, nodes);
 //@ ensures list_basic(list->length, list->head, list->tail, outNodes);
-//@ requires (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, {:nodes[i]->link:}));
-//@ ensures (\forall* int i = 1 .. list->length + 1; valid_link(outNodes, i, {:outNodes[i]->link:}));
+//@ requires (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(nodes[i], nodes[j], nodes[k]):} ==> valid_link(nodes, j, k, nodes[i]->link));
+//@ ensures (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(outNodes[i], outNodes[j], outNodes[k]):} ==> valid_link(outNodes, j, k, outNodes[i]->link));
 //@ requires 0 <= index && index <= list->length;
 //@ ensures list->length == \old(list->length) + 1;
 //@ ensures (\forall int i = 0 .. index + 1; {:nodes[i]:} == {:outNodes[i]:});
@@ -166,6 +162,7 @@ void insert(struct List *list, size_t index, int data) {
         node->link = ((uintptr_t)list->head ^ (uintptr_t)list->tail);
         //@ ghost outNodes = nodes[0 .. (index + 1)] + [node] + nodes[(index + 1) .. ];
         list->length++;
+        //@ assert Trigger.valid_link_trigger(outNodes[index + 1], outNodes[index], outNodes[index + 2]) ==> valid_link(outNodes, index, index + 2, node->link);
     } else {
         struct Node *prev;
         if (index == 0) {
@@ -183,13 +180,16 @@ void insert(struct List *list, size_t index, int data) {
         list->length++;
         //@ ghost outNodes = nodes[0 .. (index + 1)] + [node] + nodes[(index + 1) .. ];
         //@ assert (\forall int i = 1 .. |outNodes| - 2; {:outNodes[i]:} != NULL);
+        //@ ghost if (index > 0) { assert Trigger.valid_link_trigger(outNodes[index], outNodes[index - 1], outNodes[index + 1]) ==> valid_link(outNodes, index - 1, index + 1, prev->link); }
+        //@ assert Trigger.valid_link_trigger(outNodes[index + 1], outNodes[index], outNodes[index + 2]) ==> valid_link(outNodes, index, index + 2, node->link);
+        //@ ghost if (index < list->length - 1) { assert Trigger.valid_link_trigger(outNodes[index + 2], outNodes[index + 1], outNodes[index + 3]) ==> valid_link(outNodes, index + 1, index + 3, next->link); }
     }
 }
 
 //@ given seq<struct Node*> nodes;
 //@ context list != NULL ** Perm(*list, 1\2);
 //@ context [1\2]list_basic(list->length, list->head, list->tail, nodes);
-//@ context (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, {:nodes[i]->link:}));
+//@ context (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(nodes[i], nodes[j], nodes[k]):} ==> valid_link(nodes, j, k, nodes[i]->link));
 //@ requires 0 <= index && index < list->length;
 //@ requires list->length > 0;
 //@ ensures \result == nodes[index + 1]->data;
@@ -205,8 +205,8 @@ int get(struct List *list, size_t index) {
 //@ context list != NULL ** Perm(*list, write);
 //@ requires list_basic(list->length, list->head, list->tail, nodes);
 //@ ensures list_basic(list->length, list->head, list->tail, outNodes);
-//@ requires (\forall* int i = 1 .. list->length + 1; valid_link(nodes, i, {:nodes[i]->link:}));
-//@ ensures (\forall* int i = 1 .. list->length + 1; valid_link(outNodes, i, {:outNodes[i]->link:}));
+//@ requires (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(nodes[i], nodes[j], nodes[k]):} ==> valid_link(nodes, j, k, nodes[i]->link));
+//@ ensures (\forall* int i = 1 .. list->length + 1, int j, int k; j == i - 1 && k == i + 1; {:Trigger.valid_link_trigger(outNodes[i], outNodes[j], outNodes[k]):} ==> valid_link(outNodes, j, k, outNodes[i]->link));
 //@ requires 0 <= index && index < list->length;
 //@ requires list->length > 0;
 //@ ensures list->length == \old(list->length) - 1;
@@ -235,15 +235,13 @@ int delete(struct List *list, size_t index) {
 
     list->length--;
     //@ ghost outNodes = nodes[0 .. (index + 1)] + nodes[(index + 2) .. ];
-    //@ ghost if (index > 0) { assert valid_link(outNodes, index, prev->link); }
-    //@ ghost if (index < list->length) { assert valid_link(outNodes, index+1, next->link); }
+    //@ ghost if (index > 0) { assert Trigger.valid_link_trigger(outNodes[index], outNodes[index - 1], outNodes[index + 1]) ==> valid_link(outNodes, index - 1, index + 1, prev->link); }
+    //@ ghost if (index < list->length) { assert Trigger.valid_link_trigger(outNodes[index + 1], outNodes[index], outNodes[index + 2]) ==> valid_link(outNodes, index, index + 2, next->link); }
 
     return data;
 }
 
 
-#if 0
-// Commented out for performance reasons
 int main(void) {
     //@ ghost seq<struct Node *> nodes;
     struct List *list = new() /*@ yields {nodes=nodes} */;
@@ -286,6 +284,5 @@ int main(void) {
     //@ assert 0 == list->length;
     return 0;
 }
-#endif
 
 
