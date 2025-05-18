@@ -1,115 +1,101 @@
 package lsp
 
+import com.google.gson.JsonPrimitive
+import hre.progress.TaskRegistry
+import hre.progress.task.RootTask
+import lsp.MyLanguageServer.cancelledTokens
 import org.eclipse.lsp4j._
 import org.eclipse.lsp4j.jsonrpc.messages.Either
-import org.eclipse.lsp4j.services.{LanguageClient, WorkspaceService}
-import vct.col.origin.BlameCollector
+import org.eclipse.lsp4j.services.WorkspaceService
+import vct.col.ast.Node
+import vct.col.origin._
 import vct.col.rewrite.bip.BIP
 import vct.main.stages._
 import vct.options.Options
 import vct.options.types.PathOrStd
 import vct.parsers.transform.ConstantBlameProvider
 import vct.result.VerificationError
+import viper.carbon.boogie.Implicits.lift
 
 import java.net.URI
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
+import scala.jdk.CollectionConverters._
+import scala.language.reflectiveCalls
 
-class MyWorkspaceService(var client: LanguageClient) extends WorkspaceService{
-  override def didChangeConfiguration(params: DidChangeConfigurationParams): Unit = {
-    println("Workspace configuration changed")
-  }
+class MyWorkspaceService extends WorkspaceService {
 
-  override def didChangeWatchedFiles(params: DidChangeWatchedFilesParams): Unit = {
-    println("Watched files changed")
-  }
+  override def didChangeConfiguration(
+      params: DidChangeConfigurationParams
+  ): Unit = { println("Workspace configuration changed") }
 
-  /*override def executeCommand(params: ExecuteCommandParams): CompletableFuture[AnyRef] = {
+  override def didChangeWatchedFiles(
+      params: DidChangeWatchedFilesParams
+  ): Unit = { println("Watched files changed") }
+
+  override def executeCommand(
+      params: ExecuteCommandParams
+  ): CompletableFuture[AnyRef] = {
     params.getCommand match {
-      case "vercors.verify" =>
-        CompletableFuture.runAsync(() => {
-          val token = "vercors-progress-token"
-          val stages = List("Parsing", "Resolution", "Transformation", "Backend", "ExpectedErrors")
+      case "vercors.lspVerify" =>
+        val uri =
+          params.getArguments.get(0).asInstanceOf[JsonPrimitive].getAsString
+        val path = Paths.get(new URI(uri))
+        val options = Options().copy(inputs = List(PathOrStd.Path(path)))
+        MyLanguageServer.client.logMessage(
+          new MessageParams(MessageType.Info, s"Options: ${options.inputs}")
+        )
 
-          // Request client to create the progress UI
-          val createParams = new WorkDoneProgressCreateParams()
-          createParams.setToken(token)
-          MyLanguageServer.client.createProgress(createParams)
+        val rawToken = params.getWorkDoneToken
+        val token =
+          if (rawToken.isLeft)
+            rawToken.getLeft
+          else
+            rawToken.getRight.toString
 
-          // Begin progress
-          val begin = new WorkDoneProgressBegin()
-          begin.setTitle("Verifying")
-          begin.setCancellable(false)
-          begin.setPercentage(0)
-          MyLanguageServer.notifyProgress(token, begin)
+        val createParams = new WorkDoneProgressCreateParams()
+        createParams.setToken(token)
 
-          // Simulate progress for each stage
-          for ((stage, i) <- stages.zipWithIndex) {
-            val report = new WorkDoneProgressReport()
-            report.setPercentage((i + 1) * 100 / stages.size)
-            report.setMessage(s"Running $stage...")
-            MyLanguageServer.notifyProgress(token, report)
-
-            // Simulate delay (replace with actual stage execution later)
-            Thread.sleep(500)
-          }
-
-          // End progress
-          val end = new WorkDoneProgressEnd()
-          end.setMessage("Verification finished!")
-          MyLanguageServer.notifyProgress(token, end)
-        })
-
-        // Respond to client immediately, verification happens async
-        CompletableFuture.completedFuture(null)
+        try { MyLanguageServer.client.createProgress(createParams) }
+        catch {
+          case ex: Exception =>
+            // тут может исключение сделать
+            MyLanguageServer.client.logMessage(new MessageParams(
+              MessageType.Error,
+              s"Error calling createProgress: ${ex.getMessage}",
+            ))
+        }
+        val rootTask = TaskRegistry.getRootTask
+        CompletableFuture
+          .runAsync(() => runVerificationStages(options, token, uri, rootTask))
+          .thenApply(_ => null)
 
       case unknown =>
-        CompletableFuture.failedFuture(new IllegalArgumentException(s"Unknown command: $unknown"))
-    }
-  }*/
-
-  override def executeCommand(params: ExecuteCommandParams): CompletableFuture[AnyRef] = {
-    params.getCommand match {
-      case "vercors.verify" =>
-        CompletableFuture.runAsync(() => {
-          val uri = params.getArguments.get(0).asInstanceOf[String]
-          val path = Paths.get(new URI(uri))
-          val token = "vercors-progress-token"
-
-          val createParams = new WorkDoneProgressCreateParams()
-          createParams.setToken(token)
-
-          try {
-            client.createProgress(createParams)
-          } catch {
-            case ex: Exception =>
-              client.logMessage(new MessageParams(
-                MessageType.Error,
-                s"Error calling createProgress: ${ex.getMessage}"
-              ))
-          }
-
-          val options = Options().copy(inputs = List(PathOrStd.Path(path)))
-          runVerificationStages(options, token)
-        })
-        CompletableFuture.completedFuture(null)
-
-      case unknown =>
-        CompletableFuture.failedFuture(new IllegalArgumentException(s"Unknown command: $unknown"))
+        CompletableFuture.failedFuture(new IllegalArgumentException(
+          s"Unknown command: $unknown"
+        ))
     }
   }
 
-  private def runVerificationStages(options: Options, token: String): Unit = {
+  private def runVerificationStages(
+      options: Options,
+      token: String,
+      uri: String,
+      rootTask: RootTask,
+  ): Unit = {
+    TaskRegistry().install()
+    rootTask.start()
+
     try {
       val collector = BlameCollector()
       val blameProvider = ConstantBlameProvider(collector)
+      val bipResults = BIP.VerificationResults()
 
       val begin = new WorkDoneProgressBegin()
       begin.setTitle("Verifying")
-      begin.setCancellable(false)
+      begin.setCancellable(true)
       begin.setPercentage(0)
       notifyProgress(token, begin)
-
 
       val totalStages = 5
       var currentStage = 0
@@ -122,63 +108,231 @@ class MyWorkspaceService(var client: LanguageClient) extends WorkspaceService{
         notifyProgress(token, report)
       }
 
-      val bipResults = BIP.VerificationResults()
-
+      if (checkCancelled(token))
+        return
       report("Parsing")
-      val parsing = Parsing.ofOptions(options, blameProvider).run(options.inputs)
+      val parsing = Some(
+        Parsing.ofOptions(options, blameProvider).run(options.inputs)
+      )
+      // val parsing = Parsing.ofOptions(options, blameProvider).run(options.inputs)
 
+      if (checkCancelled(token))
+        return
       report("Resolution")
-      val resolution = Resolution.ofOptions(options, blameProvider).run(parsing)
+      // val resolution = Resolution.ofOptions(options, blameProvider).run(parsing)
+      val resolution = Some(
+        Resolution.ofOptions(options, blameProvider).run(parsing.get)
+      )
 
+      if (checkCancelled(token))
+        return
       report("Transformation")
-      val transformation = Transformation.ofOptions(options, bipResults).run(resolution)
-      /*Parsing.ofOptions(options, blameProvider)
-        .thenRun(Resolution.ofOptions(options, blameProvider))
-        .thenRun(Transformation.ofOptions(options, bipResults))
-        .thenRun(Backend.ofOptions(options))
-        .thenRun(ExpectedErrors.ofOptions(options))*/
+      // val transformation = Transformation.ofOptions(options, bipResults).run(resolution)
+      val transformation = Some(
+        Transformation.ofOptions(options, bipResults).run(resolution.get)
+      )
 
+      if (checkCancelled(token))
+        return
       report("Backend")
-      val backend = Backend.ofOptions(options).run(transformation)
+      // val backend = Backend.ofOptions(options).run(transformation)
+      val backend = Some(Backend.ofOptions(options).run(transformation.get))
 
+      if (checkCancelled(token))
+        return
       report("ExpectedErrors")
-      ExpectedErrors.ofOptions(options).run(backend)
+      // ExpectedErrors.ofOptions(options).run(backend)
+      ExpectedErrors.ofOptions(options).run(backend.get)
 
-      val end = new WorkDoneProgressEnd()
-      end.setMessage("Verification finished successfully.")
-      notifyProgress(token, end)
+      val failures = collector.errs.toSeq
+      sendUnexpectedFailureDiagnostics(uri, failures)
 
+      val errorDescriptions = failures.map(_.desc).mkString("\n")
+      MyLanguageServer.client.logMessage(new MessageParams(
+        MessageType.Error,
+        s"Actual verification failures:\n$errorDescriptions",
+      ))
+      MyLanguageServer.client.showMessage(
+        new MessageParams(MessageType.Info, s"Verification completed")
+      )
     } catch {
       case err: VerificationError =>
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Verification failed: ${err.getMessage}")
         notifyProgress(token, end)
 
+        sendVerificationErrorDiagnostic(uri, err)
+
       case ex: Exception =>
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Unexpected error: ${ex.getMessage}")
         notifyProgress(token, end)
+        // тут может тоже исключение
+        MyLanguageServer.client.logMessage(new MessageParams(
+          MessageType.Log,
+          s"User error during parsing/resolution: ${ex.getStackTrace
+              .mkString("Array(", "\n", ")")}",
+        ))
     }
+  }
+
+  private def sendUnexpectedFailureDiagnostics(
+      uri: String,
+      failures: Seq[VerificationFailure],
+  ): Unit = {
+    val diagnostics = failures.flatMap {
+      case vf: WithContractFailure =>
+        val mainDiag = nodeFailureToDiagnostic(vf, vf.inlineDesc)
+        val causeDiag = nodeFailureToDiagnostic(
+          vf.failure,
+          vf.failure.inlineDescCompletion,
+        )
+        Seq(mainDiag, causeDiag).flatMap(_.toList)
+
+      case vf: NodeVerificationFailure =>
+        nodeFailureToDiagnostic(vf, vf.inlineDesc).toList
+
+      case vf =>
+        MyLanguageServer.client
+          .logMessage(new MessageParams( // think how to handle this
+            MessageType.Warning,
+            s"Verification failure without position: ${vf.getClass
+                .getSimpleName} – ${vf.inlineDesc}",
+          ))
+        None
+    }
+
+    MyLanguageServer.client
+      .publishDiagnostics(new PublishDiagnosticsParams(uri, diagnostics.asJava))
+  }
+
+  private def nodeFailureToDiagnostic(
+      vf: { def node: vct.col.ast.Node[_] },
+      message: String,
+  ): Option[Diagnostic] = {
+    vf.node.o.find[PositionRange].flatMap { pos =>
+      pos.startEndColIdx.map { case (startCol, endCol) =>
+        val diag = new Diagnostic()
+        diag.setSeverity(DiagnosticSeverity.Error)
+        diag.setMessage(message)
+        diag.setSource("VerCors")
+        diag.setRange(new Range(
+          new Position(pos.startLineIdx, startCol),
+          new Position(pos.endLineIdx, endCol),
+        ))
+        diag
+      }
+    }
+  }
+
+  private def sendVerificationErrorDiagnostic(
+      uri: String,
+      err: VerificationError,
+  ): Unit = {
+    findOrigin(err) match {
+      case Some(origin) =>
+        val range = originToRange(origin)
+        val diagnostic: Diagnostic = createVerificationErrorDiagnostic(
+          err,
+          range,
+        )
+        MyLanguageServer.client.publishDiagnostics(
+          new PublishDiagnosticsParams(uri, List(diagnostic).asJava)
+        )
+
+      case None =>
+        MyLanguageServer.client.logMessage(new MessageParams(
+          MessageType.Warning,
+          s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
+        ))
+    }
+  }
+
+  private def originToRange(origin: Origin) = {
+    origin.find[PositionRange].map {
+      case PositionRange(startLine, endLine, Some((startCol, endCol))) =>
+        new Range(
+          new Position(startLine, startCol),
+          new Position(endLine, endCol),
+        )
+      case PositionRange(startLine, endLine, None) =>
+        new Range(new Position(startLine, 0), new Position(endLine, 0))
+    }.getOrElse(new Range(new Position(0, 0), new Position(0, 0)))
+  }
+
+  private def createVerificationErrorDiagnostic(
+      err: VerificationError,
+      range: Range,
+  ) = {
+    val diagnostic = new Diagnostic()
+    diagnostic.setSeverity(DiagnosticSeverity.Error)
+    diagnostic.setRange(range)
+    diagnostic.setSource("VerCors")
+    diagnostic.setMessage(err.text)
+    diagnostic
+  }
+
+  def findOrigin(obj: Any): Option[Origin] = {
+    def tryGet(methodName: String): Option[Origin] = {
+      obj.getClass.getMethods.find(m =>
+        m.getName == methodName && m.getParameterCount == 0 &&
+          classOf[Origin].isAssignableFrom(m.getReturnType)
+      ).flatMap { method =>
+        try Some(method.invoke(obj).asInstanceOf[Origin])
+        catch { case _: Throwable => None }
+      }
+    }
+
+    tryGet("o").orElse(tryGet("origin")).orElse {
+      obj.getClass.getDeclaredFields
+        .find(f => classOf[Origin].isAssignableFrom(f.getType))
+        .flatMap { field =>
+          field.setAccessible(true)
+          try Some(field.get(obj).asInstanceOf[Origin])
+          catch { case _: Throwable => None }
+        }
+    }.orElse {
+      obj.getClass.getDeclaredFields
+        .find(f => classOf[Node[_]].isAssignableFrom(f.getType))
+        .flatMap { field =>
+          field.setAccessible(true)
+          try {
+            val node = field.get(obj).asInstanceOf[Node[_]]
+            Some(node.o)
+          } catch { case _: Throwable => None }
+        }
+    }
+  }
+
+  private def checkCancelled(token: String): Boolean = {
+    if (cancelledTokens.contains(token)) {
+      cancelledTokens.remove(token)
+      val end = new WorkDoneProgressEnd()
+      end.setMessage(s"Verification cancelled by user")
+      notifyProgress(token, end)
+      true
+    } else
+      false
   }
 
   def notifyProgress(token: String, value: WorkDoneProgressBegin): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))
-    client.notifyProgress(params)
+    MyLanguageServer.client.notifyProgress(params)
   }
 
   def notifyProgress(token: String, value: WorkDoneProgressReport): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))
-    client.notifyProgress(params)
+    MyLanguageServer.client.notifyProgress(params)
   }
 
   def notifyProgress(token: String, value: WorkDoneProgressEnd): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))
-    client.notifyProgress(params)
+    MyLanguageServer.client.notifyProgress(params)
   }
 }
