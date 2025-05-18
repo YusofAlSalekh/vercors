@@ -591,9 +591,9 @@ object vercors extends Module {
     def deps = Agg(
       ivy"com.github.scopt::scopt:4.0.1",
       ivy"org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1",
-      ivy"io.circe::circe-core:0.15.0-M1",
-      ivy"io.circe::circe-generic:0.15.0-M1",
-      ivy"io.circe::circe-parser:0.15.0-M1"
+      ivy"io.circe::circe-core:0.14.5",
+      ivy"io.circe::circe-generic:0.14.5",
+      ivy"io.circe::circe-parser:0.14.5",
     )
     override def scalacOptions = T {
       Seq("-Xmixin-force-forwarders:false")

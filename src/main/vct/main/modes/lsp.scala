@@ -1,15 +1,12 @@
 package vct.main.modes
 
 import com.typesafe.scalalogging.LazyLogging
+import hre.progress.task.RootTask
+import lsp.MyLanguageServer
+import org.eclipse.lsp4j.jsonrpc.MessageConsumer
+import org.eclipse.lsp4j.launch.LSPLauncher
 import vct.main.Main
 import vct.options.Options
-import org.eclipse.lsp4j.launch.LSPLauncher
-import lsp.MyLanguageServer
-import hre.middleware.Middleware
-import hre.util.ThreadWatchdog
-import org.eclipse.lsp4j.jsonrpc.MessageConsumer
-import hre.progress.task.RootTask
-
 
 import java.util.concurrent.{ExecutorService, Executors}
 import java.util.function.Function
