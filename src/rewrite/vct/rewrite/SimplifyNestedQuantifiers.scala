@@ -389,7 +389,6 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
   override def dispatch(
       contract: ApplicableContract[Pre]
   ): ApplicableContract[Post] = {
-    //TODO check if kernel invariants added correctly
     topLevel = true
     infoGetter.setupInfo()
     val contextEverywhere = dispatch(contract.contextEverywhere)

@@ -3,6 +3,7 @@ package vct.test.integration.examples
 import vct.test.integration.helper.VercorsSpec
 
 class GpgpuSpec extends VercorsSpec {
+
   vercors should verify using silicon example "concepts/gpgpu/cuda.cu"
   vercors should verify using silicon example "concepts/gpgpu/cuda_atomic.cu"
   vercors should verify using silicon example "concepts/gpgpu/simple_vector_cuda.cu"
@@ -17,6 +18,9 @@ class GpgpuSpec extends VercorsSpec {
 
   vercors should verify using silicon example "concepts/gpgpu/global_fence_opencl.cl"
 
+  vercors should fail withCode "preFailed:perm" using silicon example "concepts/gpgpu/atomic_fail-1.cu"
+  vercors should fail withCode "ptr:perm" using silicon example "concepts/gpgpu/atomic_fail-2.cu"
+  
   vercors should error withCode "wrongGPUDimension" in "Wrong gpu dimension" c """
 #include <opencl.h>
 

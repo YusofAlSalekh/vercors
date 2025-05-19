@@ -1,8 +1,9 @@
-//:: cases BasicCuda
+//:: cases AtomicFail
 //:: tool silicon
-//:: verdict Pass
+//:: verdict Fail
 
 #include <cuda.h>
+
 
 /*@
     context_everywhere blockDim.x > 0 && blockDim.y == 1 && blockDim.z == 1;
@@ -28,9 +29,9 @@ void vercorsCudaFreeInt(int *addr);
 int main() {
   int size = 100;
   int* d_a = vercorsCudaMallocInt(size);
-  int* out = vercorsCudaMallocInt(1);
+  int* out = &d_a[0];
+  //kernel_invariant not established  
   example<<<1,size>>>(d_a, size, out);
-  //@ assert Perm(out[0], write);
 
   vercorsCudaFreeInt(d_a);
   vercorsCudaFreeInt(out);  
