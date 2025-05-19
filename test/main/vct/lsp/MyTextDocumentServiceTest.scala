@@ -1,22 +1,16 @@
-/*
 package vct.lsp
 
 import lsp.{MyLanguageServer, MyTextDocumentService}
 import org.eclipse.lsp4j.services.LanguageClient
-import org.eclipse.lsp4j.{DefinitionParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams, MessageParams, MessageType, Position, TextDocumentIdentifier}
+import org.eclipse.lsp4j._
+import org.mockito.ArgumentMatchers._
+import org.mockito.Mockito._
 import org.scalatest.funsuite.AnyFunSuiteLike
 import org.scalatest.matchers.should.Matchers
-import org.mockito.Mockito._
-import org.mockito.ArgumentMatchers._
-import vct.col.ast.Node
-import vct.col.ast.serialize.Message
-
-import java.util.Collections
-//import org.scalatestplus.mockito.MockitoSugar
 
 import scala.collection.immutable.TreeMap
 
-class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers{
+class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers {
 
   test("test Definition when match is found") {
     val service = new MyTextDocumentService()
@@ -24,7 +18,7 @@ class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers{
 
     val params = new DefinitionParams()
     params.setTextDocument(new TextDocumentIdentifier("file:///fake"))
-    params.setPosition(new Position(10,5))
+    params.setPosition(new Position(10, 5))
 
     val result = service.definition(params).get()
 
@@ -47,13 +41,12 @@ class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers{
 
     val params = new DefinitionParams()
     params.setTextDocument(new TextDocumentIdentifier("file:///fake"))
-    params.setPosition(new Position(10,4))
+    params.setPosition(new Position(10, 4))
 
     val result = service.definition(params).get()
 
     result.isRight shouldBe true
     result.getRight.size() shouldBe 0
-
 
   }
 
@@ -89,11 +82,5 @@ class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers{
     verify(client).showMessage(argThat { msg: MessageParams =>
       msg.getMessage == "Document saved" && msg.getType == MessageType.Info
     })
-
-
   }
-
-
-
 }
-*/

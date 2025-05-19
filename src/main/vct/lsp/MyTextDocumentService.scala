@@ -98,16 +98,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     case class Entry(`match`: String)
 
     def load(path: String): List[Entry] = {
-      val src = scala.io.Source.fromFile(path)
-      try parse(src.mkString).flatMap(_.as[List[Entry]]).getOrElse(Nil)
-      finally src.close()
+      val source = scala.io.Source.fromInputStream(getClass.getClassLoader.getResourceAsStream(path))
+      val content = try source.mkString finally source.close()
+
+      try parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
     }
 
     val javaEntries = load(
-      "/home/ysuof/IdeaProjects/vercors/src/main/vct/resources/language-server-java-c-matches.json"
+      "lsp/language-server-java-c-matches.json"
     )
     val pvlEntries = load(
-      "/home/ysuof/IdeaProjects/vercors/src/main/vct/resources/language-server-pvl-matches.json"
+      "lsp/language-server-pvl-matches.json"
     )
 
     (javaEntries ++ pvlEntries).distinctBy(_.`match`).map { e =>
