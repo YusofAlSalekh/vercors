@@ -178,7 +178,7 @@ case class EncodeBitVectors[Pre <: Generation](opaque: Boolean)
             _,
           ) if signed =>
         e0
-      case Let(_, e0 @ FunctionInvocation(_, _, _, _, _), Asserting(_, _))
+      case Let(_, e0 @ FunctionInvocation(_, _, _, _, _, _), Asserting(_, _))
           if opaque &&
             e0.o.find[LabelContext].contains(BaseOrigin.get[LabelContext]) =>
         e0

@@ -1,7 +1,17 @@
-package vct.col.rewrite
+package vct.rewrite
 
 import vct.col.ast._
-import vct.col.origin.{Blame, Origin, PointerLocationError, TypeName}
+import vct.col.origin.{
+  Blame,
+  Origin,
+  PointerAddError,
+  PointerBounds,
+  PointerLocationError,
+  PointerNull,
+  PointerSubscriptError,
+  TypeName,
+}
+import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
 import vct.result.VerificationError.UserError
 
 case object DisambiguateLocation extends RewriterBuilder {
@@ -10,13 +20,16 @@ case object DisambiguateLocation extends RewriterBuilder {
     override def code: String = "notALocation"
 
     private def hint: Option[String] =
-      expr match {
-        case PointerSubscript(_, _) =>
-          Some(" (Hint: perhaps you meant to prepend `&`)")
-        case DerefPointer(_) =>
-          Some(" (Hint: perhaps you meant to prepend `&`)")
-        case _ => None
-      }
+      if (expr.t.asPointer.isDefined) {
+        expr match {
+          case AddrOf(_) =>
+            Some(
+              " (Hint: perhaps you meant to access this location, i.e. remove the `&`)"
+            )
+          case _ =>
+            Some(" (Hint: perhaps you meant to dereference this pointer)")
+        }
+      } else { None }
 
     override def text: String =
       expr.o.messageInContext(
@@ -34,6 +47,16 @@ case object DisambiguateLocation extends RewriterBuilder {
       )
   }
 
+  private case class PointerSubscriptToAddBlame(
+      blame: Blame[PointerSubscriptError]
+  ) extends Blame[PointerAddError] {
+    override def blame(error: PointerAddError): Unit =
+      error match {
+        case n: PointerNull => blame.blame(n)
+        case b: PointerBounds => blame.blame(b)
+      }
+  }
+
   override def key: String = "disambiguateLocation"
 
   override def desc: String =
@@ -47,20 +70,6 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
       implicit o: Origin
   ): Location[Post] =
     expr match {
-      case expr if expr.t.asPointer.isDefined =>
-        if (expr.t.asPointer.get.element.asByValueClass.isDefined) {
-          throw NotALocation(expr)
-        } else { PointerLocation(dispatch(expr))(blame) }
-      case expr if expr.t.asByValueClass.isDefined =>
-        ByValueClassLocation(dispatch(expr))(blame)
-      case DerefHeapVariable(ref) => HeapVariableLocation(succ(ref.decl))
-      case Deref(obj, ref) => FieldLocation(dispatch(obj), succ(ref.decl))
-      case ModelDeref(obj, ref) => ModelLocation(dispatch(obj), succ(ref.decl))
-      case SilverDeref(obj, ref) =>
-        SilverFieldLocation(dispatch(obj), succ(ref.decl))
-      case expr @ ArraySubscript(arr, index) =>
-        ArrayLocation(dispatch(arr), dispatch(index))(expr.blame)
-      case PredicateApplyExpr(inv) => PredicateLocation(dispatch(inv))
       case InlinePattern(inner, pattern, group) =>
         if (inner.t.asByValueClass.isDefined) {
           throw InvalidPatternLocation(
@@ -72,7 +81,21 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
           exprToLoc(inner, blame),
           InlinePattern(dispatch(inner), pattern, group)(expr.o),
         )(expr.o)
-
+      case expr if expr.t.asByValueClass.isDefined =>
+        ByValueClassLocation(dispatch(expr))(blame)
+      case dp @ DerefPointer(p) => PointerLocation(dispatch(p))(dp.blame)
+      case ps @ PointerSubscript(p, index) =>
+        PointerLocation(PointerAdd(dispatch(p), dispatch(index))(
+          PointerSubscriptToAddBlame(ps.blame)
+        ))(ps.blame)
+      case DerefHeapVariable(ref) => HeapVariableLocation(succ(ref.decl))
+      case Deref(obj, ref) => FieldLocation(dispatch(obj), succ(ref.decl))
+      case ModelDeref(obj, ref) => ModelLocation(dispatch(obj), succ(ref.decl))
+      case SilverDeref(obj, ref) =>
+        SilverFieldLocation(dispatch(obj), succ(ref.decl))
+      case expr @ ArraySubscript(arr, index) =>
+        ArrayLocation(dispatch(arr), dispatch(index))(expr.blame)
+      case PredicateApplyExpr(inv) => PredicateLocation(dispatch(inv))
       case default => throw NotALocation(default)
     }
 

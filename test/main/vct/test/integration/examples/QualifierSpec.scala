@@ -18,7 +18,7 @@ class ConstQualifierSpec extends VercorsSpec {
 
   vercors should error withCode "disallowedConstAssignment" in "Assign const pointer" c """void f(int* const y){int* const x; y = x;}"""
   vercors should verify using silicon in "Assign element of const pointer" c
-    """/*@ context x!=NULL ** \pointer_length(x) == 1 ** Perm(&x[0], write); ensures x[0] == 1;@*/
+    """/*@ context x!=NULL ** \pointer_length(x) == 1 ** Perm(x[0], write); ensures x[0] == 1;@*/
   void f(int * const x){x[0] = 1;}"""
 
   vercors should verify using silicon in "Const pointers add" c
@@ -29,7 +29,7 @@ class ConstQualifierSpec extends VercorsSpec {
   context_everywhere n > 0;
   context_everywhere x0 != NULL ** \pointer_length(x0) == n;
   context_everywhere x1 != NULL ** \pointer_length(x1) == n;
-  ensures \result != NULL ** \pointer_length(\result) == n ** (\forall* int i; 0<=i && i<n; Perm(&\result[i], write));
+  ensures \result != NULL ** \pointer_length(\result) == n ** (\forall* int i; 0<=i && i<n; Perm(\result[i], write));
   ensures (\forall int i; 0 <= i && i <n; \result[i] == x0[i] + x1[i]);
 @*/
 int* add(int n, const int* x0, const int* x1){
@@ -37,7 +37,7 @@ int* add(int n, const int* x0, const int* x1){
   //@ assume res != NULL;
   /*@
     loop_invariant 0 <= i && i <= n;
-    loop_invariant res != NULL ** \pointer_length(res) == n ** (\forall* int i; 0<=i && i<n; Perm(&res[i], write));
+    loop_invariant res != NULL ** \pointer_length(res) == n ** (\forall* int i; 0<=i && i<n; Perm(res[i], write));
     loop_invariant (\forall int j; 0 <= j && j < i; res[j] == x0[j] + x1[j]);
   @*/
   for(int i=0; i<n; i++){
@@ -54,7 +54,7 @@ struct vec {
   int b;
 };
 
-  /*@ requires Perm(&v.a, write);
+  /*@ requires Perm(v.a, write);
   @*/
 int f(struct vec v){
     v.a = 1;
@@ -298,7 +298,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   /*@ unique<1> @*/ int* get_xs(/*@unique_pointer_field<xs, 1>@*/ struct vec* v){
@@ -322,7 +322,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   int* get_xs(struct vec* v){
@@ -347,7 +347,7 @@ class StructQualifierSpec extends VercorsSpec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   /*@unique<1>@*/ int* get_xs(/*@unique_pointer_field<xs, 1>@*/ struct vec* v){
@@ -371,7 +371,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -412,7 +412,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100) ** Perm(&v->n, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100) ** Perm(v->n, 1\100);
     ensures \result == &(v->n);
   @*/
   int* get_xs(struct vec* v){
@@ -461,8 +461,8 @@ class QualifierSpec extends VercorsSpec {
 
   vercors should verify using silicon in "Call non-unique procedure" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
   ensures \result == x0[0] + x1[0];
   @*/
   int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -470,7 +470,7 @@ class QualifierSpec extends VercorsSpec {
   }
 
   /*@
-    context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\2);
+    context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\2);
     ensures \result == x[0];
   @*/
   int h(int* x){
@@ -479,8 +479,8 @@ class QualifierSpec extends VercorsSpec {
 
   vercors should verify using silicon in "Recursive procedure call with uniques" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
   if(n == 1){
@@ -493,8 +493,8 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 
   vercors should verify using silicon in "Recursive procedure call with uniques and coercion" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
   ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -507,7 +507,7 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\2);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\2);
   ensures \result == x[0];
 @*/
 int h(int* x){
@@ -517,8 +517,8 @@ int h(int* x){
 
   vercors should error withCode "disallowedQualifiedMethodCoercion" in "Call procedure with multiple inconsistent coercions" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -526,8 +526,8 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
-  context y != NULL ** \pointer_length(y) > 0 ** Perm(&y[0], 1\4);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
+  context y != NULL ** \pointer_length(y) > 0 ** Perm(y[0], 1\4);
   ensures \result == x[0] + y[0];
 @*/
 int h(int* x, int* y){
@@ -536,7 +536,7 @@ int h(int* x, int* y){
 
   vercors should error withCode "resolutionError:type" in "Cannot coerce pointers of pointers" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0){
   /*@ unique<1> @*/ int y[1] = {1};
@@ -545,9 +545,9 @@ int f(int n, /*@ unique<1> @*/ int* x0){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
-  context yy != NULL ** \pointer_length(yy) > 0 ** Perm(&yy[0], 1\4);
-  context yy[0] != NULL ** \pointer_length(yy[0]) > 0 ** Perm(&yy[0][0], 1\4);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
+  context yy != NULL ** \pointer_length(yy) > 0 ** Perm(yy[0], 1\4);
+  context yy[0] != NULL ** \pointer_length(yy[0]) > 0 ** Perm(yy[0][0], 1\4);
   ensures \result == x[0] + yy[0][0];
 @*/
 int h(int* x, int** yy){
@@ -556,7 +556,7 @@ int h(int* x, int** yy){
 
   vercors should error withCode "disallowedQualifiedMethodCoercion" in "Disallow coercion of types which are subtypes of other types" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0){
   int y[1] = {1};
@@ -565,9 +565,9 @@ int f(int n, /*@ unique<1> @*/ int* x0){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
-  context yy != NULL ** \pointer_length(yy) > 0 ** Perm(&yy[0], 1\4);
-  context yy[0] != NULL ** \pointer_length(yy[0]) > 0 ** Perm(&yy[0][0], 1\4);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
+  context yy != NULL ** \pointer_length(yy) > 0 ** Perm(yy[0], 1\4);
+  context yy[0] != NULL ** \pointer_length(yy[0]) > 0 ** Perm(yy[0][0], 1\4);
   ensures \result == x[0] + yy[0][0];
 @*/
 int h(int* x, int** yy){
@@ -576,8 +576,8 @@ int h(int* x, int** yy){
 
   vercors should verify using silicon in "Indirect recursive procedure call with uniques and coercion" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -590,7 +590,7 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\2);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\2);
   ensures \result == x[0];
 @*/
 int h(int* x){
@@ -599,8 +599,8 @@ int h(int* x){
 
 /*@
   context n > 0;
-  context x != NULL ** \pointer_length(x) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x[i], 1\2));
-  context y != NULL ** \pointer_length(y) >= n ** (\forall* int i; 0<=i && i<n; Perm(&y[i], 1\2));
+  context x != NULL ** \pointer_length(x) >= n ** (\forall* int i; 0<=i && i<n; Perm(x[i], 1\2));
+  context y != NULL ** \pointer_length(y) >= n ** (\forall* int i; 0<=i && i<n; Perm(y[i], 1\2));
   ensures \result == x[0] + y[0];
 @*/
 int g(int n, /*@ unique<1> @*/ int* x, /*@ unique<2> @*/ int* y){
@@ -611,8 +611,8 @@ int g(int n, /*@ unique<1> @*/ int* x, /*@ unique<2> @*/ int* y){
 
   vercors should verify using silicon in "Call procedure which already has unique type" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, int* x1){
@@ -620,7 +620,7 @@ int f(int n, /*@ unique<1> @*/ int* x0, int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
   ensures \result == x[0];
 @*/
 int h(/*@ unique<2> @*/ int* x){
@@ -629,8 +629,8 @@ int h(/*@ unique<2> @*/ int* x){
 
   vercors should verify using silicon in "Call procedure which returns pointer" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, int* x1){
@@ -669,8 +669,8 @@ int* h(int /*@ unique<1> @*/ * x, int /*@ unique<2> @*/ * y){
 
   vercors should verify using silicon in "Call function in contract, which needs coercion" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
   @*/
   int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
     //@ assert h(x0, x1) == x0[0] + x1[0];
@@ -679,8 +679,8 @@ int* h(int /*@ unique<1> @*/ * x, int /*@ unique<2> @*/ * y){
   }
 
   /*@
-    context x0 != NULL ** \pointer_length(x0) > 0 ** Perm(&x0[0], 1\4);
-    context x1 != NULL ** \pointer_length(x1) > 0 ** Perm(&x1[0], 1\4);
+    context x0 != NULL ** \pointer_length(x0) > 0 ** Perm(x0[0], 1\4);
+    context x1 != NULL ** \pointer_length(x1) > 0 ** Perm(x1[0], 1\4);
     ensures \result == h(x0, x1);
   @*/
   int g(int* x0, /*@ unique<2> @*/ int* x1){
@@ -689,8 +689,8 @@ int* h(int /*@ unique<1> @*/ * x, int /*@ unique<2> @*/ * y){
 
 
   /*@
-    requires x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
-    requires y != NULL ** \pointer_length(y) > 0 ** Perm(&y[0], 1\4);
+    requires x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
+    requires y != NULL ** \pointer_length(y) > 0 ** Perm(y[0], 1\4);
     ensures \result == x[0]+y[0];
   pure int h(int* x, unique<2>int * y) = x[0]+y[0];
   @*/
@@ -698,8 +698,8 @@ int* h(int /*@ unique<1> @*/ * x, int /*@ unique<2> @*/ * y){
 
   vercors should verify using silicon in "Call non-unique function" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
   @*/
   int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
     //@ assert h(x0) + h(x1) == x0[0] + x1[0];
@@ -707,7 +707,7 @@ int* h(int /*@ unique<1> @*/ * x, int /*@ unique<2> @*/ * y){
   }
 
   /*@
-    requires x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\2);
+    requires x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\2);
     ensures \result == x[0];
   pure int h(int* x) = x[0];
   @*/
@@ -739,8 +739,8 @@ int f(int n, /*@ unique<1> @*/ int* x0, int* x1){
 
   vercors should verify using silicon in "Indirect recursive procedure call with uniques and coercion - 2" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == x0[0] + x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -753,7 +753,7 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\2);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\2);
   ensures \result == x[0];
 @*/
 int h(int* x){
@@ -762,8 +762,8 @@ int h(int* x){
 
 /*@
   context n > 0;
-  context x != NULL ** \pointer_length(x) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x[i], 1\2));
-  context y != NULL ** \pointer_length(y) >= n ** (\forall* int i; 0<=i && i<n; Perm(&y[i], 1\2));
+  context x != NULL ** \pointer_length(x) >= n ** (\forall* int i; 0<=i && i<n; Perm(x[i], 1\2));
+  context y != NULL ** \pointer_length(y) >= n ** (\forall* int i; 0<=i && i<n; Perm(y[i], 1\2));
   ensures \result == x[0] + y[0];
 @*/
 int g(int n, /*@ unique<1> @*/ int* x, /*@ unique<2> @*/ int* y){
@@ -772,8 +772,8 @@ int g(int n, /*@ unique<1> @*/ int* x, /*@ unique<2> @*/ int* y){
 
   vercors should verify using silicon in "Recursive procedure call wrong uniques" c """/*@
   context n > 0;
-  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+  context x0 != NULL ** \pointer_length(x0) >= n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+  context x1 != NULL ** \pointer_length(x1) >= n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
   if(n == 1){
@@ -788,8 +788,8 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 
   vercors should verify using silicon in "Call procedure with multiple consistent coercions" c """/*@
 context n > 0;
-context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(&x0[i], 1\2));
-context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(&x1[i], 1\2));
+context x0 != NULL ** \pointer_length(x0) == n ** (\forall* int i; 0<=i && i<n; Perm(x0[i], 1\2));
+context x1 != NULL ** \pointer_length(x1) == n ** (\forall* int i; 0<=i && i<n; Perm(x1[i], 1\2));
 ensures \result == 2*x0[0] + 2*x1[0];
 @*/
 int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
@@ -797,8 +797,8 @@ int f(int n, /*@ unique<1> @*/ int* x0, /*@ unique<2> @*/ int* x1){
 }
 
 /*@
-  context x != NULL ** \pointer_length(x) > 0 ** Perm(&x[0], 1\4);
-  context y != NULL ** \pointer_length(y) > 0 ** Perm(&y[0], 1\4);
+  context x != NULL ** \pointer_length(x) > 0 ** Perm(x[0], 1\4);
+  context y != NULL ** \pointer_length(y) > 0 ** Perm(y[0], 1\4);
   ensures \result == x[0] + y[0];
 @*/
 int h(int* x, int* y){
@@ -812,7 +812,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -857,7 +857,7 @@ struct vec {
   };
 
   /*@
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures \result == v->xs;
   @*/
   int* get_xs(struct vec* v){
@@ -883,7 +883,7 @@ struct vec {
   /*@
     given int* ys;
     yields int* res;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -909,7 +909,7 @@ struct vec {
   /*@
     given int* ys;
     yields int* res;
-    context v != NULL ** \pointer_length(v)==1 ** Perm(&v->xs, 1\100);
+    context v != NULL ** \pointer_length(v)==1 ** Perm(v->xs, 1\100);
     ensures v->xs  == \result;
   @*/
   int* get_xs(struct vec* v){
@@ -1022,14 +1022,14 @@ int f(struct vec*  v){
   vercors should error withCode "disallowedQualifiedMethodCoercionNest" in "Method has func in contract - 1" c
     """
   /*@
-    requires xs != NULL ** \pointer_length(xs)>1 ** Perm(&xs[0], 1\100);
+    requires xs != NULL ** \pointer_length(xs)>1 ** Perm(xs[0], 1\100);
   @*/
   /*@ pure @*/ int get_head(int* xs){
     return xs[0];
   }
 
   /*@
-    context xs != NULL ** \pointer_length(xs)>2 ** Perm(&xs[0], 1\100);
+    context xs != NULL ** \pointer_length(xs)>2 ** Perm(xs[0], 1\100);
     ensures \result == get_head(xs) + get_head(xs+1);
   @*/
 int get_first_two(/*@unique<1>@*/ int* xs){
@@ -1038,7 +1038,7 @@ int get_first_two(/*@unique<1>@*/ int* xs){
 
 
   /*@
-    context xs != NULL ** \pointer_length(xs)>2 ** Perm(&xs[0], 1\100);
+    context xs != NULL ** \pointer_length(xs)>2 ** Perm(xs[0], 1\100);
     ensures \result == xs[0] + xs[1];
   @*/
   int f(/*@unique<2>@*/ int* xs){
@@ -1049,7 +1049,7 @@ int get_first_two(/*@unique<1>@*/ int* xs){
   vercors should error withCode "disallowedQualifiedMethodCoercionNest" in "Method has func in contract - 2" c
     """
  /*@
-  context xs != NULL ** \pointer_length(xs)>2 ** Perm(&xs[0], 1\100);
+  context xs != NULL ** \pointer_length(xs)>2 ** Perm(xs[0], 1\100);
   ensures \result == xs[0];
 @*/
 /*@ pure @*/ int id(/*@unique<2>@*/ int* xs){
@@ -1057,7 +1057,7 @@ int get_first_two(/*@unique<1>@*/ int* xs){
 }
 
 /*@
-  context xs != NULL ** \pointer_length(xs)>2 ** Perm(&xs[0], 1\100) ** Perm(&xs[1], 1\100);
+  context xs != NULL ** \pointer_length(xs)>2 ** Perm(xs[0], 1\100) ** Perm(xs[1], 1\100);
   ensures \result == id(xs) + xs[1];
 @*/
 int get_first_two(/*@unique<1>@*/ int* xs){
@@ -1066,7 +1066,7 @@ int get_first_two(/*@unique<1>@*/ int* xs){
 
 
 /*@
-  context xs != NULL ** \pointer_length(xs)>2 ** Perm(&xs[0], 1\100) ** Perm(&xs[1], 1\100);
+  context xs != NULL ** \pointer_length(xs)>2 ** Perm(xs[0], 1\100) ** Perm(xs[1], 1\100);
   ensures \result == id(xs) + xs[1];
 @*/
 int f(/*@unique<3>@*/ int* xs){
@@ -1103,10 +1103,10 @@ struct buf {
 inline resource buffer_pred(struct buf *buf, rational p, int n_dims) =
  buf != NULL **
  \pointer_length(buf) == 1 **
- Perm(&buf->shape.dim, p) **
+ Perm(buf->shape.dim, p) **
  buf->shape.dim != NULL **
  \pointer_length(buf->shape.dim) == n_dims **
- Perm(&buf->host, p) **
+ Perm(buf->host, p) **
  buf->host != NULL;
 @*/
 
@@ -1115,7 +1115,7 @@ inline resource buffer_pred(struct buf *buf, rational p, int n_dims) =
  context dim_perm(out->shape.dim, 1\2, 0);
  context \pointer_length(out->host) == out->shape.dim[0].extent * out->shape.dim[0].stride;
  context out->shape.dim[0].min == 0 && out->shape.dim[0].extent == 100 && out->shape.dim[0].stride == 1;
- context (\forall* int _0; 0 <= _0 && _0 < 100; Perm(&out->host[_0], 1\1));
+ context (\forall* int _0; 0 <= _0 && _0 < 100; Perm(out->host[_0], 1\1));
  ensures \result == out->host[0];
 @*/
 int f(/*@unique_pointer_field<host, 1>@*/ struct buf *out) {

@@ -1,8 +1,10 @@
 package viper.api.transform
 
 import hre.util.ScopedStack
+import vct.col.ast.{TInt, TRational}
 import vct.col.origin.{AccountedDirection, FailLeft, FailRight, Name}
 import vct.col.ref.Ref
+import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers.unfoldStar
 import vct.col.{ast => col}
 import vct.result.VerificationError.{SystemError, Unreachable}
@@ -104,8 +106,9 @@ case class ColToSilver(program: col.Program[_]) {
   def name(decl: col.Declaration[_], nameF: Name => String): String =
     if (names.contains(decl)) { ??? }
     else {
-      var (name, index) = unpackName(nameF(decl.o.getPreferredNameOrElse()))
-      name = sanitize(name)
+      var (name, index) = unpackName(
+        sanitize(nameF(decl.o.getPreferredNameOrElse()))
+      )
       while (
         names.values.exists(_ == (name, index)) ||
         silver.utility.Consistency.reservedNames.contains(packName(name, index))
@@ -231,7 +234,16 @@ case class ColToSilver(program: col.Program[_]) {
               function.contract.decreases.toSeq.map(decreases),
             accountedPred(function.contract.ensures),
             function.body.map(exp),
-          )(pos = pos(function), info = NodeInfo(function))
+          )(
+            pos = pos(function),
+            info =
+              if (function.opaque) {
+                silver.ConsInfo(
+                  NodeInfo(function),
+                  silver.AnnotationInfo(Map("opaque" -> Seq())),
+                )
+              } else { NodeInfo(function) },
+          )
         }
       case procedure: col.Procedure[_]
           if procedure.returnType == col.TVoid() && !procedure.inline &&
@@ -561,10 +573,15 @@ case class ColToSilver(program: col.Program[_]) {
           pos = pos(e),
           info = expInfo(e),
         )
-      case col.FunctionInvocation(f, args, Nil, Nil, Nil) =>
+      case col.FunctionInvocation(f, args, Nil, Nil, Nil, reveal) =>
         silver.FuncApp(ref(f), args.map(exp))(
           pos(e),
-          expInfo(e),
+          if (reveal) {
+            silver.ConsInfo(
+              expInfo(e),
+              silver.AnnotationInfo(Map("reveal" -> Seq())),
+            )
+          } else { expInfo(e) },
           typ(f.decl.returnType),
           silver.NoTrafos,
         )
@@ -607,8 +624,12 @@ case class ColToSilver(program: col.Program[_]) {
       case col.Old(expr, Some(lbl)) =>
         silver.LabelledOld(exp(expr), ref(lbl))(pos = pos(e), info = expInfo(e))
 
-      case col.UMinus(arg) =>
+      case col.UMinus(arg)
+          if CoercionUtils.getCoercion(arg.t, TInt()).isDefined =>
         silver.Minus(exp(arg))(pos = pos(e), info = expInfo(e))
+      case col.UMinus(arg)
+          if CoercionUtils.getCoercion(arg.t, TRational()).isDefined =>
+        silver.PermMinus(exp(arg))(pos = pos(e), info = expInfo(e))
 
       case op @ col.Plus(left, right) if op.isIntOp =>
         silver.Add(exp(left), exp(right))(pos = pos(e), info = expInfo(e))
@@ -741,10 +762,10 @@ case class ColToSilver(program: col.Program[_]) {
   def fold(f: col.FoldTarget[_]): silver.PredicateAccessPredicate =
     f match {
       case col.ScaledPredicateApply(inv: col.PredicateApply[_], perm) =>
-        silver.PredicateAccessPredicate(pred(inv, Some(expInfo(f))), Some(exp(perm)))(
-          pos = pos(f),
-          info = expInfo(f),
-        )
+        silver.PredicateAccessPredicate(
+          pred(inv, Some(expInfo(f))),
+          Some(exp(perm)),
+        )(pos = pos(f), info = expInfo(f))
       case col.ValuePredicateApply(inv: col.PredicateApply[_]) =>
         silver.PredicateAccessPredicate(
           pred(inv, Some(expInfo(f))),

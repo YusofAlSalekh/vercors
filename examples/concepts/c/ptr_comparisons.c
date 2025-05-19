@@ -1,7 +1,7 @@
 #include <stdint.h>
 
 //@ requires x != NULL;
-//@ context Perm(x, write);
+//@ context Perm(*x, write);
 void bar(int *x);
 
 void foo() {
@@ -12,7 +12,7 @@ void foo() {
     //@ assert end >= start;
     //@ assert start < end;
     //@ loop_invariant start <= p && p <= end;
-    //@ loop_invariant (\forall* int i=0 .. 4; Perm(&a[i], write));
+    //@ loop_invariant (\forall* int i=0 .. 4; Perm(a[i], write));
     while (p <= end) {
 
         if (p == end) {

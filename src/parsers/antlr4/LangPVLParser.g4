@@ -173,7 +173,7 @@ unit
  | STRING_LITERAL # pvlString
  | CHARACTER_LITERAL # pvlChar
  | '(' expr ')' # pvlParens
- | identifier call? # pvlInvocation
+ | valReveal? identifier call? # pvlInvocation
  | valGenericAdtInvocation # pvlValAdtInvocation
  ;
 

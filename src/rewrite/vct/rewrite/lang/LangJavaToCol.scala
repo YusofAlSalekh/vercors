@@ -614,6 +614,7 @@ case class LangJavaToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           args,
           givenMap,
           yields,
+          reveal = false,
           inv,
           inv.blame,
         )

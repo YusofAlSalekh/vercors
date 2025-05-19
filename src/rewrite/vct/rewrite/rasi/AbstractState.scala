@@ -452,7 +452,7 @@ case class AbstractState[G](
               valuations(v).asInstanceOf[UncertainIntegerValue]
           case None => resolve_collection_expression(obj).len
         }
-      case ProcedureInvocation(ref, args, _, _, _, _) =>
+      case ProcedureInvocation(ref, args, _, _, _, _, _) =>
         get_subroutine_return(
           ref.decl.contract.ensures,
           Map.from(ref.decl.args.zip(args)),
@@ -464,7 +464,7 @@ case class AbstractState[G](
           Map.from(ref.decl.args.zip(args)),
           ref.decl.returnType,
         ).asInstanceOf[UncertainIntegerValue]
-      case FunctionInvocation(ref, args, _, _, _) =>
+      case FunctionInvocation(ref, args, _, _, _, _) =>
         get_subroutine_return(
           ref.decl.contract.ensures,
           Map.from(ref.decl.args.zip(args)),
@@ -582,7 +582,7 @@ case class AbstractState[G](
               case None => UncertainBooleanValue.uncertain()
             }
         }
-      case ProcedureInvocation(ref, args, _, _, _, _) =>
+      case ProcedureInvocation(ref, args, _, _, _, _, _) =>
         get_subroutine_return(
           ref.decl.contract.ensures,
           Map.from(ref.decl.args.zip(args)),
@@ -594,7 +594,7 @@ case class AbstractState[G](
           Map.from(ref.decl.args.zip(args)),
           ref.decl.returnType,
         ).asInstanceOf[UncertainBooleanValue]
-      case FunctionInvocation(ref, args, _, _, _) =>
+      case FunctionInvocation(ref, args, _, _, _, _) =>
         get_subroutine_return(
           ref.decl.contract.ensures,
           Map.from(ref.decl.args.zip(args)),

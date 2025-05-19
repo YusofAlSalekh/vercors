@@ -809,8 +809,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
           case p: Procedure[Pre] =>
             Result(new LazyRef(procedureCopy.get(p, m).get))
         }
-      case c @ Cast(value, typeValue) =>
-        val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
+      case c @ PointerCast(value, targetType, _, _) =>
         (targetType, value.t) match {
           case (target: PointerType[Pre], value: PointerType[Pre])
               if target.unique != value.unique ||

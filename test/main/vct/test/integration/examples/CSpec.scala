@@ -90,7 +90,7 @@ class CSpec extends VercorsSpec {
       #include <stdlib.h>
       int main(){
           int* xs = (int*) malloc(sizeof(int)*3);
-          //@ exhale Perm(&xs[0], 1\2);
+          //@ exhale Perm(xs[0], 1\2);
           free(xs);
       }
     """
@@ -103,7 +103,7 @@ class CSpec extends VercorsSpec {
     int main(){
       struct d* xs = (struct d*) malloc(sizeof(struct d)*3);
       struct d* ys = (struct d*) malloc(sizeof(struct d)*3);
-      //@ exhale Perm(&xs[0].x, 1\2);
+      //@ exhale Perm(xs[0].x, 1\2);
       free(xs);
     }
     """
@@ -139,7 +139,7 @@ class CSpec extends VercorsSpec {
     int main(){
       struct d s1;
       struct d* s2 = &s1;
-      //@ exhale Perm(&s2->x, 1\1);
+      //@ exhale Perm(s2->x, 1\1);
       s2->x = 1;
     }
     """
@@ -151,7 +151,7 @@ class CSpec extends VercorsSpec {
     };
     int main(){
       struct d s;
-      //@ exhale Perm(&s.x, 1\1);
+      //@ exhale Perm(s.x, 1\1);
       s.x = 1;
     }
     """
@@ -163,7 +163,7 @@ class CSpec extends VercorsSpec {
     int main(){
       struct d s;
       s.x = 1;
-      //@ exhale Perm(&s.x, 1\1);
+      //@ exhale Perm(s.x, 1\1);
       int x = s.x;
     }
     """
@@ -296,7 +296,7 @@ class CSpec extends VercorsSpec {
         assert(test(1) == 2);
     }
     """
-  vercors should error withCode "unsupportedStructPerm" in "cylic struct" c
+  vercors should error withCode "cyclicStruct" in "cylic struct" c
     """
     struct d {
       int x;
@@ -361,7 +361,7 @@ class CSpec extends VercorsSpec {
 
     int main(){
         struct d s;
-        //@ exhale Perm(&s.x, 1\1);
+        //@ exhale Perm(s.x, 1\1);
         test(s);
     }
     """
@@ -379,7 +379,7 @@ class CSpec extends VercorsSpec {
 
     int main(){
         struct d s, t;
-        //@ exhale Perm(&s.x, 1\1);
+        //@ exhale Perm(s.x, 1\1);
         t = s;
     }
     """
@@ -401,7 +401,7 @@ class CSpec extends VercorsSpec {
         for(int i=0;i<3;i++)
         /*@
             context 0 <= i && i <3;
-            context Perm(&sum[i], write);
+            context Perm(sum[i], write);
             requires sum[i] == 0;
             ensures sum[i] == i;
         @*/
@@ -591,7 +591,7 @@ class CSpec extends VercorsSpec {
    // pass
     #include <opencl.h>
 
-    /*@ context y != NULL && \pointer_length(y) == 1 ** Perm(&*y, write);
+    /*@ context y != NULL && \pointer_length(y) == 1 ** Perm(*y, write);
       ensures \old(*y)+1 == *y && \result.x == *y && \result.y == *y;
     @*/
     int2 alter_state(int* y){
@@ -627,6 +627,7 @@ class CSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/c/mismatched_provenance.c"
   vercors should verify using silicon example "concepts/c/ptr_comparisons.c"
   vercors should verify using silicon flag "--target" flag "x86_64-linux-unknown" flag "--dev-no-sat" example "concepts/c/pointer_tag.c"
+  vercors should verify using silicon flags("--target", "x86_64-linux-unknown", "--dev-no-sat", "--opaque-bitwise-operators", "--dev-split-verification-by-procedure") example "concepts/c/xor_linked_list.c"
   vercors should verify using silicon in "Pointer address correctly offset based on type size" c
     """
     #include <stdint.h>
@@ -683,7 +684,7 @@ pure bool get_facts(int x, int y, int nx, int ny);
   context_everywhere xs != NULL ** \pointer_length(xs) == nx*ny;
   context_everywhere (\forall* int x, int y;
     0 <= x && x < nx && 0 <= y && y < ny;
-    Perm({:&xs[a2d(x, y, nx, ny)]:}, 1\1));
+    Perm({:xs[a2d(x, y, nx, ny)]:}, 1\1));
   ensures (\forall int x, int y;
     0 <= x && x < nx && 0 <= y && y < ny;
     {:xs[a2d(x, y, nx, ny)]:} == x + y);
@@ -730,7 +731,7 @@ struct s set_x(struct s v, int x) {
 }
 
 /*@
- requires p != NULL ** \pointer_length(p) == 1 ** Perm(&p->x, read);
+ requires p != NULL ** \pointer_length(p) == 1 ** Perm(p->x, read);
  ensures \result == p->x;
 */
 /*@ pure */int get_x(struct s *p) {

@@ -10,7 +10,6 @@ import vct.col.ref.Ref
 import vct.col.resolve.ctx.Referrable
 import vct.col.typerules.CoercionUtils
 import vct.col.util.SuccessionMap
-import vct.result.VerificationError.UserError
 
 import scala.collection.mutable
 
@@ -24,12 +23,6 @@ case object ClassToRef extends RewriterBuilder {
 
   private def InstanceOfOrigin: Origin =
     Origin(Seq(PreferredName(Seq("subtype")), LabelContext("classToRef")))
-
-  private def ValueAdtOrigin: Origin =
-    Origin(Seq(PreferredName(Seq("Value")), LabelContext("classToRef")))
-
-  private def CastHelperOrigin: Origin =
-    Origin(Seq(LabelContext("classToRef cast helpers")))
 
   val ByValueClassADTLabel = "ByValueClassADT"
 
@@ -49,29 +42,6 @@ case object ClassToRef extends RewriterBuilder {
   ) extends Blame[PointerDerefError] {
     override def blame(error: PointerDerefError): Unit = {
       inner.blame(InsufficientPermission(node))
-    }
-  }
-
-  private case class RequiresExhaleModeError() extends UserError {
-    override def code: String = "requiresMce"
-
-    override def text: String =
-      "This program contains complex casts. If running through Silicon the verification likely failed because " +
-        "complex cast support requires Viper's more complete exhale mode.\nThis mode can be enabled with the options: " +
-        "--backend-option --exhaleMode=2 or --backend-option --exhaleMode=1"
-  }
-
-  private case class RequiresExhaleModeBlame()
-      extends Blame[PointerDerefError] {
-    override def blame(error: PointerDerefError): Unit = {
-      error match {
-        case _: CopyClassFailed | _: CopyClassFailedBeforeCall |
-            _: PointerLocationError =>
-          PanicBlame(
-            s"Permission should be framed, did not expect: ${error.desc}"
-          )
-        case _: PointerInsufficientPermission => throw RequiresExhaleModeError()
-      }
     }
   }
 
@@ -115,13 +85,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
   var typeNumberStore: mutable.Map[Class[Pre], Int] = mutable.Map()
   val typeOf: SuccessionMap[Unit, Function[Post]] = SuccessionMap()
   val instanceOf: SuccessionMap[Unit, Function[Post]] = SuccessionMap()
-
-  val valueAdt: SuccessionMap[Unit, AxiomaticDataType[Post]] = SuccessionMap()
-  val valueAdtTypeArgument: Variable[Post] =
-    new Variable(TType(TAnyValue()))(ValueAdtOrigin.where(name = "V"))
-  val valueAsFunctions
-      : mutable.Map[(Type[Pre], Option[BigInt]), ADTFunction[Post]] = mutable
-    .Map()
 
   def typeNumber(cls: Class[Pre]): Int =
     typeNumberStore.getOrElseUpdate(cls, typeNumberStore.size + 1)
@@ -170,61 +133,46 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
     )
   }
 
-  private def makeValueAdt: AxiomaticDataType[Post] = {
-    new AxiomaticDataType[Post](
-      valueAsFunctions.values.toSeq,
-      Seq(valueAdtTypeArgument),
-    )(ValueAdtOrigin)
-  }
-
-  // TODO: Also generate value as axioms for arrays once those are properly supported for C/CPP/LLVM
-  private def makeValueAsFunction(
-      typeName: String,
-      t: Type[Post],
-      unique: Option[BigInt],
-  ): ADTFunction[Post] = {
-    new ADTFunction[Post](
-      Seq(new Variable(TVar[Post](valueAdtTypeArgument.ref))(
-        ValueAdtOrigin.where(name = "v")
-      )),
-      TNonNullPointer(t, unique),
-    )(ValueAdtOrigin.where(name = "value_as_" + typeName))
-  }
-
-  private def unwrapValueAs(
+  private def unwrapCastAxioms(
       axiomType: TAxiomatic[Post],
       oldT: Type[Pre],
       newT: Type[Post],
       unique: Option[BigInt],
       fieldRef: Ref[Post, ADTFunction[Post]],
+      structSize: Expr[Post],
+      fieldSize: Expr[Post],
+      toSize: Expr[Post],
   )(implicit o: Origin): Seq[ADTAxiom[Post]] = {
     (oldT match {
       case t: TByValueClass[Pre] => {
         // TODO: If there are no fields we should ignore the first field and add the axioms for the second field
         t.cls.decl.decls.collectFirst({ case field: InstanceField[Pre] =>
-          unwrapValueAs(
+          unwrapCastAxioms(
             axiomType,
             field.t,
             dispatch(field.t),
             field.flags.collectFirst { case Unique(unique) => unique },
             fieldRef,
+            structSize,
+            fieldSize,
+            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].sizes(1)),
           )
         }).getOrElse(Nil)
       }
       case _ => Nil
     }) :+ new ADTAxiom[Post](forall(
-      axiomType,
+      TNonNullPointer(axiomType, None),
       body = { a =>
-        InlinePattern(adtFunctionInvocation[Post](
-          valueAsFunctions.getOrElseUpdate(
-            (oldT, unique),
-            makeValueAsFunction(oldT.toString, newT, unique),
-          ).ref,
-          typeArgs = Some((valueAdt.ref(()), Seq(axiomType))),
-          args = Seq(a),
-        )) === Cast(
-          adtFunctionInvocation(fieldRef, args = Seq(a)),
-          TypeValue(TNonNullPointer(newT, unique)),
+        InlinePattern(
+          PointerCast(a, TNonNullPointer(newT, unique), structSize, toSize)
+        ) === PointerCast(
+          adtFunctionInvocation(
+            fieldRef,
+            args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
+          ),
+          TNonNullPointer(newT, unique),
+          fieldSize,
+          toSize,
         )
       },
     ))
@@ -238,9 +186,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         globalDeclarations.declare(typeOf(()))
         instanceOf(()) = makeInstanceOf
         globalDeclarations.declare(instanceOf(()))
-        if (valueAsFunctions.nonEmpty) {
-          globalDeclarations.declare(valueAdt.getOrElseUpdate((), makeValueAdt))
-        }
       }._1
     )
 
@@ -406,51 +351,51 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
   private def encodeByValueClass(cls: ByValueClass[Pre]) = {
     implicit val o: Origin = cls.o
     val axiomType = TAxiomatic[Post](byValClassSucc.ref(cls), Nil)
-    var valueAsAxioms: Seq[ADTAxiom[Post]] = Seq()
+    var castAxioms: Seq[ADTAxiom[Post]] = Seq()
     val (fieldFunctions, fieldInverses, fieldTypes) =
       cls.decls.collect { case field: InstanceField[Pre] =>
         val newT = dispatch(field.t)
         val unique = field.flags.collectFirst { case Unique(unique) => unique }
-        // TODO: There is something wrong here for fields with a struct type since we do not use the uniqueness for the cast helpers!
         val nonnullT = TNonNullPointer(newT, unique)
         byValFieldSucc(field) =
           new ADTFunction[Post](
             Seq(new Variable(axiomType)(field.o)),
             nonnullT,
           )(field.o)
-        if (valueAsAxioms.isEmpty) {
+        if (castAxioms.isEmpty) {
           // This is the first field
-          valueAsAxioms =
-            valueAsAxioms :+ new ADTAxiom[Post](forall(
-              axiomType,
+          castAxioms =
+            castAxioms :+ new ADTAxiom[Post](forall(
+              TNonNullPointer(axiomType, None),
               body = { a =>
-                InlinePattern(adtFunctionInvocation[Post](
-                  valueAsFunctions.getOrElseUpdate(
-                    (field.t, unique),
-                    makeValueAsFunction(field.t.toString, newT, unique),
-                  ).ref,
-                  typeArgs = Some((valueAdt.ref(()), Seq(axiomType))),
-                  args = Seq(a),
+                InlinePattern(PointerCast(
+                  a,
+                  TNonNullPointer(newT, unique),
+                  dispatch(cls.sizes.head),
+                  dispatch(cls.sizes(1)),
                 )) === adtFunctionInvocation(
                   byValFieldSucc.ref(field),
-                  args = Seq(a),
+                  args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
                 )
               },
             ))
 
-          valueAsAxioms =
-            valueAsAxioms ++
+          castAxioms =
+            castAxioms ++
               (field.t match {
                 case t: TByValueClass[Pre] =>
                   // TODO: If there are no fields we should ignore the first field and add the axioms for the second field
                   t.cls.decl.decls
                     .collectFirst({ case innerF: InstanceField[Pre] =>
-                      unwrapValueAs(
+                      unwrapCastAxioms(
                         axiomType,
                         innerF.t,
                         dispatch(innerF.t),
                         unique,
                         byValFieldSucc.ref(field),
+                        dispatch(cls.sizes.head),
+                        dispatch(cls.sizes(1)),
+                        dispatch(cls.sizes(2)),
                       )
                     }).getOrElse(Nil)
                 case _ => Nil
@@ -485,19 +430,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             "new_" + cls.o.find[SourceName].map(_.name).getOrElse("unknown")
           )
       )
-    // TVoid is a placeholder the pointer adt doesn't have type parameters
-    val indexFunction =
-      new ADTFunction[Post](
-        Seq(new Variable(TNonNullPointer(TVoid(), None))(Origin(
-          Seq(PreferredName(Seq("pointer")), LabelContext("classToRef"))
-        ))),
-        TInt(),
-      )(
-        cls.o.copy(cls.o.originContents.filterNot(_.isInstanceOf[SourceName]))
-          .where(name =
-            "index_" + cls.o.find[SourceName].map(_.name).getOrElse("unknown")
-          )
-      )
     val destructorAxioms = fieldFunctions.zip(fieldInverses).map {
       case (f, inv) =>
         new ADTAxiom[Post](forall(
@@ -516,31 +448,10 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           },
         ))
     }
-    val indexAxioms = fieldFunctions.zipWithIndex.map { case (f, i) =>
-      new ADTAxiom[Post](forall(
-        axiomType,
-        body = { a =>
-          adtFunctionInvocation[Post](
-            indexFunction.ref,
-            None,
-            args = Seq(adtFunctionInvocation[Post](f.ref, None, args = Seq(a))),
-          ) === const(i)
-        },
-        triggers = { a =>
-          Seq(Seq(adtFunctionInvocation[Post](f.ref, None, args = Seq(a))))
-        },
-      ))
-    }
     byValConsSucc(cls) = constructor
     byValClassSucc(cls) =
       new AxiomaticDataType[Post](
-        Seq(indexFunction) ++ destructorAxioms ++ indexAxioms ++
-          fieldFunctions ++ fieldInverses ++ valueAsAxioms ++
-          unwrapCastConstraintAxioms(
-            axiomType,
-            TByValueClass(cls.ref, Nil),
-            None,
-          ),
+        destructorAxioms ++ fieldFunctions ++ fieldInverses ++ castAxioms,
         Nil,
       )(o.withContent(LabelContext(ByValueClassADTLabel)))
     globalDeclarations.succeed(cls, byValClassSucc(cls))
@@ -631,41 +542,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         )(inv.o)
       case other => other.rewriteDefault()
     }
-
-  private def unwrapCastConstraintAxioms(
-      outerType: Type[Post],
-      t: Type[Pre],
-      unique: Option[BigInt],
-  ): Seq[ADTAxiom[Post]] = {
-    implicit val o: Origin = CastHelperOrigin
-    val newT = dispatch(t)
-    val constraint =
-      new ADTAxiom(forall[Post](
-        TNonNullPointer(outerType, None),
-        body = { p =>
-          InlinePattern(Cast(p, TypeValue(TNonNullPointer(newT, unique)))) ===
-            adtFunctionInvocation(
-              valueAsFunctions.getOrElseUpdate(
-                (t, unique),
-                makeValueAsFunction(t.toString, newT, unique),
-              ).ref,
-              typeArgs = Some((valueAdt.ref(()), Seq(outerType))),
-              args = Seq(PointerToAdt(p, outerType)(RequiresExhaleModeBlame())),
-            )
-        },
-      ))
-    t match {
-      case TByValueClass(Ref(cls), _) =>
-        constraint +: cls.decls.collectFirst { case field: InstanceField[Pre] =>
-          unwrapCastConstraintAxioms(
-            outerType,
-            field.t,
-            field.flags.collectFirst { case Unique(unique) => unique },
-          )
-        }.getOrElse(Nil)
-      case _ => Seq(constraint)
-    }
-  }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] =
     e match {
@@ -758,12 +634,6 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
         t match {
           case t: TClass[Pre] if t.typeArgs.isEmpty =>
             const(typeNumber(t.cls.decl))(e.o)
-          // Keep pointer casts intact for the adtPointer stage
-          case _: TPointer[Pre] | _: TNonNullPointer[Pre] |
-              _: TConstPointer[Pre] | _: TNonNullConstPointer[Pre] =>
-            e.rewriteDefault()
-          // Keep integer casts intact for casting between integers and pointers
-          case _: TInt[Pre] => e.rewriteDefault()
           // Keep any casts intact for the adtAny stage
           case _: TAnyValue[Pre] => e.rewriteDefault()
           case other => ???
@@ -801,17 +671,14 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(PanicBlame("instanceOf requires nothing"))(e.o)
-      case Cast(value, typeValue) if value.t.asPointer.isDefined => {
-        // Keep pointer casts and add extra annotations
-        e.rewriteDefault()
-      }
       case Cast(value, typeValue)
           if value.t.asClass.isDefined ||
             CoercionUtils.getAnyCoercion(value.t, TAnyClass[Pre]()).isDefined =>
         dispatch(
           value
         ) // Discard for now, should assert instanceOf(value, typeValue)
-      case Cast(value, TypeValue(t)) if value.t == t => { dispatch(value) }
+      case Cast(value, TypeValue(t)) if value.t == t => dispatch(value)
+      case PointerCast(value, t, _, _) if value.t == t => dispatch(value)
       case Result(Ref(app)) =>
         app match {
           case function: Function[Pre] => Result[Post](succ(function))(e.o)

@@ -3,6 +3,7 @@ package vct.col.ast.lang.llvm
 import vct.col.ast.LLVMTStruct
 import vct.col.ast.ops.LLVMTStructOps
 import vct.col.print._
+import vct.col.typerules.TypeSize
 
 trait LLVMTStructImpl[G] extends LLVMTStructOps[G] {
   this: LLVMTStruct[G] =>
@@ -17,4 +18,8 @@ trait LLVMTStructImpl[G] extends LLVMTStructOps[G] {
     else
       (layoutPacked(Text("{") <> Doc.args(elements) <> "}"))
   }
+
+  override def bits: TypeSize =
+    if (packed) { TypeSize.packed(elements.map(_.bits): _*) }
+    else { TypeSize.struct(elements.map(_.bits): _*) }
 }

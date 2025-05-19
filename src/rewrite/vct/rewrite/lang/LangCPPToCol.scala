@@ -978,7 +978,8 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             declared = true
           case None =>
             cppGlobalNameSuccessor(RefCPPGlobalDeclaration(decl, idx)) = rw
-              .globalDeclarations.declare(new HeapVariable(t, init.init.map(rw.dispatch))(namedO))
+              .globalDeclarations
+              .declare(new HeapVariable(t, init.init.map(rw.dispatch))(namedO))
         }
       }
     }
@@ -1176,6 +1177,7 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           args,
           givenMap,
           yields,
+          reveal = false,
           inv,
           inv.blame,
         )
@@ -2743,7 +2745,9 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           case (None, None) => throw WrongCPPType(decl)
           case (Some(size), None) =>
             val newArr =
-              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(cta.blame)
+              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(
+                cta.blame
+              )
             Block(Seq(LocalDecl(v), assignLocal(v.get, newArr)))
           case (None, Some(CPPLiteralArray(exprs))) =>
             val newArr =

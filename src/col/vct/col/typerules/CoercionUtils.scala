@@ -225,7 +225,8 @@ case object CoercionUtils {
         getAnyCoercion(TNull(), target.inner).getOrElse(return None)
       case (TNull(), JavaTClass(target, _)) => CoerceNullJavaClass(target)
       case (TNull(), TAnyClass()) => CoerceNullAnyClass()
-      case (TNull(), target: PointerType[G]) => CoerceNullPointer(target)
+      case (TNull(), target: PointerType[G]) if !target.isNonNull =>
+        CoerceNullPointer(target)
       case (TNull(), target: CPointerType[G]) => CoerceNullPointer(target)
       case (TNull(), TEnum(target)) => CoerceNullEnum(target)
       case (TNull(), LLVMTPointer(target)) => CoerceNullLLVMPointer(target)

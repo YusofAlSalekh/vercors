@@ -4,10 +4,11 @@ import vct.col.ast._
 import ImportADT.typeText
 import hre.util.ScopedStack
 import vct.col.origin._
-import vct.col.ref.Ref
+import vct.col.ref.{LazyRef, Ref}
 import vct.col.rewrite.{ClassToRef, Generation}
 import vct.col.util.AstBuildHelpers.{functionInvocation, _}
 import vct.col.util.SuccessionMap
+import vct.result.VerificationError.Unreachable
 
 import scala.collection.mutable
 
@@ -104,6 +105,10 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerFile,
     "ptr_from_address",
   )
+  private lazy val pointerCastHelperAdt = find[AxiomaticDataType[Post]](
+    pointerFile,
+    "PointerCastHelper",
+  )
 
   private val pointerField
       : mutable.Map[(Type[Post], Option[BigInt]), SilverField[Post]] = mutable
@@ -112,30 +117,98 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   private val pointerCreationMethods
       : SuccessionMap[TNonNullPointer[Pre], Procedure[Post]] = SuccessionMap()
 
-  private val asTypeFunctions: mutable.Map[Type[Pre], Function[Post]] = mutable
-    .Map()
+  private val asTypeFunctions
+      : SuccessionMap[(Type[Pre], Type[Pre]), Function[Post]] = SuccessionMap()
   private val toAdtFunctions
       : mutable.Map[(AxiomaticDataType[Pre], Seq[Type[Pre]]), Function[Post]] =
     mutable.Map()
   private val context: ScopedStack[Context] = ScopedStack()
-  private var casts: Set[(Type[Pre], Type[Pre])] = Set.empty
+  private var casts: Set[Type[Pre]] = Set.empty
+  private val inMakeAsType: ScopedStack[Unit] = ScopedStack()
+  private val fromCastHelperFunctions
+      : SuccessionMap[Type[Pre], Function[Post]] = SuccessionMap()
+  private val toCastHelperFunctions: SuccessionMap[Type[Pre], Function[Post]] =
+    SuccessionMap()
+
+  private def makeFromCastHelperFunction(t: Type[Pre]): Function[Post] = {
+    implicit val o: Origin = AsTypeOrigin
+      .where(name = "from_cast_helper_" + t.toString)
+    val value =
+      new Variable[Post](TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil))(
+        AsTypeOrigin.where(name = "helper")
+      )
+    globalDeclarations.declare(function[Post](
+      AbstractApplicable,
+      TrueSatisfiable,
+      returnType = TAxiomatic(new LazyRef(pointerAdt), Nil),
+      args = Seq(value),
+    ))
+  }
+
+  private def makeToCastHelperFunction(t: Type[Pre]): Function[Post] = {
+    implicit val o: Origin = AsTypeOrigin
+      .where(name = "to_cast_helper_" + t.toString)
+    val value =
+      new Variable[Post](TAxiomatic(new LazyRef(pointerAdt), Nil))(
+        AsTypeOrigin.where(name = "ptr")
+      )
+    globalDeclarations.declare(withResult((result: Result[Post]) =>
+      function[Post](
+        AbstractApplicable,
+        TrueSatisfiable,
+        returnType = TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil),
+        args = Seq(value),
+      )
+    ))
+  }
 
   private def makeAsTypeFunction(
-      typeName: String,
-      adt: Ref[Post, AxiomaticDataType[Post]] = pointerAdt.ref,
-      block: Ref[Post, ADTFunction[Post]] = pointerBlock.ref,
+      from: Type[Pre],
+      to: Type[Pre],
+      fromSize: Expr[Pre],
+      toSize: Expr[Pre],
   ): Function[Post] = {
-    implicit val o: Origin = AsTypeOrigin.where(name = "as_" + typeName)
+    implicit val o: Origin = AsTypeOrigin
+      .where(name = "as_" + to.toString + "_from_" + from.toString)
+    if (inMakeAsType.isEmpty && !asTypeFunctions.contains((to, from))) {
+      inMakeAsType.having(()) {
+        asTypeFunctions((to, from)) = makeAsTypeFunction(
+          to,
+          from,
+          toSize,
+          fromSize,
+        )
+      }
+    }
     val value =
-      new Variable[Post](TAxiomatic(adt, Nil))(
+      new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
         AsTypeOrigin.where(name = "value")
       )
     globalDeclarations.declare(withResult((result: Result[Post]) =>
       function[Post](
         AbstractApplicable,
         TrueSatisfiable,
-        ensures = UnitAccountedPredicate(result === value.get),
-        returnType = TAxiomatic(adt, Nil),
+        ensures = UnitAccountedPredicate(And(
+          result === functionInvocation[Post](
+            TrueSatisfiable,
+            fromCastHelperFunctions
+              .getOrElseUpdate(to, makeFromCastHelperFunction(to)).ref,
+            Seq(functionInvocation[Post](
+              TrueSatisfiable,
+              toCastHelperFunctions
+                .getOrElseUpdate(from, makeToCastHelperFunction(from)).ref,
+              Seq(value.get),
+            )),
+          ),
+          adtFunctionInvocation[Post](
+            pointerAddress.ref,
+            args = Seq(result, dispatch(toSize)),
+          ) === adtFunctionInvocation[Post](
+            pointerAddress.ref,
+            args = Seq(value.get, dispatch(fromSize)),
+          ),
+        )),
+        returnType = TAxiomatic(pointerAdt.ref, Nil),
         args = Seq(value),
       )
     ))
@@ -201,7 +274,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       returnType = TVoid(),
       outArgs = Seq(result),
       ensures = UnitAccountedPredicate(
-        ensures &* (asType(t, result.get) === result.get)
+        ensures /*&* (asType(t, result.get) === result.get)*/
       ),
       decreases = Some(DecreasesClauseNoRecursion[Post]()),
     ))
@@ -244,10 +317,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
 
   override def postCoerce(program: Program[Pre]): Program[Post] = {
     casts =
-      program.collect {
-        case Cast(a, TypeValue(b))
-            if a.t.asPointer.isDefined && b.asPointer.isDefined =>
-          (a.t.asPointer.get.element, b.asPointer.get.element)
+      program.flatCollect { case PointerCast(from, to, _, _) =>
+        Seq(from.t.asPointer.get.element, to.asPointer.get.element)
       }.toSet
     super.postCoerce(program)
   }
@@ -257,13 +328,6 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       case axiom: ADTAxiom[Pre] =>
         context.having(InAxiom()) {
           allScopes.anySucceed(axiom, axiom.rewriteDefault())
-        }
-      // TODO: This is an ugly way to exempt this one bit of generated code from having ptrAdd's added
-      case proc: Procedure[Pre]
-          if proc.o.find[LabelContext]
-            .exists(_.label == "classToRef cast helpers") =>
-        context.having(InAxiom()) {
-          allScopes.anySucceed(proc, proc.rewriteDefault())
         }
       case adt: AxiomaticDataType[Pre]
           if adt.o.find[SourceName].exists(_.name == "pointer") =>
@@ -280,6 +344,44 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
               }.get)
               aDTDeclarations.collect {
                 adt.decls.foreach(dispatch)
+                casts.map { t =>
+                  aDTDeclarations.declare(new ADTAxiom[Post](forall(
+                    TAxiomatic(new LazyRef(pointerCastHelperAdt), Nil),
+                    body = { p =>
+                      InlinePattern(functionInvocation[Post](
+                        TrueSatisfiable,
+                        toCastHelperFunctions
+                          .getOrElseUpdate(t, makeToCastHelperFunction(t)).ref,
+                        Seq(functionInvocation[Post](
+                          TrueSatisfiable,
+                          fromCastHelperFunctions
+                            .getOrElseUpdate(t, makeFromCastHelperFunction(t))
+                            .ref,
+                          Seq(p),
+                        )),
+                      )) === p
+                    },
+                  )))
+                  aDTDeclarations.declare(new ADTAxiom[Post](forall(
+                    TAxiomatic(adtSucc, Nil),
+                    body = { p =>
+                      InlinePattern(functionInvocation[Post](
+                        TrueSatisfiable,
+                        fromCastHelperFunctions
+                          .getOrElseUpdate(t, makeFromCastHelperFunction(t))
+                          .ref,
+                        Seq(functionInvocation[Post](
+                          TrueSatisfiable,
+                          toCastHelperFunctions
+                            .getOrElseUpdate(t, makeToCastHelperFunction(t))
+                            .ref,
+                          Seq(p),
+                        )),
+                      )) === p
+                    },
+                  )))
+                }
+
                 aDTDeclarations.declare(new ADTAxiom[Post](foralls(
                   Seq(TAxiomatic(adtSucc, Nil), TInt()),
                   body = { case Seq(p, stride) =>
@@ -316,7 +418,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       case loc @ PointerLocation(pointer) =>
         val arg =
           unwrapOption(pointer, loc.blame) match {
-            case inv @ FunctionInvocation(ref, _, _, _, _)
+            case inv @ FunctionInvocation(ref, _, _, _, _, _)
                 if ref.decl == pointerAdd.ref.decl =>
               inv
             case ptr =>
@@ -413,24 +515,18 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
       case deref @ DerefPointer(pointer) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,
-          args = Seq(
-            if (
-              !context.topOption.contains(InAxiom()) &&
-              !deref.o.find[LabelContext]
-                .exists(_.label == "classToRef cast helpers")
-            ) {
-              FunctionInvocation[Post](
-                ref = pointerAdd.ref,
-                // Always index with zero, otherwise quantifiers with pointers do not get triggered
-                args = Seq(unwrapOption(pointer, deref.blame), const(0)),
-                typeArgs = Nil,
-                Nil,
-                Nil,
-              )(NoContext(
-                DerefPointerBoundsPreconditionFailed(deref.blame, pointer)
-              ))
-            } else { unwrapOption(pointer, deref.blame) }
-          ),
+          args = Seq(if (!context.topOption.contains(InAxiom())) {
+            FunctionInvocation[Post](
+              ref = pointerAdd.ref,
+              // Always index with zero, otherwise quantifiers with pointers do not get triggered
+              args = Seq(unwrapOption(pointer, deref.blame), const(0)),
+              typeArgs = Nil,
+              Nil,
+              Nil,
+            )(NoContext(
+              DerefPointerBoundsPreconditionFailed(deref.blame, pointer)
+            ))
+          } else { unwrapOption(pointer, deref.blame) }),
           typeArgs = Nil,
           Nil,
           Nil,
@@ -494,24 +590,18 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           obj =
             FunctionInvocation[Post](
               ref = pointerDeref.ref,
-              args = Seq(
-                if (
-                  !context.topOption.contains(InAxiom()) &&
-                  !deref.o.find[LabelContext]
-                    .exists(_.label == "classToRef cast helpers")
-                ) {
-                  FunctionInvocation[Post](
-                    ref = pointerAdd.ref,
-                    // Always index with zero, otherwise quantifiers with pointers do not get triggered
-                    args = Seq(unwrapOption(pointer, deref.blame), const(0)),
-                    typeArgs = Nil,
-                    Nil,
-                    Nil,
-                  )(NoContext(
-                    DerefPointerBoundsPreconditionFailed(deref.blame, pointer)
-                  ))
-                } else { unwrapOption(pointer, deref.blame) }
-              ),
+              args = Seq(if (!context.topOption.contains(InAxiom())) {
+                FunctionInvocation[Post](
+                  ref = pointerAdd.ref,
+                  // Always index with zero, otherwise quantifiers with pointers do not get triggered
+                  args = Seq(unwrapOption(pointer, deref.blame), const(0)),
+                  typeArgs = Nil,
+                  Nil,
+                  Nil,
+                )(NoContext(
+                  DerefPointerBoundsPreconditionFailed(deref.blame, pointer)
+                ))
+              } else { unwrapOption(pointer, deref.blame) }),
               typeArgs = Nil,
               Nil,
               Nil,
@@ -539,8 +629,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           PointerBlockLength(pointer)(pointerLen.blame) -
             PointerBlockOffset(pointer)(pointerLen.blame)
         )
-      case Cast(value, typeValue) =>
-        val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
+      case PointerCast(value, targetType, fromSize, toSize) =>
         val newValue = dispatch(value)
         (targetType, value.t) match {
           case (target: PointerType[Pre], value: PointerType[Pre])
@@ -548,35 +637,56 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 target.element == value.element =>
             // Should not occur
             ???
-          case (TPointer(innerType, _), TPointer(_, _)) =>
+          case (TPointer(innerType, _), TPointer(original, _)) =>
             Select[Post](
               OptEmpty(newValue),
               OptNoneTyped(TAxiomatic(pointerAdt.ref, Nil)),
               OptSome(applyAsTypeFunction(
+                original,
                 innerType,
+                fromSize,
+                toSize,
                 value,
                 OptGet(newValue)(PanicBlame(
                   "Can never be null since this is ensured in the conditional expression"
                 )),
               )),
             )
-          case (TNonNullPointer(innerType, _), TPointer(_, _)) =>
+          case (TNonNullPointer(innerType, _), TPointer(original, _)) =>
             applyAsTypeFunction(
+              original,
               innerType,
+              fromSize,
+              toSize,
               value,
               OptGet(newValue)(PanicBlame(
                 "Casting a pointer to a non-null pointer implies the pointer must be statically known to be non-null"
               )),
             )
-          case (TPointer(innerType, _), TNonNullPointer(_, _)) =>
-            OptSome(applyAsTypeFunction(innerType, value, newValue))
-          case (TNonNullPointer(innerType, _), TNonNullPointer(_, _)) =>
-            applyAsTypeFunction(innerType, value, newValue)
-          // Other type of cast probably a cast to any
-          case (_, _) => super.postCoerce(e)
+          case (TPointer(innerType, _), TNonNullPointer(original, _)) =>
+            OptSome(applyAsTypeFunction(
+              original,
+              innerType,
+              fromSize,
+              toSize,
+              value,
+              newValue,
+            ))
+          case (TNonNullPointer(innerType, _), TNonNullPointer(original, _)) =>
+            applyAsTypeFunction(
+              original,
+              innerType,
+              fromSize,
+              toSize,
+              value,
+              newValue,
+            )
+          case (_, _) =>
+            throw Unreachable(
+              s"Pointer cast with unknown pointer types: $targetType and ${value.t}"
+            )
         }
-      case IntegerPointerCast(value, typeValue, typeSize) =>
-        val targetType = typeValue.t.asInstanceOf[TType[Pre]].t
+      case IntegerPointerCast(value, targetType, typeSize) =>
         val newValue = dispatch(value)
         (targetType, value.t) match {
           case (TInt() | TBoundedInt(_, _), TPointer(_, None)) =>
@@ -650,27 +760,45 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           ref =
             toAdtFunctions.getOrElseUpdate(
               (adt, args), {
-                globalDeclarations.declare(
+                val name =
+                  "ptr_to_" + adt.o.find[SourceName].map(_.name)
+                    .getOrElse("unknown")
+                val inv = globalDeclarations.declare(
+                  function[Post](
+                    AbstractApplicable,
+                    TrueSatisfiable,
+                    TAxiomatic(pointerAdt.ref, Nil),
+                    Seq(
+                      new Variable[Post](
+                        TAxiomatic(succ(adt), args.map(dispatch))
+                      )(PointerToAdtOrigin.where(name = "a"))
+                    ),
+                  )(PointerToAdtOrigin.where(name = name + "_inv"))
+                )
+                val p =
+                  new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
+                    PointerToAdtOrigin.where(name = "p")
+                  )
+                globalDeclarations.declare(withResult((result: Result[Post]) =>
                   function[Post](
                     AbstractApplicable,
                     TrueSatisfiable,
                     TAxiomatic(succ(adt), args.map(dispatch)),
-                    Seq(new Variable[Post](TAxiomatic(pointerAdt.ref, Nil))(
-                      PointerToAdtOrigin.where(name = "p")
-                    )),
-                  )(PointerToAdtOrigin.where(name =
-                    "ptr_to_" + adt.o.find[SourceName].map(_.name)
-                      .getOrElse("unknown")
-                  ))
-                )
+                    Seq(p),
+                    ensures = UnitAccountedPredicate(
+                      p.get === functionInvocation(
+                        TrueSatisfiable,
+                        ref = inv.ref,
+                        args = Seq(result),
+                      )
+                    ),
+                  )(PointerToAdtOrigin.where(name = name))
+                ))
               },
             ).ref,
           args = Seq(p match {
             case PointerAdd(_, _) => unwrapOption(p, to.blame)
-            case _
-                if context.topOption.contains(InAxiom()) ||
-                  p.o.find[LabelContext]
-                    .exists(_.label == "classToRef cast helpers") =>
+            case _ if context.topOption.contains(InAxiom()) =>
               unwrapOption(p, to.blame)
             case _ =>
               FunctionInvocation[Post](
@@ -689,20 +817,22 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   }
 
   private def applyAsTypeFunction(
-      innerType: Type[Pre],
+      fromType: Type[Pre],
+      toType: Type[Pre],
+      fromSize: Expr[Pre],
+      toSize: Expr[Pre],
       preExpr: Expr[Pre],
       postExpr: Expr[Post],
   )(implicit o: Origin): Expr[Post] = {
     asType(
-      innerType,
+      fromType,
+      toType,
+      fromSize,
+      toSize,
       preExpr match {
         case PointerAdd(_, _) => postExpr
         // Don't add ptrAdd in an ADT axiom since we cannot use functions with preconditions there
-        case _
-            if context.topOption.contains(InAxiom()) ||
-              !preExpr.o.find[LabelContext]
-                .exists(_.label == "classToRef cast helpers") =>
-          postExpr
+        case _ if context.topOption.contains(InAxiom()) => postExpr
         case _ =>
           FunctionInvocation[Post](
             ref = pointerAdd.ref,
@@ -719,16 +849,17 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
   }
 
   private def asType(
-      t: Type[Pre],
+      fromType: Type[Pre],
+      toType: Type[Pre],
+      fromSize: Expr[Pre],
+      toSize: Expr[Pre],
       expr: Expr[Post],
-      adt: Ref[Post, AxiomaticDataType[Post]] = pointerAdt.ref,
-      block: Ref[Post, ADTFunction[Post]] = pointerBlock.ref,
   )(implicit o: Origin): Expr[Post] = {
     functionInvocation[Post](
       PanicBlame("as_type requires nothing"),
       asTypeFunctions.getOrElseUpdate(
-        t,
-        makeAsTypeFunction(t.toString, adt = adt, block = block),
+        (fromType, toType),
+        makeAsTypeFunction(fromType, toType, fromSize, toSize),
       ).ref,
       Seq(expr),
     )

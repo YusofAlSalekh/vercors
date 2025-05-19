@@ -9,4 +9,6 @@ trait PointerTypeImpl[G] {
   val unique: Option[BigInt]
   val isConst: Boolean
   val isNonNull: Boolean
+
+  def asNullable: Type[G]
 }

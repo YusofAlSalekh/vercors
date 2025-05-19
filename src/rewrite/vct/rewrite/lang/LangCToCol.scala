@@ -13,7 +13,7 @@ import vct.col.resolve.ctx._
 import vct.col.resolve.lang.C.nameFromDeclarator
 import vct.col.rewrite.{Generation, Rewritten}
 import vct.col.typerules.{CoercionUtils, TypeSize}
-import vct.col.util.SuccessionMap
+import vct.col.util.{SuccessionMap, Substitute}
 import vct.col.util.AstBuildHelpers._
 import vct.result.Message
 import vct.result.VerificationError.{Unreachable, UserError}
@@ -48,6 +48,12 @@ case object LangCToCol {
       param.o.messageInContext(
         s"This parameter has a type that is not allowed outside of a GPU kernel."
       )
+  }
+
+  private case class WrongGPUDimension(o: Origin) extends UserError {
+    override def code: String = "wrongGPUDimension"
+    override def text: String =
+      o.messageInContext(s"We only support GPU dimensions up to size 3.")
   }
 
   private case class WrongCType(decl: Declaration[_]) extends UserError {
@@ -294,6 +300,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val cudaCurrentBlockIdx: ScopedStack[CudaVec] = ScopedStack()
   private val cudaCurrentBlockDim: ScopedStack[CudaVec] = ScopedStack()
   private val cudaCurrentGridDim: ScopedStack[CudaVec] = ScopedStack()
+  private val cudaConstantDims: ScopedStack[ConstantCudaVec] = ScopedStack()
 
   private val cudaCurrentGrid: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
   private val cudaCurrentBlock: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
@@ -331,6 +338,33 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           dim -> new Variable[Post](TCInt())(CudaIndexVariableOrigin(dim))
         ): _*
     )
+  }
+
+  class ConstantCudaVec(var indicesConstant: Seq[RefCudaVecDim[Pre]])(
+      implicit val o: Origin
+  ) {
+    var indices: ListMap[RefCudaVecDim[Pre], Variable[Post]] = ListMap(
+      indicesConstant.map(dim =>
+        dim -> new Variable[Post](TCInt())(CudaIndexVariableOrigin(dim))
+      ): _*
+    )
+    // Always keep the x var, if all variables in the block/grid are constant
+    if (
+      indicesConstant.collect {
+        case v: RefCudaVecDim[Pre]
+            if v.vec.isInstanceOf[RefCudaThreadIdx[Pre]] =>
+          v
+      }.size == 3
+    ) { indices = indices.removed(RefCudaVecX[Pre](RefCudaThreadIdx[Pre]())) }
+    if (
+      indicesConstant.collect {
+        case v: RefCudaVecDim[Pre]
+            if v.vec.isInstanceOf[RefCudaBlockIdx[Pre]] =>
+          v
+      }.size == 3
+    ) { indices = indices.removed(RefCudaVecX[Pre](RefCudaBlockIdx[Pre]())) }
+
+    def contains(e: RefCudaVecDim[Pre]): Boolean = indicesConstant.contains(e)
   }
 
   private def hasNoSharedMemNames(node: Node[Pre]): Boolean = {
@@ -471,7 +505,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def sizeOf(t: Type[Pre], sizeOfOrigin: Origin): Expr[Post] = {
     implicit val o: Origin = t.o
-    rw.dispatch(t).bits match {
+    t.bits match {
       case TypeSize.Exact(size) => c_const(size / 8)(sizeOfOrigin)
       case b @ (TypeSize.Unknown() | TypeSize.Minimally(_)) =>
         functionInvocation(
@@ -547,7 +581,13 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case cast @ CCast(_, TOpenCLVector(_, _)) =>
         createOpenCLLiteralVector(cast)
       case CCast(
-            inv @ CInvocation(CLocal("__vercors_malloc"), Seq(arg), Nil, Nil),
+            inv @ CInvocation(
+              CLocal("__vercors_malloc"),
+              Seq(arg),
+              Nil,
+              Nil,
+              false,
+            ),
             tcast,
           ) =>
         val t2 =
@@ -573,24 +613,32 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         NewPointerArray(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(
           c.o
         )
-      case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _), _) =>
+      case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _, _), _) =>
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
       case CCast(e, t) if e.t.asPointer.isDefined && t.asPointer.isDefined =>
-        val newEElement = getBaseType(rw.dispatch(e.t.asPointer.get.element))
-        val newTElement = getBaseType(rw.dispatch(t.asPointer.get.element))
+        val eElement = e.t.asPointer.get.element
+        val tElement = t.asPointer.get.element
+        val newEElement = getBaseType(rw.dispatch(eElement))
+        val newTElement = getBaseType(rw.dispatch(tElement))
         if (
           newEElement == TVoid[Post]() || newTElement == TVoid[Post]() ||
           CoercionUtils.firstElementIsType(newEElement, newTElement) ||
           CoercionUtils.firstElementIsType(newTElement, newEElement)
-        ) { Cast(rw.dispatch(e), TypeValue(rw.dispatch(t))(t.o))(c.o) }
-        else { throw UnsupportedCast(c) }
+        ) {
+          PointerCast(
+            rw.dispatch(e),
+            rw.dispatch(t),
+            sizeOf(eElement, c.o),
+            sizeOf(tElement, c.o),
+          )(c.o)
+        } else { throw UnsupportedCast(c) }
       case CCast(e, t @ TCInt()) if e.t.asPointer.isDefined =>
         if (isUniquePointerElement(e.t.asPointer.get.element))
           throw UnsupportedCast(c)
         IntegerPointerCast(
           rw.dispatch(e),
-          TypeValue(rw.dispatch(t))(t.o),
+          rw.dispatch(t),
           getStride(e.t.asPointer.get.element, c.o),
         )(c.o)
       case CCast(e, t @ CTPointer(innerType))
@@ -598,7 +646,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             !isUniquePointerElement(innerType) =>
         IntegerPointerCast(
           rw.dispatch(e),
-          TypeValue(TPointer(rw.dispatch(innerType), None))(t.o),
+          TPointer(rw.dispatch(innerType), None),
           getStride(innerType, c.o),
         )(c.o)
       case _ => throw UnsupportedCast(c)
@@ -691,6 +739,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }.get
     val pure = func.specs.collectFirst { case CPure() => () }.isDefined
     val inline = func.specs.collectFirst { case CInline() => () }.isDefined
+    val opaque = func.specs.collectFirst { case COpaque() => () }.isDefined
 
     val (contract, subs: Map[CParam[Pre], CParam[Pre]]) =
       func.ref match {
@@ -726,6 +775,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 contract = rw.dispatch(contract),
                 inline = inline,
                 pure = pure,
+                opaque = opaque,
               )(func.blame)(namedO)
             }
           })
@@ -751,19 +801,46 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       blame: Blame[ReceiverNotInjective]
   )(idx: CudaVec, dim: CudaVec, e: Expr[Post]): Expr[Post] = {
     implicit val o: Origin = e.o
+
     val vars = findVars(e)
-    val (filteredIdx, otherIdx) = idx.indices.values.zip(dim.indices.values)
-      .partition { case (i, _) => vars.contains(i) }
+    val nonConstant = idx.indices.zip(dim.indices.values).filter {
+      case ((cudaIndex, _), _) => !cudaConstantDims.top.contains(cudaIndex)
+    }.map { case ((_, index), dim) => (index, dim) }
+
+    val (filteredIdx, otherIdx) = nonConstant.partition { case (i, _) =>
+      vars.contains(i)
+    }
+    // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
+    val sub = Substitute[Post](
+      cudaConstantDims.top.indices.values.map(v => (v.get, c_const[Post](0)))
+        .toMap
+    )
+    val eSub = sub.dispatch(e)
+
+    val (prevBindings, b, prevBlame) =
+      eSub match {
+        case s @ Starall(bindings, Nil, b) => (bindings, b, Some(s.blame))
+        case Forall(bindings, Nil, b) => (bindings, b, None)
+        case b => (Seq(), b, None)
+      }
 
     val body =
       otherIdx.map { case (_, range) => range }
-        .foldLeft(e)((newE, scaleFactor) =>
+        .foldLeft(b)((newE, scaleFactor) =>
           Scale(scaleFactor.get, newE)(PanicBlame("Framed positive"))
         )
-    if (filteredIdx.isEmpty) { body }
-    else {
+    if (filteredIdx.isEmpty) {
+      if (prevBindings.isEmpty)
+        body
+      else {
+        prevBlame match {
+          case Some(oldBlame) => Starall(prevBindings, Nil, body)(oldBlame)
+          case None => Forall(prevBindings, Nil, body)
+        }
+      }
+    } else {
       Starall(
-        filteredIdx.map { case (v, _) => v }.toSeq,
+        filteredIdx.map { case (v, _) => v }.toSeq ++ prevBindings,
         Nil,
         Implies(
           foldAnd(filteredIdx.map { case (idx, dim) =>
@@ -854,6 +931,110 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       (declarations, inits)
     }
 
+  // Returns the threadIdx or blockIdx if its dim is a constant 1
+  // E.g. blockDim.x == 1 returns threadIdx.x
+  def dimsOfSize1Expr(e: Expr[Pre]): Option[RefCudaVecDim[Pre]] = {
+    // If it is block or grid dim, get the idx from it
+    def getIdx(dim: RefCudaVec[Pre]): Option[RefCudaVec[Pre]] =
+      dim match {
+        case RefCudaBlockDim() => Some(RefCudaThreadIdx())
+        case RefCudaGridDim() => Some(RefCudaBlockIdx())
+        case _ => None
+      }
+
+    def cudaVec(target: CDerefTarget[Pre]): Option[RefCudaVecDim[Pre]] =
+      target match {
+        case RefCudaVecX(vec) => getIdx(vec).map(RefCudaVecX[Pre])
+        case RefCudaVecY(vec) => getIdx(vec).map(RefCudaVecY[Pre])
+        case RefCudaVecZ(vec) => getIdx(vec).map(RefCudaVecZ[Pre])
+        case _ => None
+      }
+
+    def openClVec(name: String, idx: Expr[Pre]): Option[RefCudaVecDim[Pre]] = {
+      val dims = Seq[RefCudaVec[Pre] => RefCudaVecDim[Pre]](
+        RefCudaVecX[Pre],
+        RefCudaVecY[Pre],
+        RefCudaVecZ[Pre],
+      )
+      idx match {
+        case CIntegerValue(i, _) if i >= 0 && i < 3 =>
+          val dim = dims(i.toInt)
+          if (name == "get_local_size")
+            Some(dim(RefCudaThreadIdx()))
+          else if (name == "get_num_groups")
+            Some(dim(RefCudaBlockIdx()))
+          else
+            None
+        case _ => None
+      }
+    }
+
+    e match {
+      case AmbiguousEq(acc: CFieldAccess[Pre], CIntegerValue(i, _), _, _)
+          if i == 1 =>
+        cudaVec(acc.ref.get)
+      case AmbiguousEq(CIntegerValue(i, _), acc: CFieldAccess[Pre], _, _)
+          if i == 1 =>
+        cudaVec(acc.ref.get)
+      case AmbiguousEq(CIntegerValue(i, _), inv: CInvocation[Pre], _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
+      case AmbiguousEq(inv: CInvocation[Pre], CIntegerValue(i, _), _, _)
+          if i == 1 && inv.args.size == 1 =>
+        openClVec(inv.ref.get.name, inv.args.head)
+      case _ => None
+    }
+  }
+
+  def workDimConstrained(e: Expr[Pre]): Seq[RefCudaVecDim[Pre]] = {
+    def res(i: BigInt): Seq[RefCudaVecDim[Pre]] = {
+      var res = Seq[RefCudaVecDim[Pre]]()
+      if (i > 3)
+        throw WrongGPUDimension(e.o)
+      if (i < 3)
+        res =
+          res ++ Seq(
+            RefCudaVecZ[Pre](RefCudaThreadIdx()),
+            RefCudaVecZ[Pre](RefCudaBlockIdx()),
+          )
+      if (i < 2)
+        res =
+          res ++ Seq(
+            RefCudaVecY[Pre](RefCudaThreadIdx()),
+            RefCudaVecY[Pre](RefCudaBlockIdx()),
+          )
+      res
+    }
+
+    e match {
+      case AmbiguousEq(
+            inv @ CInvocation(_, Nil, Nil, Nil, _),
+            CIntegerValue(i, _),
+            _,
+            _,
+          ) if inv.ref.get.name == "get_work_dim" =>
+        res(i)
+      case AmbiguousEq(
+            CIntegerValue(i, _),
+            inv @ CInvocation(_, Nil, Nil, Nil, _),
+            _,
+            _,
+          ) if inv.ref.get.name == "get_work_dim" =>
+        res(i)
+      case _ => Seq()
+    }
+  }
+
+  def dimsOfSize1(
+      contract: ApplicableContract[Pre]
+  ): Seq[RefCudaVecDim[Pre]] = {
+    val UnitAccountedPredicate(contractRequires: Expr[Pre]) = contract.requires
+    (unfoldStar(contractRequires)
+      .flatMap(e => dimsOfSize1Expr(e) ++ workDimConstrained(e)) ++
+      unfoldStar(contract.contextEverywhere)
+        .flatMap(e => dimsOfSize1Expr(e) ++ workDimConstrained(e))).distinct
+  }
+
   def kernelProcedure(
       o: Origin,
       contract: ApplicableContract[Pre],
@@ -864,46 +1045,48 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     dynamicSharedMemNames.clear()
     staticSharedMemNames.clear()
     kernelSpecifier = Some(kernelSpec)
+    val constantIdx = new ConstantCudaVec(dimsOfSize1(contract))(o)
 
     val blockDim = new CudaVec(RefCudaBlockDim())(o)
     val gridDim = new CudaVec(RefCudaGridDim())(o)
-    cudaCurrentBlockDim.having(blockDim) {
-      cudaCurrentGridDim.having(gridDim) {
-        val args =
-          rw.variables.collect { info.params.get.foreach(rw.dispatch) }._1
-        val implFiltered = body.map(init => filterSharedDecl(init))
+    cudaConstantDims.having(constantIdx) {
+      cudaCurrentBlockDim.having(blockDim) {
+        cudaCurrentGridDim.having(gridDim) {
+          val args =
+            rw.variables.collect { info.params.get.foreach(rw.dispatch) }._1
+          val implFiltered = body.map(init => filterSharedDecl(init))
 
-        rw.variables.collect {
-          dynamicSharedMemNames
-            .foreach(d => rw.variables.declare(cNameSuccessor(d)))
-        }
-        rw.variables.collect {
-          staticSharedMemNames
-            .foreach(d => rw.variables.declare(cNameSuccessor(d._1)))
-        }
-        val (
-          sharedMemSizes,
-          (
-            sharedMemDecls: Seq[Variable[Post]],
-            sharedMemInits: Seq[Statement[Post]],
-          ),
-        ) = declareSharedMemory()
+          rw.variables.collect {
+            dynamicSharedMemNames
+              .foreach(d => rw.variables.declare(cNameSuccessor(d)))
+          }
+          rw.variables.collect {
+            staticSharedMemNames
+              .foreach(d => rw.variables.declare(cNameSuccessor(d._1)))
+          }
+          val (
+            sharedMemSizes,
+            (
+              sharedMemDecls: Seq[Variable[Post]],
+              sharedMemInits: Seq[Statement[Post]],
+            ),
+          ) = declareSharedMemory()
 
-        val newArgs =
-          blockDim.indices.values.toSeq ++ gridDim.indices.values.toSeq ++
-            args ++ sharedMemSizes
-        val newGivenArgs = rw.variables.dispatch(contract.givenArgs)
-        val newYieldsArgs = rw.variables.dispatch(contract.yieldsArgs)
-        // We add the requirement that a GPU kernel must always have threads (non zero block or grid dimensions)
-        val nonZeroThreads: Expr[Post] =
-          foldStar(
-            (blockDim.indices.values ++ gridDim.indices.values)
-              .map(v => Less(c_const(0)(o), v.get(o))(o)).toSeq
-          )(o)
-        val UnitAccountedPredicate(contractRequires: Expr[Pre]) =
-          contract.requires
-        val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
-          contract.ensures
+          val newArgs =
+            blockDim.indices.values.toSeq ++ gridDim.indices.values.toSeq ++
+              args ++ sharedMemSizes
+          val newGivenArgs = rw.variables.dispatch(contract.givenArgs)
+          val newYieldsArgs = rw.variables.dispatch(contract.yieldsArgs)
+          // We add the requirement that a GPU kernel must always have threads (non zero block or grid dimensions)
+          val nonZeroThreads: Expr[Post] =
+            foldStar(
+              (blockDim.indices.values ++ gridDim.indices.values)
+                .map(v => Less(c_const(0)(o), v.get(o))(o)).toSeq
+            )(o)
+          val UnitAccountedPredicate(contractRequires: Expr[Pre]) =
+            contract.requires
+          val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
+            contract.ensures
 
         val parBody = body.map(impl => {
           implicit val o: Origin = impl.o
@@ -923,32 +1106,50 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                         .filter(hasNoSharedMemNames)
                         .map(allThreadsInBlock(KernelNotInjective(kernelSpec)))
                     )
+                    def getIters(idxs: CudaVec, dims: CudaVec)
+                        : Seq[IterVariable[Post]] = {
+                      var innerIters =
+                        idxs.indices.zip(dims.indices.values)
+                          .filter { case ((cudaIndex, _), _) =>
+                            !constantIdx.contains(cudaIndex)
+                          }.map { case ((_, index), dim) =>
+                            IterVariable(index, c_const(0), dim.get)
+                          }.toSeq
+                      // Always have atleast the x dimension
+                      if (innerIters.isEmpty) {
+                        innerIters = Seq(IterVariable(
+                          idxs.indices.head._2,
+                          c_const(0),
+                          dims.indices.head._2.get,
+                        ))
+                      }
+                      innerIters
+                    }
+
+                    // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
+                    val sub = Substitute[Post](
+                      cudaConstantDims.top.indices.values
+                        .map(v => (v.get, c_const[Post](0))).toMap
+                    )
+
                     val innerContent = ParStatement(
                       ParBlock(
                         decl = blockDecl,
-                        iters =
-                          threadIdx.indices.values.zip(blockDim.indices.values)
-                            .map { case (index, dim) =>
-                              IterVariable(index, c_const(0), dim.get)
-                            }.toSeq,
+                        iters = getIters(threadIdx, blockDim),
                         // Context is already inherited
                         context_everywhere = Star(
                           nonZeroThreads,
-                          rw.dispatch(contract.contextEverywhere),
+                          sub.dispatch(rw.dispatch(contract.contextEverywhere)),
                         ),
-                        requires = rw.dispatch(contractRequires),
-                        ensures = rw.dispatch(contractEnsures),
+                        requires = sub.dispatch(rw.dispatch(contractRequires)),
+                        ensures = sub.dispatch(rw.dispatch(contractEnsures)),
                         content = rw.dispatch(implFiltered.get),
                       )(KernelParFailure(kernelSpec))
                     )
-                    val outerContent = ParStatement(
+                    val outerContent = ParStatement[Post](
                       ParBlock(
                         decl = gridDecl,
-                        iters =
-                          blockIdx.indices.values.zip(gridDim.indices.values)
-                            .map { case (index, dim) =>
-                              IterVariable(index, c_const(0), dim.get)
-                            }.toSeq,
+                        iters = getIters(blockIdx, gridDim),
                         // Context is added to requires and ensures here
                         context_everywhere = tt,
                         requires = Star(
@@ -985,11 +1186,24 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                       )(KernelParFailure(kernelSpec))
                     )
                     val invariant = rw.dispatch(contract.kernelInvariant)
-                    ParInvariant(
+                    val parStmt = ParInvariant(
                       decl = invDecl,
                       inv = invariant,
                       content = outerContent
                     )(KernelInvFailure(kernelSpec))
+                    // For constant
+                    val constants: Seq[Variable[Post]] =
+                      constantIdx.indices.values.toSeq
+                    if (constants.nonEmpty) {
+                      Scope[Post](
+                        constants,
+                        Block[Post](
+                          constants
+                            .map(c => assignLocal(c.get, c_const[Post](0))) ++
+                            Seq(parStmt)
+                        ),
+                      )
+                    } else { parStmt }
                   }
                 }
               }
@@ -1043,7 +1257,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           )(AbstractApplicable)(o)
         kernelSpecifier = None
 
-        result
+          result
+        }
       }
     }
   }
@@ -1192,6 +1407,45 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  def getFirstTypes(aggregate: Type[Pre]): Seq[Type[Pre]] =
+    aggregate match {
+      case struct: CTStruct[Pre] =>
+        val decls =
+          struct.ref.decl.decl match {
+            case CDeclaration(
+                  _,
+                  _,
+                  Seq(CStructDeclaration(Some(_), decls)),
+                  Seq(),
+                ) =>
+              decls
+            case _ => throw WrongStructType(struct.ref.decl)
+          }
+        decls.headOption.map { fieldDecl =>
+          val CStructMemberDeclarator(
+            specs: Seq[CDeclarationSpecifier[Pre]],
+            Seq(_),
+          ) = fieldDecl
+          val t =
+            specs.collectFirst { case t: CSpecificationType[Pre] =>
+              t.t match {
+                case TUnique(inner, _) => inner
+                case inner => inner
+              }
+            }.get
+          t +: getFirstTypes(t)
+        }.getOrElse(Nil)
+      case TArray(element) => element +: getFirstTypes(element)
+      case LLVMTStruct(_, _, elements) =>
+        elements.headOption.map { field => field +: getFirstTypes(field) }
+          .getOrElse(Nil)
+      case LLVMTStruct(_, _, elements) =>
+        elements.head +: getFirstTypes(elements.head)
+      case LLVMTArray(_, elementType) =>
+        elementType +: getFirstTypes(elementType)
+      case _ => Nil
+    }
+
   def rewriteStruct(decl: CGlobalDeclaration[Pre]): Unit = {
     val (decls, sdecl) =
       decl.decl match {
@@ -1204,6 +1458,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           (decls, sdecl)
         case _ => throw WrongStructType(decl)
       }
+
+    val casts =
+      sizeOf(CTStruct(decl.ref), decl.o) +: getFirstTypes(CTStruct(decl.ref))
+        .map { t => (sizeOf(t, decl.o)) }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
@@ -1236,6 +1494,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         false,
+        casts,
       )(CStructOrigin(sdecl))
 
     rw.globalDeclarations.declare(newStruct)
@@ -1250,6 +1509,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     if (isStruct) { rewriteStruct(decl); return }
     val pure = decl.decl.specs.collectFirst { case CPure() => () }.isDefined
     val inline = decl.decl.specs.collectFirst { case CInline() => () }.isDefined
+    val opaque = decl.decl.specs.collectFirst { case COpaque() => () }.isDefined
 
     val t =
       decl.decl.specs.collectFirst { case t: CSpecificationType[Pre] =>
@@ -1273,6 +1533,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 contract = rw.dispatch(decl.decl.contract),
                 pure = pure,
                 inline = inline,
+                opaque = opaque,
               )(AbstractApplicable)(init.o.sourceName(info.name))
             )
           )
@@ -1645,6 +1906,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
     def getCuda(dim: RefCudaVecDim[Pre]): Expr[Post] =
       dim.vec match {
+        case _ if cudaConstantDims.top.indices.contains(dim) =>
+          cudaConstantDims.top.indices(dim).get
         case RefCudaThreadIdx() => cudaCurrentThreadIdx.top.indices(dim).get
         case RefCudaBlockIdx() => cudaCurrentBlockIdx.top.indices(dim).get
         case RefCudaBlockDim() => cudaCurrentBlockDim.top.indices(dim).get
@@ -1945,7 +2208,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   }
 
   def invocation(inv: CInvocation[Pre]): Expr[Post] = {
-    val CInvocation(applicable, args, givenMap, yields) = inv
+    val CInvocation(applicable, args, givenMap, yields, reveal) = inv
 
     val newArgs = args.map(a => rw.dispatch(a))
 
@@ -1959,6 +2222,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           args,
           givenMap,
           yields,
+          reveal,
           inv,
           inv.blame,
         )
@@ -1970,6 +2234,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           Nil,
           givenMap.map { case (Ref(v), e) => (rw.succ(v), rw.dispatch(e)) },
           yields.map { case (e, Ref(v)) => (rw.dispatch(e), rw.succ(v)) },
+          reveal = reveal,
         )(inv.blame)
       case e: RefCGlobalDeclaration[Pre] => globalInvocation(e, inv, newArgs)
     }
@@ -2010,6 +2275,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  def getGpuIdx[A](s: Seq[A], i: Int, o: Origin): A = {
+    s.applyOrElse(i, (_: Int) => throw WrongGPUDimension(o))
+  }
+
   /** Returns the local id of a thread in a given dimension.
     * @param index
     *   \- the dimension for which we want the thread id
@@ -2020,7 +2289,14 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaLocalThread(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentThreadIdx.top.indices.values.toSeq.apply(index).get
+    val idxs = Seq(
+      RefCudaVecX[Pre](RefCudaThreadIdx()),
+      RefCudaVecY[Pre](RefCudaThreadIdx()),
+      RefCudaVecZ[Pre](RefCudaThreadIdx()),
+    )
+    val v = getGpuIdx(idxs, index, o)
+    cudaConstantDims.top.indices
+      .getOrElse(v, cudaCurrentThreadIdx.top.indices(v)).get
   }
 
   /** Returns the group id of a thread in a given dimension.
@@ -2033,7 +2309,14 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaGroupThread(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentBlockIdx.top.indices.values.toSeq.apply(index).get
+    val idxs = Seq(
+      RefCudaVecX[Pre](RefCudaBlockIdx()),
+      RefCudaVecY[Pre](RefCudaBlockIdx()),
+      RefCudaVecZ[Pre](RefCudaBlockIdx()),
+    )
+    val v = getGpuIdx(idxs, index, o)
+    cudaConstantDims.top.indices
+      .getOrElse(v, cudaCurrentBlockIdx.top.indices(v)).get
   }
 
   /** Returns the local size of a given dimension.
@@ -2046,7 +2329,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaLocalSize(index: Int, origin: Origin): Expr[Post] = {
     implicit val o: Origin = origin
-    cudaCurrentBlockDim.top.indices.values.toSeq.apply(index).get
+    getGpuIdx(cudaCurrentBlockDim.top.indices.values.toSeq, index, o).get
   }
 
   /** Returns the global size of a given dimension.
@@ -2059,7 +2342,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     */
   def getCudaGroupSize(index: Int, o: Origin): Expr[Post] = {
     implicit val origin: Origin = o
-    cudaCurrentGridDim.top.indices.values.toSeq.apply(index).get
+    getGpuIdx(cudaCurrentGridDim.top.indices.values.toSeq, index, o).get
   }
 
   /** Rewrites a LocalThreadId and translates it to a linear ID value. The
@@ -2118,7 +2401,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       inv: CInvocation[Pre],
       rewrittenArgs: Seq[Expr[Post]],
   ): Expr[Post] = {
-    val CInvocation(_, args, givenMap, yields) = inv
+    val CInvocation(_, args, givenMap, yields, reveal) = inv
     val RefCGlobalDeclaration(decls, initIdx) = e
     implicit val o: Origin = inv.o
 
@@ -2132,7 +2415,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val arg =
       if (args.size == 1) {
         args.head match {
-          case CIntegerValue(i, _) if i >= 0 && i < 3 => Some(i.toInt)
+          case CIntegerValue(i, _) => Some(i.toInt)
           case _ => None
         }
       } else
@@ -2156,6 +2439,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           Nil,
           givenMap.map { case (Ref(v), e) => (rw.succ(v), rw.dispatch(e)) },
           yields.map { case (e, Ref(v)) => (rw.dispatch(e), rw.succ(v)) },
+          reveal = reveal,
         )(inv.blame)
     }
   }

@@ -1,3 +1,5 @@
+adt PointerCastHelper {}
+
 adt `block` {
   pure int block_length(`block` b);
   pure ref loc(`block` b, int i);
@@ -59,12 +61,12 @@ ensures `pointer`.pointer_block(\result) == `pointer`.pointer_block(p);
 pure `pointer` ptr_add(`pointer` p, int offset);
 
 decreases;
-ensures (\forall `pointer` p, int offset, int i;
+ensures \polarity_dependent((\forall `pointer` p, int offset, int i;
     0 <= `pointer`.pointer_offset(p) + offset &&
     `pointer`.pointer_offset(p) + offset < `block`.block_length(`pointer`.pointer_block(p)) &&
     0 <= `pointer`.pointer_offset(p) + offset + i &&
     `pointer`.pointer_offset(p) + offset + i < `block`.block_length(`pointer`.pointer_block(p));
-    {:ptr_add(ptr_add(p, offset), i):} == ptr_add(p, offset + i));
+    {:ptr_add(ptr_add(p, offset), i):} == ptr_add(p, offset + i)), true);
 pure boolean ptr_add_axiom() = true;
 
 decreases;
