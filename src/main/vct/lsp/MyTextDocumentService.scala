@@ -15,10 +15,10 @@ import org.eclipse.lsp4j.{
   Range,
   _,
 }
-import vct.lsp.LspMessages._
 import vct.col.ast.{Local, Node, Verification}
 import vct.col.origin.{BlameCollector, Name, PositionRange, ReadableOrigin}
 import vct.col.rewrite.Generation
+import vct.lsp.LspMessages._
 import vct.main.stages.{Parsing, Resolution}
 import vct.options.Options
 import vct.options.types.PathOrStd
@@ -39,6 +39,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   var parsingResults: Option[ParseResult[Nothing]] = None
   var resolutionResults: Option[Verification[_ <: Generation]] = None
   var originMap: TreeMap[(Int, Int, Int), (Int, Int, Int)] = TreeMap.empty
+  private lazy val allCompletions: List[CompletionItem] = loadAllCompletions()
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
@@ -49,83 +50,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   override def didSave(params: DidSaveTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
     showInfo("Document saved")
-    /*MyLanguageServer.client
-      .showMessage(new MessageParams(MessageType.Info, s"Document saved"))*/
     analyzeDocument(uri)
   }
 
   override def didChange(params: DidChangeTextDocumentParams): Unit = {
-    /*
-    val text = params.getContentChanges.get(0).getText
-  /*  val diagnostics = validateText(text)
-    val paramsDiag =
-      new PublishDiagnosticsParams(
-        params.getTextDocument.getUri,
-        diagnostics.asJava,
-      )
-    if (MyLanguageServer.client != null) {
-      MyLanguageServer.client.publishDiagnostics(paramsDiag)
-    }*/*/
     val uri = params.getTextDocument.getUri
     val text = params.getContentChanges.get(0).getText
     docs(uri) = text
     analyzeDocument(uri)
-
   }
 
-  override def didClose(params: DidCloseTextDocumentParams): Unit = {
-    /*  MyLanguageServer.client.logMessage(new MessageParams(
-      MessageType.Log,
-      s"Document closed: ${params.getTextDocument.getUri}",
-    ))*/
-
-  }
-
-  private lazy val allCompletions: List[CompletionItem] = loadAllCompletions()
-
-  private def loadAllCompletions(): List[CompletionItem] = {
-    case class Entry(`match`: String)
-
-    def load(path: String): List[Entry] = {
-      val streamOpt = Option(getClass.getClassLoader.getResourceAsStream(path))
-
-      streamOpt match {
-        case Some(stream) =>
-          val source = scala.io.Source.fromInputStream(stream)
-          val content =
-            try source.mkString
-            finally source.close()
-          parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
-
-        case None =>
-         /* MyLanguageServer.client.showMessage(new MessageParams(
-            MessageType.Error,
-            s"JSON for completions not found: $path",
-          ))*/
-          showError(s"JSON for completions not found: $path")
-          Nil
-      }
-    }
-
-    val javaEntries = load("lsp/language-server-java-c-matches.json")
-    val pvlEntries = load("lsp/language-server-pvl-matches.json")
-
-    (javaEntries ++ pvlEntries).distinctBy(_.`match`).map { e =>
-      val it = new CompletionItem(e.`match`)
-      it.setKind(CompletionItemKind.Keyword)
-      it
-    }
-  }
-
-  private def extractPrefix(text: String, pos: Position): String = {
-    val lines = text.split("\r?\n", -1)
-    if (pos.getLine >= lines.length)
-      return ""
-    val line = lines(pos.getLine)
-    val idx = pos.getCharacter.min(line.length)
-    line.substring(0, idx).reverse
-      .takeWhile(ch => ch.isLetterOrDigit || ch == '_').reverse
-  }
+  override def didClose(params: DidCloseTextDocumentParams): Unit = {}
 
   override def completion(params: CompletionParams): CompletableFuture[
     Either[java.util.List[CompletionItem], CompletionList]
@@ -165,47 +100,19 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       val resolvedProgram = resolutionResults.get.tasks.head.program
       val locals: Seq[Local[_]] = collectLocals(resolvedProgram)
       originMap = TreeMap.from(hashLocalOrigins(locals))
-
-      // Clear any previous diagnostics (optional)
-      // MyLanguageServer.client.publishDiagnostics(new PublishDiagnosticsParams(uri, Collections.emptyList()))
     } catch {
       case err: VerificationError.UserError =>
-        /* MyLanguageServer.client.logMessage(new MessageParams(
-          MessageType.Error,
-          s"User error during parsing/resolution: ${err.text}",
-        ))*/
         val diagnostics = createDiagnostics(err)
         MyLanguageServer.client.publishDiagnostics(
           new PublishDiagnosticsParams(uri, diagnostics.asJava)
         )
 
       case err: VerificationError.SystemError =>
-        /*MyLanguageServer.client.showMessage(new MessageParams(
-          MessageType.Error,
-          s"Verification error: ${err.text}",
-        ))*/
         showError(s"Verification error: ${err.text}")
 
-      case ex: Exception =>
-        /*MyLanguageServer.client.showMessage(new MessageParams(
-          MessageType.Error,
-          s"Unexpected error: ${ex.getMessage}",
-        ))*/
-        showError(s"Unexpected error: ${ex.getMessage}")
+      case ex: Exception => showError(s"Unexpected error: ${ex.getMessage}")
     }
   }
-
-  /* private def validateText(text: String): List[Diagnostic] = {
-    val pattern: Regex = "\\b[A-Z]{2,}\\b".r
-    pattern.findAllMatchIn(text).map { m =>
-      val diagnostic = new Diagnostic()
-      diagnostic.setSeverity(DiagnosticSeverity.Warning)
-      diagnostic.setMessage(s"${m.matched} is all uppercase.")
-      diagnostic
-        .setRange(new Range(new Position(0, m.start), new Position(0, m.end)))
-      diagnostic
-    }.toList
-  }*/
 
   override def definition(params: DefinitionParams): CompletableFuture[
     Either[java.util.List[_ <: Location], java.util.List[_ <: LocationLink]]
@@ -236,17 +143,14 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
           locationLink.setOriginSelectionRange(originRange)
           locationLink.setTargetUri(uri)
           locationLink.setTargetRange(targetRange)
-          locationLink
-            .setTargetSelectionRange(targetRange) // could be improved later
+          locationLink.setTargetSelectionRange(targetRange)
 
           Either.forRight(Collections.singletonList(locationLink))
 
         case _ =>
-          /*MyLanguageServer.client.showMessage(new MessageParams(
-            MessageType.Info,
-            s"No definition found at line ${pos.getLine}, character ${pos.getCharacter}",
-          ))*/
-          showInfo(s"No definition found at line ${pos.getLine}, character ${pos.getCharacter}")
+          showInfo(
+            s"No definition found at line ${pos.getLine}, character ${pos.getCharacter}"
+          )
           Either.forRight(Collections.emptyList())
       }
     CompletableFuture.completedFuture(result)
@@ -259,6 +163,46 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       endLine: Int,
       endCol: Int,
   )
+
+  private def loadAllCompletions(): List[CompletionItem] = {
+    case class Entry(`match`: String)
+
+    def load(path: String): List[Entry] = {
+      val streamOpt = Option(getClass.getClassLoader.getResourceAsStream(path))
+
+      streamOpt match {
+        case Some(stream) =>
+          val source = scala.io.Source.fromInputStream(stream)
+          val content =
+            try source.mkString
+            finally source.close()
+          parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
+
+        case None =>
+          showError(s"JSON for completions not found: $path")
+          Nil
+      }
+    }
+
+    val javaEntries = load("lsp/language-server-java-c-matches.json")
+    val pvlEntries = load("lsp/language-server-pvl-matches.json")
+
+    (javaEntries ++ pvlEntries).distinctBy(_.`match`).map { e =>
+      val it = new CompletionItem(e.`match`)
+      it.setKind(CompletionItemKind.Keyword)
+      it
+    }
+  }
+
+  private def extractPrefix(text: String, pos: Position): String = {
+    val lines = text.split("\r?\n", -1)
+    if (pos.getLine >= lines.length)
+      return ""
+    val line = lines(pos.getLine)
+    val idx = pos.getCharacter.min(line.length)
+    line.substring(0, idx).reverse
+      .takeWhile(ch => ch.isLetterOrDigit || ch == '_').reverse
+  }
 
   private def createDiagnostics(
       err: VerificationError.UserError
