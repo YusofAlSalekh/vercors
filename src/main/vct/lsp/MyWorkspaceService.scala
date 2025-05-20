@@ -16,7 +16,6 @@ import vct.options.Options
 import vct.options.types.PathOrStd
 import vct.parsers.transform.ConstantBlameProvider
 import vct.result.VerificationError
-import viper.carbon.boogie.Implicits.lift
 
 import java.net.URI
 import java.nio.file.Paths
@@ -43,17 +42,12 @@ class MyWorkspaceService extends WorkspaceService {
           params.getArguments.get(0).asInstanceOf[JsonPrimitive].getAsString
         val path = Paths.get(new URI(uri))
         val options = Options().copy(inputs = List(PathOrStd.Path(path)))
-        /*MyLanguageServer.client.logMessage(
-          new MessageParams(MessageType.Info, s"Options: ${options.inputs}")
-        )*/
-
         val rawToken = params.getWorkDoneToken
         val token =
           if (rawToken.isLeft)
             rawToken.getLeft
           else
             rawToken.getRight.toString
-
         val createParams = new WorkDoneProgressCreateParams()
         createParams.setToken(token)
 
@@ -61,11 +55,8 @@ class MyWorkspaceService extends WorkspaceService {
         catch {
           case ex: Exception =>
             showError(s"Error calling createProgress: ${ex.getMessage}")
-            /*MyLanguageServer.client.showMessage(new MessageParams(
-              MessageType.Error,
-              s"Error calling createProgress: ${ex.getMessage}",
-            ))*/
         }
+
         val rootTask = TaskRegistry.getRootTask
         CompletableFuture
           .runAsync(() => runVerificationStages(options, token, uri, rootTask))
@@ -112,38 +103,29 @@ class MyWorkspaceService extends WorkspaceService {
       if (checkCancelled(token))
         return
       report("Parsing")
-      /*val parsing = Some(
-        Parsing.ofOptions(options, blameProvider).run(options.inputs)
-      )*/
-      val parsing = Parsing.ofOptions(options, blameProvider).run(options.inputs)
+      val parsing = Parsing.ofOptions(options, blameProvider)
+        .run(options.inputs)
 
       if (checkCancelled(token))
         return
       report("Resolution")
       val resolution = Resolution.ofOptions(options, blameProvider).run(parsing)
-      /*val resolution = Some(
-        Resolution.ofOptions(options, blameProvider).run(parsing.get)
-      )*/
 
       if (checkCancelled(token))
         return
       report("Transformation")
-      val transformation = Transformation.ofOptions(options, bipResults).run(resolution)
-      /*val transformation = Some(
-        Transformation.ofOptions(options, bipResults).run(resolution.get)
-      )*/
+      val transformation = Transformation.ofOptions(options, bipResults)
+        .run(resolution)
 
       if (checkCancelled(token))
         return
       report("Backend")
       val backend = Backend.ofOptions(options).run(transformation)
-      //val backend = Some(Backend.ofOptions(options).run(transformation.get))
 
       if (checkCancelled(token))
         return
       report("ExpectedErrors")
       ExpectedErrors.ofOptions(options).run(backend)
-      //ExpectedErrors.ofOptions(options).run(backend.get)
 
       val failures = collector.errs.toSeq
       sendUnexpectedFailureDiagnostics(uri, failures)
@@ -154,31 +136,20 @@ class MyWorkspaceService extends WorkspaceService {
         s"Actual verification failures:\n$errorDescriptions",
       ))
       showInfo("Verification completed")
-      /*MyLanguageServer.client.showMessage(
-        new MessageParams(MessageType.Info, s"Verification completed")
-      )*/
     } catch {
       case err: VerificationError =>
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Verification failed: ${err.getMessage}")
         notifyProgress(token, end)
-
         sendVerificationErrorDiagnostic(uri, err)
 
       case ex: Exception =>
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Unexpected error: ${ex.getMessage}")
         notifyProgress(token, end)
-        /* MyLanguageServer.client.logMessage(new MessageParams(
-          MessageType.Log,
-          s"User error during parsing/resolution: ${ex.getStackTrace
-              .mkString("Array(", "\n", ")")}",
-        ))*/
-       /* MyLanguageServer.client.showMessage(new MessageParams(
-          MessageType.Error,
-          s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}",
-        ))*/
-        showError(s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}")
+        showError(
+          s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}"
+        )
     }
   }
 
@@ -189,14 +160,18 @@ class MyWorkspaceService extends WorkspaceService {
     val diagnostics = failures.flatMap {
       case vf: WithContractFailure =>
         val mainDiagOpt = nodeFailureToDiagnostic(vf, vf.inlineDesc)
-        val causeDiagOpt = nodeFailureToDiagnostic(vf.failure, vf.failure.inlineDescCompletion)
+        val causeDiagOpt = nodeFailureToDiagnostic(
+          vf.failure,
+          vf.failure.inlineDescCompletion,
+        )
 
         val diagWithRelated = causeDiagOpt.map { causeDiag =>
           mainDiagOpt.foreach { mainDiag =>
-            val related = new DiagnosticRelatedInformation(
-              new Location(uri, mainDiag.getRange),
-              mainDiag.getMessage
-            )
+            val related =
+              new DiagnosticRelatedInformation(
+                new Location(uri, mainDiag.getRange),
+                mainDiag.getMessage,
+              )
             causeDiag.setRelatedInformation(List(related).asJava)
           }
           causeDiag
@@ -207,19 +182,9 @@ class MyWorkspaceService extends WorkspaceService {
         nodeFailureToDiagnostic(vf, vf.inlineDesc).toList
 
       case vf =>
-       /* MyLanguageServer.client.showMessage(new MessageParams(
-          MessageType.Error,
-          s"Verification failure without position: ${vf.getClass
-              .getSimpleName} – ${vf.inlineDesc}",
-        ))*/
-        showError(s"Verification failure without position: ${vf.getClass
-          .getSimpleName} – ${vf.inlineDesc}")
-        /*MyLanguageServer.client
-          .logMessage(new MessageParams( // think how to handle this
-            MessageType.Warning,
-            s"Verification failure without position: ${vf.getClass
-                .getSimpleName} – ${vf.inlineDesc}",
-          ))*/
+        showError(
+          s"Verification failure: ${vf.getClass.getSimpleName} – ${vf.inlineDesc}"
+        )
         Seq.empty
     }
     MyLanguageServer.client
@@ -261,15 +226,9 @@ class MyWorkspaceService extends WorkspaceService {
         )
 
       case None =>
-        /*MyLanguageServer.client.logMessage(new MessageParams(
-          MessageType.Warning,
-          s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
-        ))*/
-       /* MyLanguageServer.client.showMessage(new MessageParams(
-          MessageType.Error,
-          s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
-        ))*/
-        showError(s"No origin found for VerificationError: ${err.getClass.getSimpleName}")
+        showError(
+          s"No origin found for VerificationError: ${err.getClass.getSimpleName}"
+        )
     }
   }
 
