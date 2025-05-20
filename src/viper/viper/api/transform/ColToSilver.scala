@@ -19,6 +19,7 @@ import viper.silver.{ast => silver}
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.math.BigInt
 
 object ColToSilver {
   def transform(
@@ -37,9 +38,10 @@ case class ColToSilver(program: col.Program[_]) {
   val predicates: ArrayBuffer[silver.Predicate] = ArrayBuffer()
   val methods: ArrayBuffer[silver.Method] = ArrayBuffer()
 
-  val nameStack: mutable.Stack[mutable.Map[col.Declaration[_], (String, Int)]] =
+  val nameStack
+      : mutable.Stack[mutable.Map[col.Declaration[_], (String, BigInt)]] =
     mutable.Stack()
-  var names: mutable.Map[col.Declaration[_], (String, Int)] = mutable.Map()
+  var names: mutable.Map[col.Declaration[_], (String, BigInt)] = mutable.Map()
   val currentPredicatePath: ScopedStack[Seq[AccountedDirection]] = ScopedStack()
   val currentInvariant: ScopedStack[col.LoopInvariant[_]] = ScopedStack()
   val currentStarall: ScopedStack[col.Starall[_]] = ScopedStack()
@@ -62,18 +64,21 @@ case class ColToSilver(program: col.Program[_]) {
   def push(): Unit = nameStack.push(names.clone())
   def pop(): Unit = names = nameStack.pop()
 
-  def unpackName(name: String): (String, Int) = {
+  def unpackName(name: String): (String, BigInt) = {
     val m = "^(.*?)([1-9][0-9]*)?$".r.findFirstMatchIn(name).get
-    if (Option(m.group(2)).isDefined) {
-      (m.group(1), Integer.parseInt(m.group(2)))
-    } else { (m.group(1), 0) }
+    m.subgroups match {
+      case Seq(prefix, null) =>
+        // subgroups returns _all_ capturing groups, putting null for those that were not matched
+        (prefix, 0)
+      case Seq(prefix, num) => (prefix, BigInt(num).abs)
+    }
   }
 
-  def packName(name: String, index: Int): String =
+  def packName(name: String, index: BigInt): String =
     if (index == 0)
       name
     else
-      s"$name$index"
+      s"$name${index.abs}"
 
   def sanitize(name: String): String = {
     if (name.isEmpty)

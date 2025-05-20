@@ -18,6 +18,8 @@ tmp
 tmp.*
 vct-tool.jar
 .bsp/
+.bloop/
+.metals/
 null/
 .compile-strict
 .include-vcllvm
