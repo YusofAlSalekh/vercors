@@ -10,6 +10,7 @@ import org.eclipse.lsp4j.services.WorkspaceService
 import vct.col.ast.Node
 import vct.col.origin._
 import vct.col.rewrite.bip.BIP
+import vct.lsp.LspMessages._
 import vct.main.stages._
 import vct.options.Options
 import vct.options.types.PathOrStd
@@ -59,10 +60,11 @@ class MyWorkspaceService extends WorkspaceService {
         try { MyLanguageServer.client.createProgress(createParams) }
         catch {
           case ex: Exception =>
-            MyLanguageServer.client.showMessage(new MessageParams(
+            showError(s"Error calling createProgress: ${ex.getMessage}")
+            /*MyLanguageServer.client.showMessage(new MessageParams(
               MessageType.Error,
               s"Error calling createProgress: ${ex.getMessage}",
-            ))
+            ))*/
         }
         val rootTask = TaskRegistry.getRootTask
         CompletableFuture
@@ -110,38 +112,38 @@ class MyWorkspaceService extends WorkspaceService {
       if (checkCancelled(token))
         return
       report("Parsing")
-      val parsing = Some(
+      /*val parsing = Some(
         Parsing.ofOptions(options, blameProvider).run(options.inputs)
-      )
-      // val parsing = Parsing.ofOptions(options, blameProvider).run(options.inputs)
+      )*/
+      val parsing = Parsing.ofOptions(options, blameProvider).run(options.inputs)
 
       if (checkCancelled(token))
         return
       report("Resolution")
-      // val resolution = Resolution.ofOptions(options, blameProvider).run(parsing)
-      val resolution = Some(
+      val resolution = Resolution.ofOptions(options, blameProvider).run(parsing)
+      /*val resolution = Some(
         Resolution.ofOptions(options, blameProvider).run(parsing.get)
-      )
+      )*/
 
       if (checkCancelled(token))
         return
       report("Transformation")
-      // val transformation = Transformation.ofOptions(options, bipResults).run(resolution)
-      val transformation = Some(
+      val transformation = Transformation.ofOptions(options, bipResults).run(resolution)
+      /*val transformation = Some(
         Transformation.ofOptions(options, bipResults).run(resolution.get)
-      )
+      )*/
 
       if (checkCancelled(token))
         return
       report("Backend")
-      // val backend = Backend.ofOptions(options).run(transformation)
-      val backend = Some(Backend.ofOptions(options).run(transformation.get))
+      val backend = Backend.ofOptions(options).run(transformation)
+      //val backend = Some(Backend.ofOptions(options).run(transformation.get))
 
       if (checkCancelled(token))
         return
       report("ExpectedErrors")
-      // ExpectedErrors.ofOptions(options).run(backend)
-      ExpectedErrors.ofOptions(options).run(backend.get)
+      ExpectedErrors.ofOptions(options).run(backend)
+      //ExpectedErrors.ofOptions(options).run(backend.get)
 
       val failures = collector.errs.toSeq
       sendUnexpectedFailureDiagnostics(uri, failures)
@@ -151,9 +153,10 @@ class MyWorkspaceService extends WorkspaceService {
         MessageType.Error,
         s"Actual verification failures:\n$errorDescriptions",
       ))
-      MyLanguageServer.client.showMessage(
+      showInfo("Verification completed")
+      /*MyLanguageServer.client.showMessage(
         new MessageParams(MessageType.Info, s"Verification completed")
-      )
+      )*/
     } catch {
       case err: VerificationError =>
         val end = new WorkDoneProgressEnd()
@@ -171,10 +174,11 @@ class MyWorkspaceService extends WorkspaceService {
           s"User error during parsing/resolution: ${ex.getStackTrace
               .mkString("Array(", "\n", ")")}",
         ))*/
-        MyLanguageServer.client.showMessage(new MessageParams(
+       /* MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}",
-        ))
+        ))*/
+        showError(s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}")
     }
   }
 
@@ -184,29 +188,39 @@ class MyWorkspaceService extends WorkspaceService {
   ): Unit = {
     val diagnostics = failures.flatMap {
       case vf: WithContractFailure =>
-        val mainDiag = nodeFailureToDiagnostic(vf, vf.inlineDesc)
-        val causeDiag = nodeFailureToDiagnostic(
-          vf.failure,
-          vf.failure.inlineDescCompletion,
-        )
-        Seq(mainDiag, causeDiag).flatMap(_.toList)
+        val mainDiagOpt = nodeFailureToDiagnostic(vf, vf.inlineDesc)
+        val causeDiagOpt = nodeFailureToDiagnostic(vf.failure, vf.failure.inlineDescCompletion)
+
+        val diagWithRelated = causeDiagOpt.map { causeDiag =>
+          mainDiagOpt.foreach { mainDiag =>
+            val related = new DiagnosticRelatedInformation(
+              new Location(uri, mainDiag.getRange),
+              mainDiag.getMessage
+            )
+            causeDiag.setRelatedInformation(List(related).asJava)
+          }
+          causeDiag
+        }
+        diagWithRelated.toList
 
       case vf: NodeVerificationFailure =>
         nodeFailureToDiagnostic(vf, vf.inlineDesc).toList
 
       case vf =>
-        MyLanguageServer.client.showMessage(new MessageParams(
+       /* MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Verification failure without position: ${vf.getClass
               .getSimpleName} – ${vf.inlineDesc}",
-        ))
+        ))*/
+        showError(s"Verification failure without position: ${vf.getClass
+          .getSimpleName} – ${vf.inlineDesc}")
         /*MyLanguageServer.client
           .logMessage(new MessageParams( // think how to handle this
             MessageType.Warning,
             s"Verification failure without position: ${vf.getClass
                 .getSimpleName} – ${vf.inlineDesc}",
           ))*/
-        None
+        Seq.empty
     }
     MyLanguageServer.client
       .publishDiagnostics(new PublishDiagnosticsParams(uri, diagnostics.asJava))
@@ -251,10 +265,11 @@ class MyWorkspaceService extends WorkspaceService {
           MessageType.Warning,
           s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
         ))*/
-        MyLanguageServer.client.showMessage(new MessageParams(
+       /* MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
-        ))
+        ))*/
+        showError(s"No origin found for VerificationError: ${err.getClass.getSimpleName}")
     }
   }
 
