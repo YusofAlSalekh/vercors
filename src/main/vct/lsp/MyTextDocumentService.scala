@@ -1,12 +1,11 @@
 package lsp
 
-import io.circe.generic.auto._, io.circe.parser._
 import com.typesafe.scalalogging.LazyLogging
+import io.circe.generic.auto._
 import io.circe.parser._
 import hre.io
-
 import org.eclipse.lsp4j.jsonrpc.messages.Either
-import org.eclipse.lsp4j.services.{LanguageClient, TextDocumentService}
+import org.eclipse.lsp4j.services.TextDocumentService
 import org.eclipse.lsp4j.{
   CompletionItem,
   Diagnostic,
@@ -16,17 +15,8 @@ import org.eclipse.lsp4j.{
   Range,
   _,
 }
-
 import vct.col.ast.{Local, Node, Verification}
-import vct.col.origin.{
-  BlameCollector,
-  Name,
-  NameStrategy,
-  Origin,
-  PositionRange,
-  PreferredName,
-  ReadableOrigin,
-}
+import vct.col.origin.{BlameCollector, Name, PositionRange, ReadableOrigin}
 import vct.col.rewrite.Generation
 import vct.main.stages.{Parsing, Resolution}
 import vct.options.Options
@@ -40,11 +30,8 @@ import java.nio.file.Paths
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import scala.collection.immutable.TreeMap
-import scala.io.Source
 import scala.jdk.CollectionConverters._
 import scala.util.matching.Regex
-import scala.collection.immutable.TreeMap
-import scala.collection.mutable
 
 class MyTextDocumentService extends TextDocumentService with LazyLogging {
   private val docs = scala.collection.concurrent.TrieMap.empty[String, String]
@@ -98,18 +85,27 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     case class Entry(`match`: String)
 
     def load(path: String): List[Entry] = {
-      val source = scala.io.Source.fromInputStream(getClass.getClassLoader.getResourceAsStream(path))
-      val content = try source.mkString finally source.close()
+      val streamOpt = Option(getClass.getClassLoader.getResourceAsStream(path))
 
-      try parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
+      streamOpt match {
+        case Some(stream) =>
+          val source = scala.io.Source.fromInputStream(stream)
+          val content =
+            try source.mkString
+            finally source.close()
+          parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
+
+        case None =>
+          MyLanguageServer.client.showMessage(new MessageParams(
+            MessageType.Error,
+            s"JSON for completions not found: $path",
+          ))
+          Nil
+      }
     }
 
-    val javaEntries = load(
-      "lsp/language-server-java-c-matches.json"
-    )
-    val pvlEntries = load(
-      "lsp/language-server-pvl-matches.json"
-    )
+    val javaEntries = load("lsp/language-server-java-c-matches.json")
+    val pvlEntries = load("lsp/language-server-pvl-matches.json")
 
     (javaEntries ++ pvlEntries).distinctBy(_.`match`).map { e =>
       val it = new CompletionItem(e.`match`)
@@ -180,23 +176,21 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
           new PublishDiagnosticsParams(uri, diagnostics.asJava)
         )
 
-      // add diagnostics
       case err: VerificationError.SystemError =>
-        MyLanguageServer.client.logMessage(new MessageParams(
+        MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Verification error: ${err.text}",
         ))
 
-      // add diagnostics
       case ex: Exception =>
-        MyLanguageServer.client.logMessage(new MessageParams(
+        MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Unexpected error: ${ex.getMessage}",
         ))
     }
   }
 
-  private def validateText(text: String): List[Diagnostic] = {
+  /* private def validateText(text: String): List[Diagnostic] = {
     val pattern: Regex = "\\b[A-Z]{2,}\\b".r
     pattern.findAllMatchIn(text).map { m =>
       val diagnostic = new Diagnostic()
@@ -206,7 +200,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         .setRange(new Range(new Position(0, m.start), new Position(0, m.end)))
       diagnostic
     }.toList
-  }
+  }*/
 
   override def definition(params: DefinitionParams): CompletableFuture[
     Either[java.util.List[_ <: Location], java.util.List[_ <: LocationLink]]
@@ -373,5 +367,4 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       case Name.Required(n) => n
       case Name.Join(a, b) => a.toString + b.toString
     }
-
 }
