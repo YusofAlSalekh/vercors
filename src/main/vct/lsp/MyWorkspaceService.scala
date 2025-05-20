@@ -42,9 +42,9 @@ class MyWorkspaceService extends WorkspaceService {
           params.getArguments.get(0).asInstanceOf[JsonPrimitive].getAsString
         val path = Paths.get(new URI(uri))
         val options = Options().copy(inputs = List(PathOrStd.Path(path)))
-        MyLanguageServer.client.logMessage(
+        /*MyLanguageServer.client.logMessage(
           new MessageParams(MessageType.Info, s"Options: ${options.inputs}")
-        )
+        )*/
 
         val rawToken = params.getWorkDoneToken
         val token =
@@ -59,8 +59,7 @@ class MyWorkspaceService extends WorkspaceService {
         try { MyLanguageServer.client.createProgress(createParams) }
         catch {
           case ex: Exception =>
-            // тут может исключение сделать
-            MyLanguageServer.client.logMessage(new MessageParams(
+            MyLanguageServer.client.showMessage(new MessageParams(
               MessageType.Error,
               s"Error calling createProgress: ${ex.getMessage}",
             ))
@@ -167,11 +166,14 @@ class MyWorkspaceService extends WorkspaceService {
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Unexpected error: ${ex.getMessage}")
         notifyProgress(token, end)
-        // тут может тоже исключение
-        MyLanguageServer.client.logMessage(new MessageParams(
+        /* MyLanguageServer.client.logMessage(new MessageParams(
           MessageType.Log,
           s"User error during parsing/resolution: ${ex.getStackTrace
               .mkString("Array(", "\n", ")")}",
+        ))*/
+        MyLanguageServer.client.showMessage(new MessageParams(
+          MessageType.Error,
+          s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}",
         ))
     }
   }
@@ -193,15 +195,19 @@ class MyWorkspaceService extends WorkspaceService {
         nodeFailureToDiagnostic(vf, vf.inlineDesc).toList
 
       case vf =>
-        MyLanguageServer.client
+        MyLanguageServer.client.showMessage(new MessageParams(
+          MessageType.Error,
+          s"Verification failure without position: ${vf.getClass
+              .getSimpleName} – ${vf.inlineDesc}",
+        ))
+        /*MyLanguageServer.client
           .logMessage(new MessageParams( // think how to handle this
             MessageType.Warning,
             s"Verification failure without position: ${vf.getClass
                 .getSimpleName} – ${vf.inlineDesc}",
-          ))
+          ))*/
         None
     }
-
     MyLanguageServer.client
       .publishDiagnostics(new PublishDiagnosticsParams(uri, diagnostics.asJava))
   }
@@ -241,8 +247,12 @@ class MyWorkspaceService extends WorkspaceService {
         )
 
       case None =>
-        MyLanguageServer.client.logMessage(new MessageParams(
+        /*MyLanguageServer.client.logMessage(new MessageParams(
           MessageType.Warning,
+          s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
+        ))*/
+        MyLanguageServer.client.showMessage(new MessageParams(
+          MessageType.Error,
           s"No origin found for VerificationError: ${err.getClass.getSimpleName}",
         ))
     }

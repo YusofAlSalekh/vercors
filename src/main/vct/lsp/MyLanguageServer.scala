@@ -58,5 +58,4 @@ class MyLanguageServer extends LanguageServer {
 object MyLanguageServer {
   var client: LanguageClient = _
   val cancelledTokens = collection.mutable.Map[String, Boolean]()
-
 }
