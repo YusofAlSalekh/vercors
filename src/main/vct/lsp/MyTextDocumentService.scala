@@ -15,6 +15,7 @@ import org.eclipse.lsp4j.{
   Range,
   _,
 }
+import vct.lsp.LspMessages._
 import vct.col.ast.{Local, Node, Verification}
 import vct.col.origin.{BlameCollector, Name, PositionRange, ReadableOrigin}
 import vct.col.rewrite.Generation
@@ -47,8 +48,9 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
   override def didSave(params: DidSaveTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
-    MyLanguageServer.client
-      .showMessage(new MessageParams(MessageType.Info, s"Document saved"))
+    showInfo("Document saved")
+    /*MyLanguageServer.client
+      .showMessage(new MessageParams(MessageType.Info, s"Document saved"))*/
     analyzeDocument(uri)
   }
 
@@ -96,10 +98,11 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
           parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
 
         case None =>
-          MyLanguageServer.client.showMessage(new MessageParams(
+         /* MyLanguageServer.client.showMessage(new MessageParams(
             MessageType.Error,
             s"JSON for completions not found: $path",
-          ))
+          ))*/
+          showError(s"JSON for completions not found: $path")
           Nil
       }
     }
@@ -177,16 +180,18 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         )
 
       case err: VerificationError.SystemError =>
-        MyLanguageServer.client.showMessage(new MessageParams(
+        /*MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Verification error: ${err.text}",
-        ))
+        ))*/
+        showError(s"Verification error: ${err.text}")
 
       case ex: Exception =>
-        MyLanguageServer.client.showMessage(new MessageParams(
+        /*MyLanguageServer.client.showMessage(new MessageParams(
           MessageType.Error,
           s"Unexpected error: ${ex.getMessage}",
-        ))
+        ))*/
+        showError(s"Unexpected error: ${ex.getMessage}")
     }
   }
 
@@ -237,10 +242,11 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
           Either.forRight(Collections.singletonList(locationLink))
 
         case _ =>
-          MyLanguageServer.client.showMessage(new MessageParams(
+          /*MyLanguageServer.client.showMessage(new MessageParams(
             MessageType.Info,
             s"No definition found at line ${pos.getLine}, character ${pos.getCharacter}",
-          ))
+          ))*/
+          showInfo(s"No definition found at line ${pos.getLine}, character ${pos.getCharacter}")
           Either.forRight(Collections.emptyList())
       }
     CompletableFuture.completedFuture(result)
