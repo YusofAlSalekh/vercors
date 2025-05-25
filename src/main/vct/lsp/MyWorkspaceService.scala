@@ -1,6 +1,6 @@
 package lsp
 
-import com.google.gson.JsonPrimitive
+import com.google.gson.{JsonElement, JsonPrimitive}
 import hre.progress.TaskRegistry
 import hre.progress.task.RootTask
 import lsp.MyLanguageServer.cancelledTokens
@@ -13,7 +13,6 @@ import vct.col.rewrite.bip.BIP
 import vct.lsp.LspMessages._
 import vct.main.stages._
 import vct.options.Options
-import vct.options.types.PathOrStd
 import vct.parsers.transform.ConstantBlameProvider
 import vct.result.VerificationError
 
@@ -41,7 +40,52 @@ class MyWorkspaceService extends WorkspaceService {
         val uri =
           params.getArguments.get(0).asInstanceOf[JsonPrimitive].getAsString
         val path = Paths.get(new URI(uri))
-        val options = Options().copy(inputs = List(PathOrStd.Path(path)))
+
+        val syntheticArgs = collection.mutable.ListBuffer("--verify")
+        if (params.getArguments.size > 1) {
+          val arg1 = params.getArguments.get(1)
+          if (arg1.isInstanceOf[JsonElement]) {
+            val json = arg1.asInstanceOf[JsonElement]
+            if (json.isJsonObject) {
+              val obj = json.getAsJsonObject
+
+              def addArray(key: String): Unit =
+                if (obj.has(key)) {
+                  obj.get(key) match {
+                    case arr if arr.isJsonArray =>
+                      arr.getAsJsonArray.iterator().asScala.foreach { elem =>
+                        syntheticArgs += elem.getAsString
+                      }
+                    case str if str.isJsonPrimitive =>
+                      str.getAsString.trim.split("\\s+")
+                        .foreach(syntheticArgs += _)
+                    case _ => // do nothing
+                  }
+                }
+
+              def addSingleFlagWithValue(flag: String, key: String): Unit =
+                if (obj.has(key)) {
+                  val value = obj.get(key).getAsString
+                  syntheticArgs += flag
+                  syntheticArgs += value
+                }
+
+              addArray("flags")
+              addArray("customFlags")
+              addArray("rawArgs")
+
+              addSingleFlagWithValue("--backend", "backend")
+            }
+          }
+        }
+        syntheticArgs += path.toString
+
+        val options = vct.options.Options.parse(syntheticArgs.toArray)
+          .getOrElse(
+            throw new IllegalArgumentException("Failed to parse options")
+          )
+
+        // val options = Options().copy(inputs = List(PathOrStd.Path(path)))
         val rawToken = params.getWorkDoneToken
         val token =
           if (rawToken.isLeft)
@@ -135,6 +179,7 @@ class MyWorkspaceService extends WorkspaceService {
         MessageType.Error,
         s"Actual verification failures:\n$errorDescriptions",
       ))
+
       showInfo("Verification completed")
     } catch {
       case err: VerificationError =>
@@ -165,30 +210,97 @@ class MyWorkspaceService extends WorkspaceService {
           vf.failure.inlineDescCompletion,
         )
 
-        val diagWithRelated = causeDiagOpt.map { causeDiag =>
-          mainDiagOpt.foreach { mainDiag =>
+        val diagWithRelated = mainDiagOpt.map { mainDiag =>
+          causeDiagOpt.foreach { causeDiag =>
             val related =
               new DiagnosticRelatedInformation(
-                new Location(uri, mainDiag.getRange),
-                mainDiag.getMessage,
+                new Location(uri, causeDiag.getRange),
+                causeDiag.getMessage,
               )
-            causeDiag.setRelatedInformation(List(related).asJava)
+            mainDiag.setRelatedInformation(List(related).asJava)
           }
-          causeDiag
+          mainDiag
         }
         diagWithRelated.toList
 
       case vf: NodeVerificationFailure =>
-        nodeFailureToDiagnostic(vf, vf.inlineDesc).toList
+        nodeFailureToDiagnostic(vf, vf.inlineDesc) match {
+          case Some(diag) => List(diag)
+          case None =>
+            showError("NodeVerificationFailure had no usable origin")
+            Nil
+        }
+
+      case vf: MultiOriginFailure =>
+        val mainDiagOpt = vf.originsWithMessages.headOption.flatMap {
+          case (origin, _) => originToDiagnostic(origin, vf.inlineDesc)
+        }
+        val related = vf.originsWithMessages.drop(1)
+          .flatMap { case (origin, msg) =>
+            originToDiagnostic(origin, msg).map { diag =>
+              new DiagnosticRelatedInformation(
+                new Location(uri, diag.getRange),
+                diag.getMessage,
+              )
+            }
+          }
+
+        mainDiagOpt match {
+          case Some(mainDiag) =>
+            if (related.nonEmpty) {
+              mainDiag.setRelatedInformation(related.asJava)
+            }
+            List(mainDiag)
+          case None =>
+            showError("MultiOriginFailure had no usable origin")
+            Nil
+        }
+
+      case SYCLKernelLambdaFailure(inner) =>
+        sendUnexpectedFailureDiagnostics(uri, Seq(inner))
+        Nil
+
+      case eef: ExpectedErrorFailure =>
+        originToDiagnostic(eef.err.errorRegion, eef.inlineDesc) match {
+          case Some(diag) => List(diag)
+          case None =>
+            showError("ExpectedErrorFailure had no usable origin")
+            Nil
+        }
 
       case vf =>
         showError(
-          s"Verification failure: ${vf.getClass.getSimpleName} – ${vf.inlineDesc}"
+          s"Unhandled verification failure: ${vf.getClass.getSimpleName} – ${vf.inlineDesc}"
         )
         Seq.empty
     }
     MyLanguageServer.client
       .publishDiagnostics(new PublishDiagnosticsParams(uri, diagnostics.asJava))
+  }
+
+  private def originToDiagnostic(
+      origin: Origin,
+      message: String,
+  ): Option[Diagnostic] = {
+    origin.find[PositionRange].flatMap {
+      case PositionRange(startLine, endLine, Some((startCol, endCol))) =>
+        Some(new Diagnostic(
+          new Range(
+            new Position(startLine, startCol),
+            new Position(endLine, endCol),
+          ),
+          message,
+          DiagnosticSeverity.Error,
+          "VerCors",
+        ))
+      case PositionRange(startLine, endLine, None) =>
+        Some(new Diagnostic(
+          new Range(new Position(startLine, 0), new Position(endLine, 0)),
+          message,
+          DiagnosticSeverity.Error,
+          "VerCors",
+        ))
+    }
   }
 
   private def nodeFailureToDiagnostic(
@@ -256,7 +368,7 @@ class MyWorkspaceService extends WorkspaceService {
     diagnostic
   }
 
-  def findOrigin(obj: Any): Option[Origin] = {
+  private def findOrigin(obj: Any): Option[Origin] = {
     def tryGet(methodName: String): Option[Origin] = {
       obj.getClass.getMethods.find(m =>
         m.getName == methodName && m.getParameterCount == 0 &&
@@ -299,21 +411,30 @@ class MyWorkspaceService extends WorkspaceService {
       false
   }
 
-  def notifyProgress(token: String, value: WorkDoneProgressBegin): Unit = {
+  private def notifyProgress(
+      token: String,
+      value: WorkDoneProgressBegin,
+  ): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))
     MyLanguageServer.client.notifyProgress(params)
   }
 
-  def notifyProgress(token: String, value: WorkDoneProgressReport): Unit = {
+  private def notifyProgress(
+      token: String,
+      value: WorkDoneProgressReport,
+  ): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))
     MyLanguageServer.client.notifyProgress(params)
   }
 
-  def notifyProgress(token: String, value: WorkDoneProgressEnd): Unit = {
+  private def notifyProgress(
+      token: String,
+      value: WorkDoneProgressEnd,
+  ): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
     params.setValue(Either.forLeft(value))

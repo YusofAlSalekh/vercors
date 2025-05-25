@@ -39,7 +39,12 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   var parsingResults: Option[ParseResult[Nothing]] = None
   var resolutionResults: Option[Verification[_ <: Generation]] = None
   var originMap: TreeMap[(Int, Int, Int), (Int, Int, Int)] = TreeMap.empty
-  private lazy val allCompletions: List[CompletionItem] = loadAllCompletions()
+  private lazy val javaCompletions: List[CompletionItem] = loadCompletions(
+    "lsp/language-server-java-c-matches.json"
+  )
+  private lazy val pvlCompletions: List[CompletionItem] = loadCompletions(
+    "lsp/language-server-pvl-matches.json"
+  )
 
   override def didOpen(params: DidOpenTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
@@ -68,7 +73,16 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     val uri = params.getTextDocument.getUri
     val pos = params.getPosition
     val prefix = extractPrefix(docs.getOrElse(uri, ""), pos)
-    val filtered = allCompletions.filter(_.getLabel.startsWith(prefix))
+
+    val ext = uri.split("\\.").lastOption.getOrElse("")
+    val pool =
+      ext match {
+        case "java" | "c" | "cpp" => javaCompletions
+        case "pvl" => pvlCompletions
+        case _ => javaCompletions ++ pvlCompletions
+      }
+
+    val filtered = pool.filter(_.getLabel.startsWith(prefix))
     val list = new CompletionList(filtered.asJava)
     CompletableFuture.completedFuture(Either.forRight(list))
   }
@@ -78,41 +92,6 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   override def resolveCompletionItem(
       unresolved: CompletionItem
   ): CompletableFuture[CompletionItem] = null
-
-  private def analyzeDocument(uri: String): Unit = {
-    MyLanguageServer.client.publishDiagnostics(
-      new PublishDiagnosticsParams(uri, Collections.emptyList())
-    )
-    val path = Paths.get(new URI(uri))
-    val options = Options().copy(inputs = List(PathOrStd.Path(path)))
-
-    try {
-      val collector = BlameCollector()
-      val blameProvider = ConstantBlameProvider(collector)
-
-      parsingResults = Some(
-        Parsing.ofOptions(options, blameProvider).run(options.inputs)
-      )
-      resolutionResults = Some(
-        Resolution.ofOptions(options, blameProvider).run(parsingResults.get)
-      )
-
-      val resolvedProgram = resolutionResults.get.tasks.head.program
-      val locals: Seq[Local[_]] = collectLocals(resolvedProgram)
-      originMap = TreeMap.from(hashLocalOrigins(locals))
-    } catch {
-      case err: VerificationError.UserError =>
-        val diagnostics = createDiagnostics(err)
-        MyLanguageServer.client.publishDiagnostics(
-          new PublishDiagnosticsParams(uri, diagnostics.asJava)
-        )
-
-      case err: VerificationError.SystemError =>
-        showError(s"Verification error: ${err.text}")
-
-      case ex: Exception => showError(s"Unexpected error: ${ex.getMessage}")
-    }
-  }
 
   override def definition(params: DefinitionParams): CompletableFuture[
     Either[java.util.List[_ <: Location], java.util.List[_ <: LocationLink]]
@@ -164,33 +143,58 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       endCol: Int,
   )
 
-  private def loadAllCompletions(): List[CompletionItem] = {
+  private def analyzeDocument(uri: String): Unit = {
+    MyLanguageServer.client.publishDiagnostics(
+      new PublishDiagnosticsParams(uri, Collections.emptyList())
+    )
+    val path = Paths.get(new URI(uri))
+    val options = Options().copy(inputs = List(PathOrStd.Path(path)))
+
+    try {
+      val collector = BlameCollector()
+      val blameProvider = ConstantBlameProvider(collector)
+
+      parsingResults = Some(
+        Parsing.ofOptions(options, blameProvider).run(options.inputs)
+      )
+      resolutionResults = Some(
+        Resolution.ofOptions(options, blameProvider).run(parsingResults.get)
+      )
+
+      val resolvedProgram = resolutionResults.get.tasks.head.program
+      val locals: Seq[Local[_]] = collectLocals(resolvedProgram)
+      originMap = TreeMap.from(hashLocalOrigins(locals))
+    } catch {
+      case err: VerificationError.UserError =>
+        val diagnostics = createDiagnostics(err)
+        MyLanguageServer.client.publishDiagnostics(
+          new PublishDiagnosticsParams(uri, diagnostics.asJava)
+        )
+
+      case err: VerificationError.SystemError =>
+        showError(s"Verification error: ${err.text}")
+
+      case ex: Exception => showError(s"Unexpected error: ${ex.getMessage}")
+    }
+  }
+
+  private def loadCompletions(path: String): List[CompletionItem] = {
     case class Entry(`match`: String)
 
-    def load(path: String): List[Entry] = {
-      val streamOpt = Option(getClass.getClassLoader.getResourceAsStream(path))
-
-      streamOpt match {
-        case Some(stream) =>
-          val source = scala.io.Source.fromInputStream(stream)
-          val content =
-            try source.mkString
-            finally source.close()
-          parse(content).flatMap(_.as[List[Entry]]).getOrElse(Nil)
-
-        case None =>
-          showError(s"JSON for completions not found: $path")
-          Nil
-      }
-    }
-
-    val javaEntries = load("lsp/language-server-java-c-matches.json")
-    val pvlEntries = load("lsp/language-server-pvl-matches.json")
-
-    (javaEntries ++ pvlEntries).distinctBy(_.`match`).map { e =>
-      val it = new CompletionItem(e.`match`)
-      it.setKind(CompletionItemKind.Keyword)
-      it
+    Option(getClass.getClassLoader.getResourceAsStream(path)) match {
+      case Some(stream) =>
+        val src = scala.io.Source.fromInputStream(stream)
+        val entries =
+          try parse(src.mkString).flatMap(_.as[List[Entry]]).getOrElse(Nil)
+          finally src.close()
+        entries.distinctBy(_.`match`).map { e =>
+          val it = new CompletionItem(e.`match`)
+          it.setKind(CompletionItemKind.Keyword)
+          it
+        }
+      case None =>
+        showError(s"Failed to load completions JSON: $path")
+        Nil
     }
   }
 
@@ -249,7 +253,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     }
   }
 
-  def collectLocals(root: Node[_]): Seq[Local[_]] = {
+  private def collectLocals(root: Node[_]): Seq[Local[_]] = {
     val result = scala.collection.mutable.Buffer.empty[Local[_]]
     val stack = scala.collection.mutable.Stack[Node[_]](root)
 
@@ -261,7 +265,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     result.toSeq
   }
 
-  def hashLocalOrigins(
+  private def hashLocalOrigins(
       locals: Seq[Local[_]]
   ): Map[(Int, Int, Int), (Int, Int, Int)] = {
     locals.flatMap { local =>
