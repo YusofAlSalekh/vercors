@@ -59,7 +59,7 @@ class MyWorkspaceService extends WorkspaceService {
                     case str if str.isJsonPrimitive =>
                       str.getAsString.trim.split("\\s+")
                         .foreach(syntheticArgs += _)
-                    case _ => // do nothing
+                    case _ =>
                   }
                 }
 
