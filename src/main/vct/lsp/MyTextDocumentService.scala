@@ -82,8 +82,27 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         case _ => javaCompletions ++ pvlCompletions
       }
 
-    val filtered = pool.filter(_.getLabel.startsWith(prefix))
-    val list = new CompletionList(filtered.asJava)
+    val jsonFiltered = pool.filter(_.getLabel.startsWith(prefix))
+
+    val variableCompletions: List[CompletionItem] = resolutionResults.toList.flatMap { result =>
+      val locals = collectLocals(result.tasks.head.program)
+      locals.map { local =>
+        val name = local.ref.decl.o.getPreferredNameOrElse()
+        val nameStr = formatName(name)
+        val item = new CompletionItem(nameStr)
+        item.setKind(CompletionItemKind.Variable)
+        item
+      }
+        .groupBy(_.getLabel)
+        .values
+        .map(_.head)
+        .toList
+    }
+
+    val allCompletions = (jsonFiltered ++ variableCompletions)
+      .filter(_.getLabel.startsWith(prefix))
+
+    val list = new CompletionList(allCompletions.asJava)
     CompletableFuture.completedFuture(Either.forRight(list))
   }
 
