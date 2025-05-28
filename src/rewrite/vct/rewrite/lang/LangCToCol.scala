@@ -167,7 +167,7 @@ case object LangCToCol {
     override def blame(error: ParInvariantNotEstablished): Unit =
       error match {
         case ParInvariantNotEstablished(failure, node) => 
-          kernel.blame
+          PanicBlame("Establishing Kernel invariant cannot fail, since an identical predicate is required before.")
             .blame(KernelInvariantNotEstablished(failure, node))
       }
       
