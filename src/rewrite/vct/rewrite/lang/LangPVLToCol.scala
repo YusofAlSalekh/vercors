@@ -123,6 +123,7 @@ case class LangPVLToCol[Pre <: Generation](
                    tt)
             ),
             tt,
+            tt,
             Nil,
             Nil,
             Nil,
@@ -242,6 +243,7 @@ case class LangPVLToCol[Pre <: Generation](
       ApplicableContract(
         empty_pred,
         empty_pred,
+        BooleanValue(value = true),
         BooleanValue(value = true),
         Seq(),
         Seq(),

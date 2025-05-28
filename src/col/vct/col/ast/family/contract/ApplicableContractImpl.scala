@@ -26,6 +26,7 @@ trait ApplicableContractImpl[G]
             requires,
             ensures,
             contextEverywhere,
+            kernelInvariant,
             signals,
             givenArgs,
             yieldsArgs,
@@ -35,6 +36,9 @@ trait ApplicableContractImpl[G]
           f(context.withPostcondition, ensures) +: f(
             context.withUndeclared(yieldsArgs).withPrecondition,
             contextEverywhere,
+          ) +: f(
+            context.withUndeclared(yieldsArgs).withPrecondition,
+            kernelInvariant,
           ) +:
           (signals.map(f(context, _)) ++ givenArgs.map(f(context, _)) ++
             yieldsArgs.map(f(context, _)) ++
@@ -46,6 +50,7 @@ trait ApplicableContractImpl[G]
       case ApplicableContract(
             UnitAccountedPredicate(BooleanValue(true)),
             UnitAccountedPredicate(BooleanValue(true)),
+            BooleanValue(true),
             BooleanValue(true),
             Nil,
             Nil,
@@ -62,6 +67,7 @@ trait ApplicableContractImpl[G]
     Doc.stack(Seq(
       Doc.stack(givenArgs.map(Text("given") <+> _.show <> ";")),
       Doc.stack(yieldsArgs.map(Text("yields") <+> _.show <> ";")),
+      DocUtil.clauses("kernel_invariant", kernelInvariant),
       DocUtil.clauses("context_everywhere", contextEverywhere),
       DocUtil.clauses("requires", requires),
       Doc.stack(decreases.toSeq),
@@ -73,6 +79,7 @@ trait ApplicableContractImpl[G]
     Doc.stack(Seq(
       Doc.stack(givenArgs.map(Text("given") <+> _.show)),
       Doc.stack(yieldsArgs.map(Text("yields") <+> _.show)),
+      DocUtil.clauses("kernel_invariant", kernelInvariant),
       DocUtil.clauses("context_everywhere", contextEverywhere),
       DocUtil.clauses("requires", requires),
       Doc.stack(decreases.toSeq),

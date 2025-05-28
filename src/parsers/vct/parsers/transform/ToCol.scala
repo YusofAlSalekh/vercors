@@ -77,6 +77,7 @@ abstract class ToCol[G](
         UnitAccountedPredicate(AstBuildHelpers.foldStar(consume(requires))),
         UnitAccountedPredicate(AstBuildHelpers.foldStar(consume(ensures))),
         AstBuildHelpers.foldStar(consume(context_everywhere)),
+        AstBuildHelpers.foldStar(consume(kernel_invariant)),
         consume(signals),
         consume(given),
         consume(yields),

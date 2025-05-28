@@ -475,11 +475,11 @@ case class CToCol[G](
           },
         )
       case Statement10(GpgpuAtomicBlock0(whiff, _, impl, den)) =>
-        GpgpuAtomic(
-          convert(impl),
-          whiff.map(convert(_)).getOrElse(Block(Nil)),
-          den.map(convert(_)).getOrElse(Block(Nil)),
-        )
+       GpgpuAtomic(
+        convert(impl),
+        whiff.map(convert(_)).getOrElse(Block(Nil)),
+        den.map(convert(_)).getOrElse(Block(Nil)),
+       )
     }
 
   def convert(implicit block: CompoundStatementContext): Statement[G] =

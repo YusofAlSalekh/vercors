@@ -21,6 +21,7 @@ import vct.result.VerificationError.{Unreachable, UserError}
 import scala.annotation.tailrec
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
+import vct.col.ref.UnresolvedRef
 
 case object LangCToCol {
   private case class MultipleSharedMemoryDeclaration(decl: Node[_])
@@ -159,6 +160,18 @@ case object LangCToCol {
         .blame(KernelPredicateNotInjective(Left(kernel), error.resource))
   }
 
+
+  private case class KernelInvFailure(kernel: CGpgpuKernelSpecifier[_])
+    extends Blame[ParInvariantNotEstablished] {
+
+    override def blame(error: ParInvariantNotEstablished): Unit =
+      error match {
+        case ParInvariantNotEstablished(failure, node) => 
+          PanicBlame("Establishing Kernel invariant cannot fail, since an identical predicate is required before.")
+            .blame(KernelInvariantNotEstablished(failure, node))
+      }
+      
+  }
   private case class KernelParFailure(kernel: CGpgpuKernelSpecifier[_])
       extends Blame[ParBlockFailure] {
     override def blame(error: ParBlockFailure): Unit =
@@ -291,6 +304,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   private val cudaCurrentGrid: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
   private val cudaCurrentBlock: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
+
+  private val cudaKernelInvBlock: ScopedStack[ParInvariantDecl[Post]] = ScopedStack()
 
   private val dynamicSharedMemNames: mutable.Set[CNameTarget[Pre]] = mutable
     .Set()
@@ -1073,17 +1088,19 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
             contract.ensures
 
-          val parBody = body.map(impl => {
-            implicit val o: Origin = impl.o
-            val threadIdx = new CudaVec(RefCudaThreadIdx())
-            val blockIdx = new CudaVec(RefCudaBlockIdx())
-            val gridDecl = new ParBlockDecl[Post]()
-            val blockDecl = new ParBlockDecl[Post]()
+        val parBody = body.map(impl => {
+          implicit val o: Origin = impl.o
+          val threadIdx = new CudaVec(RefCudaThreadIdx())
+          val blockIdx = new CudaVec(RefCudaBlockIdx())
+          val gridDecl = new ParBlockDecl[Post]()
+          val blockDecl = new ParBlockDecl[Post]()
+          val invDecl = new ParInvariantDecl[Post]()
 
-            cudaCurrentThreadIdx.having(threadIdx) {
-              cudaCurrentBlockIdx.having(blockIdx) {
-                cudaCurrentGrid.having(gridDecl) {
-                  cudaCurrentBlock.having(blockDecl) {
+          cudaCurrentThreadIdx.having(threadIdx) {
+            cudaCurrentBlockIdx.having(blockIdx) {
+              cudaCurrentGrid.having(gridDecl) {
+                cudaCurrentBlock.having(blockDecl) {
+                  cudaKernelInvBlock.having(invDecl) {
                     val contextBlock = foldStar(
                       unfoldStar(contract.contextEverywhere)
                         .filter(hasNoSharedMemNames)
@@ -1129,7 +1146,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                         content = rw.dispatch(implFiltered.get),
                       )(KernelParFailure(kernelSpec))
                     )
-                    val parStmt = ParStatement[Post](
+                    val outerContent = ParStatement[Post](
                       ParBlock(
                         decl = gridDecl,
                         iters = getIters(blockIdx, gridDim),
@@ -1168,6 +1185,12 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                         ),
                       )(KernelParFailure(kernelSpec))
                     )
+                    val invariant = rw.dispatch(contract.kernelInvariant)
+                    val parStmt = ParInvariant(
+                      decl = invDecl,
+                      inv = invariant,
+                      content = outerContent
+                    )(KernelInvFailure(kernelSpec))
                     // For constant
                     val constants: Seq[Variable[Post]] =
                       constantIdx.indices.values.toSeq
@@ -1185,45 +1208,54 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 }
               }
             }
-          })
+          }
+        })
+         
 
-          val gridContext: Expr[Post] =
-            foldStar(
-              unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
-                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-            )(o)
-          val requires: Expr[Post] =
-            foldStar(
-              Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractRequires)
-                .filter(hasNoSharedMemNames)
-                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-            )(o)
-          val ensures: Expr[Post] =
-            foldStar(
-              Seq(gridContext, nonZeroThreads) ++ unfoldStar(contractEnsures)
-                .filter(hasNoSharedMemNames)
-                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-            )(o)
-          val result =
-            new Procedure[Post](
-              returnType = TVoid(),
-              args = newArgs,
-              outArgs = Nil,
-              typeArgs = Nil,
-              body = parBody,
-              contract =
-                ApplicableContract(
-                  UnitAccountedPredicate(requires)(o),
-                  UnitAccountedPredicate(ensures)(o),
-                  // Context everywhere is already passed down in the body
-                  tt,
-                  contract.signals.map(rw.dispatch),
-                  newGivenArgs,
-                  newYieldsArgs,
-                  contract.decreases.map(rw.dispatch),
-                )(contract.blame)(contract.o),
-            )(AbstractApplicable)(o)
-          kernelSpecifier = None
+        val gridContext: Expr[Post] =
+          foldStar(
+            unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
+              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+          )(o)
+          //Don't scale kernelInvariants since they are established outside the par block
+        val kernelInvs: Expr[Post] =
+          foldStar(
+            unfoldStar(contract.kernelInvariant).filter(hasNoSharedMemNames)
+            .map(rw.dispatch)
+          )(o)
+        val requires: Expr[Post] =
+          foldStar(
+            Seq(gridContext, nonZeroThreads, kernelInvs) ++ unfoldStar(contractRequires)
+              .filter(hasNoSharedMemNames)
+              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+          )(o)
+        val ensures: Expr[Post] =
+          foldStar(
+            Seq(gridContext, nonZeroThreads, kernelInvs) ++ unfoldStar(contractEnsures)
+              .filter(hasNoSharedMemNames)
+              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+          )(o)
+        val result =
+          new Procedure[Post](
+            returnType = TVoid(),
+            args = newArgs,
+            outArgs = Nil,
+            typeArgs = Nil,
+            body = parBody,
+            contract =
+              ApplicableContract(
+                UnitAccountedPredicate(requires)(o),
+                UnitAccountedPredicate(ensures)(o),
+                // Context everywhere is already passed down in the body
+                tt,
+                tt,
+                contract.signals.map(rw.dispatch),
+                newGivenArgs,
+                newYieldsArgs,
+                contract.decreases.map(rw.dispatch),
+              )(contract.blame)(contract.o),
+          )(AbstractApplicable)(o)
+        kernelSpecifier = None
 
           result
         }
@@ -1705,6 +1737,11 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       ensures = rw.dispatch(barrier.ensures),
       content = Block(Nil),
     )(KernelBarrierFailure(barrier))
+  }
+
+  def gpuAtomic(atomic: GpgpuAtomic[Pre]): Statement[Post] = {
+    implicit val o: Origin = atomic.o
+    ParAtomic[Post](List(cudaKernelInvBlock.top.ref), rw.dispatch(atomic.impl))(o)
   }
 
   def getInnerPointerInfo(
@@ -2227,7 +2264,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case ref: RefCFunctionDefinition[Pre] =>
         ProcedureInvocation[Post](
           cFunctionSuccessor.ref(ref.decl),
-          rw.dispatch(blocks) +: one +: one +: rw.dispatch(threads) +: one +:
+          rw.dispatch(threads) +: one +: one +: rw.dispatch(blocks) +: one +:
             one +: args.map(rw.dispatch),
           Nil,
           Nil,
