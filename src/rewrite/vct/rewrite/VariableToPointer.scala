@@ -47,8 +47,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
 
   val addressedSet: mutable.Map[Node[Pre], PointerSort] =
     new mutable.HashMap[Node[Pre], PointerSort]()
-  val heapVariableMap: SuccessionMap[HeapVariable[Pre], HeapVariable[Post]] =
-    SuccessionMap()
   val variableMap: SuccessionMap[Variable[Pre], Variable[Post]] =
     SuccessionMap()
   val noTransform: ScopedStack[scala.collection.Set[Variable[Pre]]] =
@@ -91,8 +89,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   ): Option[(Node[Pre], PointerSort)] =
     e match {
       case Local(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
-        Some(v, getPointerSort(isConst, None))
-      case DerefHeapVariable(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
         Some(v, getPointerSort(isConst, None))
       case AddrOfConstCast(e) => getAddresses(e, isConst = true)
       case AddrOfUniqueCast(Local(Ref(v)), unique) =>
@@ -179,13 +175,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
           ),
         )
       }
-      case v: HeapVariable[Pre] if addressedSet.contains(v) =>
-        heapVariableMap(v) = globalDeclarations.succeed(
-          v,
-          new HeapVariable(makePointer(dispatch(v.t), addressedSet(v)), None)(
-            v.o
-          ),
-        )
       case v: Variable[Pre] if addressedSet.contains(v) =>
         variableMap(v) = variables.succeed(
           v,
@@ -232,10 +221,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   override def dispatch(expr: Expr[Pre]): Expr[Post] = {
     implicit val o: Origin = expr.o
     expr match {
-      case deref @ DerefHeapVariable(Ref(v)) if addressedSet.contains(v) =>
-        DerefPointer(
-          DerefHeapVariable[Post](heapVariableMap.ref(v))(deref.blame)
-        )(PanicBlame("Should always be accessible"))
       case Local(Ref(v))
           if addressedSet.contains(v) && !noTransform.exists(_.contains(v)) =>
         DerefPointer(Local[Post](variableMap.ref(v)))(PanicBlame(
@@ -266,28 +251,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
             obj.get,
           ),
         )
-      case Perm(PointerLocation(AddrOf(DerefHeapVariable(Ref(v)))), perm)
-          if addressedSet.contains(v) =>
-        val newPerm = dispatch(perm)
-        Star(
-          Perm(HeapVariableLocation[Post](heapVariableMap.ref(v)), newPerm),
-          Perm(
-            PointerLocation(DerefHeapVariable[Post](heapVariableMap.ref(v))(
-              PanicBlame("Access is framed")
-            ))(PanicBlame("Cannot be null")),
-            newPerm,
-          ),
-        )
-      case Value(PointerLocation(AddrOf(DerefHeapVariable(Ref(v)))))
-          if addressedSet.contains(v) =>
-        Star(
-          Value(HeapVariableLocation[Post](heapVariableMap.ref(v))),
-          Value(
-            PointerLocation(DerefHeapVariable[Post](heapVariableMap.ref(v))(
-              PanicBlame("Access is framed")
-            ))(PanicBlame("cannot be null"))
-          ),
-        )
       case a @ AddrOf(AddrOfConstCast(e)) => a.rewrite(e = dispatch(e))
       case a @ AddrOf(AddrOfUniqueCast(e, _)) => a.rewrite(e = dispatch(e))
       case other => other.rewriteDefault()
@@ -297,15 +260,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
   override def dispatch(loc: Location[Pre]): Location[Post] = {
     implicit val o: Origin = loc.o
     loc match {
-      case HeapVariableLocation(Ref(v)) if addressedSet.contains(v) =>
-        PointerLocation(
-          DerefHeapVariable[Post](heapVariableMap.ref(v))(PanicBlame(
-            "Should always be accessible"
-          ))
-        )(PanicBlame("Should always be accessible"))
-      case PointerLocation(AddrOf(DerefHeapVariable(Ref(v))))
-          if addressedSet.contains(v) =>
-        HeapVariableLocation[Post](heapVariableMap.ref(v))
       case PointerLocation(AddrOf(local @ Local(_))) =>
         throw UnsupportedAddrOf(local)
       case other => other.rewriteDefault()

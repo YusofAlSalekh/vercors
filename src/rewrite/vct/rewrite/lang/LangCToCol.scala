@@ -481,7 +481,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   private def castIsId(exprType: Type[Pre], castType: Type[Pre]): Boolean = {
     (getBaseType(castType), getBaseType(exprType)) match {
-      case (tc, te) if tc == te => true
+      case (tc, te) if tc == te && tc.bits == te.bits => true
       case (TCInt(), TBoundedInt(_, _)) => true
       case (TBoundedInt(_, _), TCInt()) => true
       case _ => false
@@ -1427,9 +1427,21 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         case _ => throw WrongStructType(decl)
       }
 
-    val casts =
-      sizeOf(CTStruct(decl.ref), decl.o) +: getFirstTypes(CTStruct(decl.ref))
-        .map { t => (sizeOf(t, decl.o)) }
+    val sizes = decls.map { fieldDecl =>
+      val CStructMemberDeclarator(
+        specs: Seq[CDeclarationSpecifier[Pre]],
+        Seq(_),
+      ) = fieldDecl
+      fieldDecl.drop()
+      val t =
+        specs.collectFirst { case t: CSpecificationType[Pre] =>
+          t.t match {
+            case TUnique(inner, _) => inner
+            case inner => inner
+          }
+        }.get
+      sizeOf(t, fieldDecl.o)
+    }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
@@ -1462,7 +1474,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         false,
-        casts,
+        sizeOf(CTStruct(decl.ref), decl.o),
+        sizes,
       )(CStructOrigin(sdecl))
 
     rw.globalDeclarations.declare(newStruct)

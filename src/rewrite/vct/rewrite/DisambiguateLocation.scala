@@ -12,7 +12,10 @@ import vct.col.origin.{
   TypeName,
 }
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
+import vct.col.util.AstBuildHelpers.foldStar
 import vct.result.VerificationError.UserError
+
+import scala.annotation.tailrec
 
 case object DisambiguateLocation extends RewriterBuilder {
 
@@ -99,10 +102,41 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
       case default => throw NotALocation(default)
     }
 
+  @tailrec
+  private def isPossiblyCHeapLocation(expr: Expr[Pre]): Boolean =
+    expr match {
+      case InlinePattern(inner, _, _) => isPossiblyCHeapLocation(inner)
+      case expr if expr.t.asByValueClass.isDefined => true
+      case DerefPointer(_) => true
+      case PointerSubscript(_, _) => true
+      case _ => false
+    }
+
   override def dispatch(loc: Location[Pre]): Location[Post] =
     loc match {
       case location @ AmbiguousLocation(expr) =>
         exprToLoc(expr, location.blame)(loc.o)
       case other => super.dispatch(other)
+    }
+
+  override def dispatch(e: Expr[Pre]): Expr[Post] =
+    e match {
+      case Value(AmbiguousLocation(DerefHeapVariable(_))) => e.rewriteDefault()
+      // This might create more Value(HeapVariableLocation(..)) than necessary but since it's wildcard anyway everything should be fine
+      case v @ Value(AmbiguousLocation(expr))
+          if isPossiblyCHeapLocation(expr) =>
+        foldStar(
+          expr.collect { case DerefHeapVariable(ref) => ref }.map(ref =>
+            Value[Post](HeapVariableLocation[Post](succ(ref.decl))(expr.o))(v.o)
+          ) :+ v.rewriteDefault()
+        )(v.o)
+      case p @ Perm(AmbiguousLocation(expr), _)
+          if isPossiblyCHeapLocation(expr) =>
+        foldStar(
+          expr.collect { case DerefHeapVariable(ref) => ref }.map(ref =>
+            Value[Post](HeapVariableLocation[Post](succ(ref.decl))(expr.o))(p.o)
+          ) :+ p.rewriteDefault()
+        )(p.o)
+      case _ => e.rewriteDefault()
     }
 }

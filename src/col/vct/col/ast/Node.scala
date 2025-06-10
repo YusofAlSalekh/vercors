@@ -720,7 +720,8 @@ final class ByValueClass[G](
     val typeArgs: Seq[Variable[G]],
     val decls: Seq[ClassDeclaration[G]],
     val packed: Boolean,
-    val sizes: Seq[Expr[G]],
+    val size: Expr[G],
+    val childSizes: Seq[Expr[G]],
 )(implicit val o: Origin)
     extends Class[G] with ByValueClassImpl[G]
 final class Model[G](val declarations: Seq[ModelDeclaration[G]])(
