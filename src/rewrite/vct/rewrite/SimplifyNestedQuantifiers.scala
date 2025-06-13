@@ -3,7 +3,12 @@ package vct.col.rewrite
 import com.typesafe.scalalogging.LazyLogging
 import hre.util.ScopedStack
 import vct.col.ast.{Variable, _}
-import vct.col.ast.util.ExpressionEqualityCheck.{Neg, Pos, AskSMTSolver}
+import vct.col.ast.util.ExpressionEqualityCheck.{
+  Neg,
+  Pos,
+  AskSMTSolver,
+  isValidSymbolicTerm,
+}
 import vct.col.ast.util.{AnnotationVariableInfoGetter, ExpressionEqualityCheck}
 import vct.col.rewrite.util.Comparison
 import vct.col.origin.{LabelContext, Origin, PanicBlame, PreferredName}
@@ -15,8 +20,6 @@ import vct.col.rewrite.SimplifyNestedQuantifiers.{
   NotAllowedInTrigger,
   NotAllowedInTriggerSet,
 }
-import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
-import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers._
 import vct.col.util.{AstBuildHelpers, Substitute}
 import vct.result.Message
@@ -25,7 +28,6 @@ import vct.result.VerificationError.{Unreachable, UserError}
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.annotation.nowarn
-import scala.util.Using
 
 /** This rewrite pass simplifies expressions of roughly this form: forall(i,j:
   * Int . 0 <= i < i_max && 0 <= j < j_max; xs[a*(i_max*j + i) + b]) and
@@ -194,11 +196,15 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     ScopedStack()
   var requiresInfo: Option[AnnotationVariableInfoGetter[Pre]] = None
 
-  def gatherAssigns[G](n: Node[G]): Set[Variable[G]] = {
+  def gatherAssigns[G](n: Node[G]): Set[SymbolicTerm[G]] = {
     n.flatCollect {
-      case Assign(Local(ref), _) => Set(ref.decl)
-      case PreAssignExpression(Local(ref), _) => Set(ref.decl)
-      case PostAssignExpression(Local(ref), _) => Set(ref.decl)
+      case Assign(t: SymbolicTerm[G], _) if isValidSymbolicTerm(t) => Set(t)
+      case PreAssignExpression(t: SymbolicTerm[G], _)
+          if isValidSymbolicTerm(t) =>
+        Set(t)
+      case PostAssignExpression(t: SymbolicTerm[G], _)
+          if isValidSymbolicTerm(t) =>
+        Set(t)
       case inv: InvokeProcedure[G] => gatherYields(inv.yields)
       case inv: InvokeConstructor[G] => gatherYields(inv.yields)
       case inv: InvokeMethod[G] => gatherYields(inv.yields)
@@ -212,8 +218,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
 
   def gatherYields[G](
       yields: Seq[(Expr[G], Ref[G, Variable[G]])]
-  ): Set[Variable[G]] = {
-    yields.collect { case (Local(ref), _) => ref.decl }.toSet
+  ): Set[SymbolicTerm[G]] = {
+    yields.collect { case (l @ Local(_), _) => l }.toSet
   }
 
   override def dispatch(e: Expr[Pre]): Expr[Post] = {
@@ -1212,6 +1218,7 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
       case VectorSubscript(e, offset) => getPatterns(offset) ++ getPatterns(e)
       case FunctionInvocation(_, args, Seq(), given, _, _) =>
         args.flatMap(getPatterns) ++ given.flatMap(g => getPatterns(g._2))
+      case DerefPointer(p) => getPatterns(p)
       case e: Expr[Pre] => Seq(e)
       case _ => Seq()
     }

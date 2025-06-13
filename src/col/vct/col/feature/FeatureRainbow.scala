@@ -32,9 +32,8 @@ class FeatureRainbow[G] {
 
       case node: ArrayLocation[G] => Arrays
       case node: NewArray[G] => Arrays
-      case node: NewPointerArray[G] => Arrays
-      case node: NewConstPointerArray[G] =>
-        return Seq(Arrays, AxiomaticLibraryType)
+      case node: NewPointer[G] => Arrays
+      case node: NewConstPointer[G] => return Seq(Arrays, AxiomaticLibraryType)
       case node: ArraySubscript[G] => Arrays
       case node: Length[G] => Arrays
       case node: TArray[G] => Arrays

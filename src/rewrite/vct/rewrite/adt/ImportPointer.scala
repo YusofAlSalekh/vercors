@@ -512,6 +512,22 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           Nil,
           Nil,
         )(PanicBlame("ptr_deref requires nothing."))
+      case DerefPointer(add @ PointerAdd(pointer, offset)) =>
+        FunctionInvocation[Post](
+          ref = pointerDeref.ref,
+          args = Seq(
+            FunctionInvocation[Post](
+              ref = pointerAdd.ref,
+              args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
+              typeArgs = Nil,
+              Nil,
+              Nil,
+            )(NoContext(PointerBoundsPreconditionFailed(add.blame, pointer)))
+          ),
+          typeArgs = Nil,
+          Nil,
+          Nil,
+        )(PanicBlame("ptr_deref requires nothing."))
       case deref @ DerefPointer(pointer) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,

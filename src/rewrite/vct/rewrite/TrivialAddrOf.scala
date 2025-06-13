@@ -40,7 +40,8 @@ case class TrivialAddrOf[Pre <: Generation]() extends Rewriter[Pre] {
 
       case AddrOf(sub @ PointerSubscript(p, i)) =>
         PointerAdd(dispatch(p), dispatch(i))(SubscriptErrorAddError(sub))(e.o)
-
+      // Handled by EncodePointerArrays
+      case AddrOf(PointerArraySubscript(_, _)) => e.rewriteDefault()
       case AddrOf(Deref(_, _)) => e.rewriteDefault()
       case AddrOf(other) => throw UnsupportedLocation(other)
       case assign @ PreAssignExpression(target, AddrOf(value))
@@ -103,7 +104,7 @@ case class TrivialAddrOf[Pre <: Generation]() extends Rewriter[Pre] {
     val newPointer = Eval(
       PreAssignExpression(
         newTarget,
-        NewNonNullPointerArray(newValue.t, const[Post](1), None)(PanicBlame(
+        NewNonNullPointer(newValue.t, const[Post](1), None)(PanicBlame(
           "Size is > 0"
         )),
       )(blame)

@@ -434,7 +434,7 @@ object AstBuildHelpers {
           .givenMap.map { case (Ref(v), e) =>
             (rewriter.succ(v), rewriter.dispatch(e))
           },
-        yields: Seq[(Expr[Post], Ref[Post, Variable[Post]])] = apply.yields
+        yields: => Seq[(Expr[Post], Ref[Post, Variable[Post]])] = apply.yields
           .map { case (a, b) => (rewriter.dispatch(a), rewriter.succ(b.decl)) },
     ): Invocation[Post] =
       apply match {
@@ -523,7 +523,7 @@ object AstBuildHelpers {
   implicit class InvocationStatementBuildHelpers[Pre, Post](
       apply: InvocationStatement[Pre]
   )(implicit rewriter: AbstractRewriter[Pre, Post]) {
-    def rewrite(
+    def rewrite[T <: InstanceInvocationFailure](
         args: => Seq[Expr[Post]] = apply.args.map(rewriter.dispatch),
         outArgs: => Seq[Expr[Post]] = apply.outArgs.map(rewriter.dispatch),
         typeArgs: => Seq[Type[Post]] = apply.typeArgs.map(rewriter.dispatch),
@@ -807,6 +807,18 @@ object AstBuildHelpers {
     Starall(bindings = Seq(i_var), triggers = triggers(i), body = body(i))(
       blame
     )
+  }
+
+  def staralls[G](
+      blame: Blame[ReceiverNotInjective],
+      ts: Seq[Type[G]],
+      body: Seq[Local[G]] => Expr[G],
+      triggers: Seq[Local[G]] => Seq[Seq[Expr[G]]] = (_: Seq[Local[G]]) => Nil,
+  ): Starall[G] = {
+    implicit val o: Origin = GeneratedQuantifier
+    val i_vars = ts.map(new Variable[G](_))
+    val is = i_vars.map((x: Variable[G]) => Local[G](x.ref))
+    Starall(bindings = i_vars, triggers = triggers(is), body = body(is))(blame)
   }
 
   def forall[G](

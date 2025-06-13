@@ -320,6 +320,45 @@ case class ContextEverywhereFailedInPre(
   override def inlineDescWithSource(node: String, failure: String): String =
     s"Context of `$node` may not hold in the precondition, since $failure."
 }
+
+case class MismatchedArrayDimension(
+    node: InvokingNode[_],
+    dimension: Expr[_],
+    v: Variable[_],
+) extends InvocationFailure {
+  override def code: String = "arrayDimension"
+
+  override def position: String = node.o.shortPositionText
+
+  override def desc: String =
+    Message.messagesInContext(
+      node.o -> "Call to applicable may fail, because ...",
+      dimension.o ->
+        s"... this dimension might not match expected type ${v.t}$errUrl",
+    )
+
+  override def inlineDesc: String =
+    s"Call ${node.o.inlineContextText} might fail because `${dimension.o
+        .inlineContextText}` may not match type ${v.t}"
+}
+
+case class MismatchedPointerSize(node: InvokingNode[_], v: Variable[_])
+    extends InvocationFailure {
+  override def code: String = "arrayPointerSize"
+
+  override def position: String = node.o.shortPositionText
+
+  override def desc: String =
+    Message.messagesInContext(
+      node.o -> "Call to applicable may fail, because ...",
+      v.o ->
+        s"... the pointer passed to this variable may have the wrong length$errUrl",
+    )
+
+  override def inlineDesc: String =
+    s"Call ${node.o.inlineContextText} might fail because the pointer passed to ${v.o.inlineContextText} may have the wrong length"
+}
+
 case class SYCLItemMethodPreconditionFailed(node: InvokingNode[_])
     extends NodeVerificationFailure with FrontendInvocationError {
   override def code: String = "syclItemMethodPreFailed"

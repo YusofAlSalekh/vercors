@@ -200,7 +200,9 @@ case class Disambiguate[Pre <: Generation]() extends Rewriter[Pre] {
 
         cons(dispatch(op.left), dispatch(op.right))
       case op @ AmbiguousSubscript(collection, index) =>
-        if (op.isPointerOp)
+        if (op.isPointerArrayOp)
+          PointerArraySubscript(dispatch(collection), dispatch(index))(op.blame)
+        else if (op.isPointerOp)
           PointerSubscript(dispatch(collection), dispatch(index))(op.blame)
         else if (op.isMapOp)
           MapGet(dispatch(collection), dispatch(index))(op.blame)

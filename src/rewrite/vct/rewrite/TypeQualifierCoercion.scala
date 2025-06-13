@@ -230,18 +230,18 @@ case class TypeQualifierCoercion[Pre <: Generation]()
       case PostAssignExpression(target, _)
           if target.t.isInstanceOf[TConst[Pre]] =>
         throw DisallowedConstAssignment(target)
-      case npa @ NewPointerArray(t, size, _) =>
+      case npa @ NewPointer(t, size, _) =>
         val (info, newT) = getUnqualified(t)
         if (info.const)
-          NewConstPointerArray(newT, dispatch(size))(npa.blame)
+          NewConstPointer(newT, dispatch(size))(npa.blame)
         else
-          NewPointerArray(newT, dispatch(size), info.unique)(npa.blame)
-      case npa @ NewNonNullPointerArray(t, size, _) =>
+          NewPointer(newT, dispatch(size), info.unique)(npa.blame)
+      case npa @ NewNonNullPointer(t, size, _) =>
         val (info, newT) = getUnqualified(t)
         if (info.const)
-          NewNonNullConstPointerArray(newT, dispatch(size))(npa.blame)
+          NewNonNullConstPointer(newT, dispatch(size))(npa.blame)
         else
-          NewNonNullPointerArray(newT, dispatch(size), info.unique)(npa.blame)
+          NewNonNullPointer(newT, dispatch(size), info.unique)(npa.blame)
       case newO @ NewObjectUnique(cls, _) =>
         val map = TypeQualifierCoercion
           .getUniqueMap(newO.t.asInstanceOf[TClassUnique[Pre]])
@@ -269,9 +269,9 @@ case class TypeQualifierCoercion[Pre <: Generation]()
         val v = new Variable[Post](TNonNullConstPointer(t))
         val l = Local[Post](v.ref)
         val newP =
-          NewNonNullConstPointerArray(dispatch(ref.decl.t), const(1))(
-            PanicBlame("Size >0")
-          )(a.o)
+          NewNonNullConstPointer(dispatch(ref.decl.t), const(1))(PanicBlame(
+            "Size >0"
+          ))(a.o)
         ScopedExpr(
           Seq(v),
           With[Post](

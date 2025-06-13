@@ -1310,7 +1310,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val elements = rw.dispatch(alloc.numElements)
     assignLocal(
       v,
-      NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
+      NewNonNullPointer[Post](newT, elements, None)(PanicBlame(
         "allocation should never fail"
       )),
     )

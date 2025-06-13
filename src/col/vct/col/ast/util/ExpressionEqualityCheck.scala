@@ -7,7 +7,10 @@ import org.sosy_lab.java_smt.SolverContextFactory
 import org.sosy_lab.java_smt.SolverContextFactory.Solvers
 import org.sosy_lab.java_smt.api.NumeralFormula.IntegerFormula
 import org.sosy_lab.java_smt.api._
-import vct.col.ast.util.ExpressionEqualityCheck.isConstantInt
+import vct.col.ast.util.ExpressionEqualityCheck.{
+  isConstantInt,
+  isValidSymbolicTerm,
+}
 import vct.col.ast._
 import vct.col.origin._
 import vct.col.typerules.CoercionUtils
@@ -29,6 +32,33 @@ object ExpressionEqualityCheck {
 
   def equalExpressions[G](lhs: Expr[G], rhs: Expr[G]): Boolean = {
     ExpressionEqualityCheck().equalExpressions(lhs, rhs)
+  }
+
+  def isValidSymbolicTerm(term: SymbolicTerm[_]): Boolean =
+    term match {
+      case Local(_) => true
+      case ADTFunctionInvocation(_, _, _) => true
+      case ProverFunctionInvocation(_, _) => true
+      case invocation: AnyFunctionInvocation[_] =>
+        !invocation.ref.decl.contract.exists { case _: ResourceTerm[_] =>
+          true
+        } && invocation.givenMap.forall(it => stricterIsConstant(it._2)) &&
+        invocation.args.forall(stricterIsConstant)
+    }
+
+  private def stricterIsConstant(e: Expr[_]): Boolean = {
+    def rec(e: Expr[_]) = stricterIsConstant(e)
+    e match {
+      case inv: AnyFunctionInvocation[_] =>
+        // We need the isValidSymbolicTerm here since the symbolic terms appearing inside of this expression have not previously been checked, unlike the calls to the isConstant function below
+        inv.args.forall(rec) && inv.givenMap.map(_._2).forall(rec) &&
+        inv.yields.map(_._1).forall(rec) && isValidSymbolicTerm(inv)
+      case t: SymbolicTerm[_] if isValidSymbolicTerm(t) => true
+      case _: Constant[_] => true
+      case e: UnExpr[_] => rec(e.arg)
+      case e: BinExpr[_] => rec(e.left) && rec(e.right)
+      case _ => false
+    }
   }
 
   trait Sign
@@ -64,9 +94,9 @@ object ExpressionEqualityCheck {
       )) { ctx =>
         Using(ctx.newProverEnvironment()) { prover =>
           val fmgr = ctx.getFormulaManager
-          val varIntMap: mutable.Map[Variable[G], IntegerFormula] = mutable
+          val varIntMap: mutable.Map[SymbolicTerm[G], IntegerFormula] = mutable
             .Map()
-          val varBoolMap: mutable.Map[Variable[G], BooleanFormula] = mutable
+          val varBoolMap: mutable.Map[SymbolicTerm[G], BooleanFormula] = mutable
             .Map()
           val bmgr = fmgr.getBooleanFormulaManager
           val imgr = fmgr.getIntegerFormulaManager
@@ -150,13 +180,13 @@ object ExpressionEqualityCheck {
                   b1 <- addInt(e1); b2 <- addInt(e2)
                 } yield imgr.greaterOrEquals(b1, b2)
               case BooleanValue(b) => Some(bmgr.makeBoolean(b))
-              case Local(ref) if isBool(e) =>
-                if (varBoolMap.contains(ref.decl))
-                  Some(varBoolMap(ref.decl))
+              case t: SymbolicTerm[G] if isBool(e) && isValidSymbolicTerm(t) =>
+                if (varBoolMap.contains(t))
+                  Some(varBoolMap(t))
                 else {
                   val x = bmgr.makeVariable(s"b$id")
                   id += 1
-                  varBoolMap(ref.decl) = x
+                  varBoolMap(t) = x
                   Some(x)
                 }
               case _ => None
@@ -194,13 +224,13 @@ object ExpressionEqualityCheck {
                 } yield imgr.modulo(i1, i2)
               case UMinus(e1) => for { i1 <- addInt(e1) } yield imgr.negate(i1)
               case IntegerValue(i) => Some(imgr.makeNumber(i.toInt))
-              case Local(ref) if isInt(e) =>
-                if (varIntMap.contains(ref.decl))
-                  Some(varIntMap(ref.decl))
+              case t: SymbolicTerm[G] if isInt(e) && isValidSymbolicTerm(t) =>
+                if (varIntMap.contains(t))
+                  Some(varIntMap(t))
                 else {
                   val x = imgr.makeVariable(s"i$id")
                   id += 1
-                  varIntMap(ref.decl) = x
+                  varIntMap(t) = x
                   Some(x)
                 }
               case _ => None
@@ -220,8 +250,11 @@ object ExpressionEqualityCheck {
   }
 }
 
-case class InconsistentVariableEquality(v: Local[_], x: BigInt, y: BigInt)
-    extends UserError {
+case class InconsistentVariableEquality(
+    v: SymbolicTerm[_],
+    x: BigInt,
+    y: BigInt,
+) extends UserError {
   override def code: String = "inconsistentVariableEquality"
   override def text: String =
     s"Inconsistent variable equality: value of $v is required to be both $x and $y"
@@ -274,10 +307,10 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
 
   private def isConstantIntRecurse(e: Expr[G]): Option[BigInt] =
     e match {
-      case e: Local[G] =>
+      case t: SymbolicTerm[G] if isValidSymbolicTerm(t) =>
         // Does it have a direct int value?
-        info.flatMap(_.variableValues.get(e)).foreach(x => return Some(x))
-        replaceVariable(e).foreach(
+        info.flatMap(_.variableValues.get(t)).foreach(x => return Some(x))
+        replaceSymbol(t).foreach(
           _.foreach(e => isConstantIntRecurse(e).foreach(x => return Some(x)))
         )
         None
@@ -405,14 +438,14 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
     val reverseBound = getBound(_, !isLower)
 
     e match {
-      case v: Local[G] =>
+      case t: SymbolicTerm[G] if isValidSymbolicTerm(t) =>
         info.foreach { i =>
           if (isLower)
-            i.lowerBound.get(v).foreach(b => return Some(b))
+            i.lowerBound.get(t).foreach(b => return Some(b))
           else
-            i.upperBound.get(v).foreach(b => return Some(b))
+            i.upperBound.get(t).foreach(b => return Some(b))
         }
-        replaceVariable(v) match {
+        replaceSymbol(t) match {
           case Some(es) =>
             es.foreach(e => getBound(e, isLower).foreach(r => return Some(r)))
           case None =>
@@ -519,7 +552,8 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
     }
     // Compare two variables, where we sometimes store information about
     (lhs, rhs) match {
-      case (v1: Local[G], v2: Local[G]) =>
+      case (v1: SymbolicTerm[G], v2: SymbolicTerm[G])
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         info.foreach { i =>
           if (
             i.lessThanEqVars.contains(v1) && i.lessThanEqVars(v1).contains(v2)
@@ -545,10 +579,10 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
 
   private def isNonZeroRecurse(e: Expr[G]): Option[Boolean] = {
     e match {
-      case v: Local[G] if info.exists(_.variableNotZero.contains(v)) =>
+      case v: SymbolicTerm[G] if info.exists(_.variableNotZero.contains(v)) =>
         return Some(true)
-      case v: Local[G] =>
-        replaceVariable(v) match {
+      case v: SymbolicTerm[G] if isValidSymbolicTerm(v) =>
+        replaceSymbol(v) match {
           case Some(es) =>
             es.foreach(e => isNonZeroRecurse(e).foreach(r => return Some(r)))
           case None =>
@@ -762,8 +796,10 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
         equalExpressionsRecurse(e1.arg, e2.arg)
 
       // Variables
-      case (name1: Local[G], name2: Local[G]) =>
-        if (name1 == name2)
+      case (name1: SymbolicTerm[G], name2: SymbolicTerm[G])
+          if isValidSymbolicTerm(name1) && isValidSymbolicTerm(name2) =>
+        // TODO: This check is too strict for the invocations since the givenMap might be in any order
+        if (lhs == rhs)
           true
         else if (info.isDefined) {
           // Check if the variables are synonyms
@@ -776,13 +812,13 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
           }
         } else
           false
-      case (name1: Local[G], e2) =>
-        replaceVariable(name1) match {
+      case (name1: SymbolicTerm[G], e2) if isValidSymbolicTerm(name1) =>
+        replaceSymbol(name1) match {
           case Some(es) => es.exists(e => equalExpressionsRecurse(e, e2))
           case None => false
         }
-      case (e1, name2: Local[G]) =>
-        replaceVariable(name2) match {
+      case (e1, name2: SymbolicTerm[G]) if isValidSymbolicTerm(name2) =>
+        replaceSymbol(name2) match {
           case Some(es) => es.exists(e => equalExpressionsRecurse(e1, e))
           case None => false
         }
@@ -794,7 +830,7 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
     }
   }
 
-  def replaceVariable(name: Local[G]): Option[Set[Expr[G]]] = {
+  def replaceSymbol(name: SymbolicTerm[G]): Option[Set[Expr[G]]] = {
     if (replacerDepth > max_depth) { return None }
     info.map(_.variableEqualities).flatMap(_.get(name).map(x => {
       replacerDepth += 1; x
@@ -803,13 +839,13 @@ class ExpressionEqualityCheck[G](info: Option[AnnotationVariableInfo[G]]) {
 }
 
 case class AnnotationVariableInfo[G](
-    variableEqualities: Map[Local[G], Set[Expr[G]]],
-    variableValues: Map[Local[G], BigInt],
-    variableSynonyms: Map[Local[G], BigInt],
-    variableNotZero: Set[Local[G]],
-    lessThanEqVars: Map[Local[G], Set[Local[G]]],
-    upperBound: Map[Local[G], BigInt],
-    lowerBound: Map[Local[G], BigInt],
+    variableEqualities: Map[SymbolicTerm[G], Set[Expr[G]]],
+    variableValues: Map[SymbolicTerm[G], BigInt],
+    variableSynonyms: Map[SymbolicTerm[G], BigInt],
+    variableNotZero: Set[SymbolicTerm[G]],
+    lessThanEqVars: Map[SymbolicTerm[G], Set[SymbolicTerm[G]]],
+    upperBound: Map[SymbolicTerm[G], BigInt],
+    lowerBound: Map[SymbolicTerm[G], BigInt],
     usefulConditions: Set[Expr[G]],
 )
 
@@ -819,28 +855,32 @@ case class AnnotationVariableInfo[G](
   * Iterable[Expr[G]])```
   */
 class AnnotationVariableInfoGetter[G](
-    val variableEqualities: mutable.Map[Local[G], mutable.ListBuffer[Expr[G]]],
-    val variableValues: mutable.Map[Local[G], BigInt],
+    val variableEqualities: mutable.Map[SymbolicTerm[G], mutable.ListBuffer[
+      Expr[G]
+    ]],
+    val variableValues: mutable.Map[SymbolicTerm[G], BigInt],
     // We put synonyms in the same group and give them a group number, to identify the same synonym groups
-    val variableSynonyms: mutable.Map[Local[G], BigInt],
-    val variableNotZero: mutable.Set[Local[G]],
-    val lessThanEqVars: mutable.Map[Local[G], mutable.Set[Local[G]]],
+    val variableSynonyms: mutable.Map[SymbolicTerm[G], BigInt],
+    val variableNotZero: mutable.Set[SymbolicTerm[G]],
+    val lessThanEqVars: mutable.Map[SymbolicTerm[G], mutable.Set[SymbolicTerm[
+      G
+    ]]],
     // upperBound(v) = 5 Captures that variable v is less than or equal to 5
-    val upperBound: mutable.Map[Local[G], BigInt],
+    val upperBound: mutable.Map[SymbolicTerm[G], BigInt],
     // lowerBound(v) = 5 Captures that variable v is greater than or equal to 5
-    val lowerBound: mutable.Map[Local[G], BigInt],
+    val lowerBound: mutable.Map[SymbolicTerm[G], BigInt],
     val usefulConditions: mutable.ArrayBuffer[Expr[G]],
 ) {
 
   def this() = {
     this(
-      mutable.Map[Local[G], mutable.ListBuffer[Expr[G]]](),
-      mutable.Map[Local[G], BigInt](),
-      mutable.Map[Local[G], BigInt](),
-      mutable.Set[Local[G]](),
-      mutable.Map[Local[G], mutable.Set[Local[G]]](),
-      mutable.Map[Local[G], BigInt](),
-      mutable.Map[Local[G], BigInt](),
+      mutable.Map[SymbolicTerm[G], mutable.ListBuffer[Expr[G]]](),
+      mutable.Map[SymbolicTerm[G], BigInt](),
+      mutable.Map[SymbolicTerm[G], BigInt](),
+      mutable.Set[SymbolicTerm[G]](),
+      mutable.Map[SymbolicTerm[G], mutable.Set[SymbolicTerm[G]]](),
+      mutable.Map[SymbolicTerm[G], BigInt](),
+      mutable.Map[SymbolicTerm[G], BigInt](),
       mutable.ArrayBuffer[Expr[G]](),
     )
   }
@@ -851,21 +891,25 @@ class AnnotationVariableInfoGetter[G](
     e match {
       case Eq(e1, e2) =>
         (e1, e2) match {
-          case (v1: Local[G], v2: Local[G]) => addSynonym(v1, v2)
-          case (v1: Local[G], _) => addName(v1, e2)
-          case (_, v2: Local[G]) => addName(v2, e1)
+          case (v1: SymbolicTerm[G], v2: SymbolicTerm[G])
+              if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
+            addSynonym(v1, v2)
+          case (v1: SymbolicTerm[G], _) if isValidSymbolicTerm(v1) =>
+            addName(v1, e2)
+          case (_, v2: SymbolicTerm[G]) if isValidSymbolicTerm(v2) =>
+            addName(v2, e1)
           case _ =>
         }
       case _ =>
     }
   }
 
-  def addLessEq(v: Local[G], i: BigInt): Unit = {
+  def addLessEq(v: SymbolicTerm[G], i: BigInt): Unit = {
     val value = upperBound.getOrElse(v, i).min(i)
     upperBound(v) = value
   }
 
-  def addGreaterEq(v: Local[G], i: BigInt): Unit = {
+  def addGreaterEq(v: SymbolicTerm[G], i: BigInt): Unit = {
     val value = lowerBound.getOrElse(v, i).max(i)
     lowerBound(v) = value
   }
@@ -873,14 +917,14 @@ class AnnotationVariableInfoGetter[G](
   def lt(e1: Expr[G], e2: Expr[G], equal: Boolean): Unit = {
     e1 match {
       // x <= i
-      case v1: Local[G] if equal =>
+      case v1: SymbolicTerm[G] if equal && isValidSymbolicTerm(v1) =>
         equalCheck.isConstantInt(e2).foreach { i =>
           if (i < 0)
             variableNotZero.add(v1)
           addLessEq(v1, i)
         }
       // x < i
-      case v1: Local[G] if !equal =>
+      case v1: SymbolicTerm[G] if !equal && isValidSymbolicTerm(v1) =>
         equalCheck.isConstantInt(e2).foreach { i =>
           if (i <= 0)
             variableNotZero.add(v1)
@@ -890,14 +934,14 @@ class AnnotationVariableInfoGetter[G](
     }
     e2 match {
       // i <= x
-      case v2: Local[G] if equal =>
+      case v2: SymbolicTerm[G] if equal && isValidSymbolicTerm(v2) =>
         equalCheck.isConstantInt(e1).foreach { i =>
           if (i > 0)
             variableNotZero.add(v2)
           addGreaterEq(v2, i)
         }
       // i < x
-      case v2: Local[G] if !equal =>
+      case v2: SymbolicTerm[G] if !equal && isValidSymbolicTerm(v2) =>
         equalCheck.isConstantInt(e1).foreach { i =>
           if (i >= 0)
             variableNotZero.add(v2)
@@ -908,14 +952,19 @@ class AnnotationVariableInfoGetter[G](
 
     (e1, e2) match {
       // x < y
-      case (v1: Local[G], v2: Local[G]) =>
+      case (v1: SymbolicTerm[G], v2: SymbolicTerm[G])
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         lessThanEqVars.getOrElseUpdate(v1, mutable.Set()).addOne(v2)
       case _ =>
     }
   }
 
   // n == m + 1 then m <= n
-  def varEqVarPlusInt(v1: Local[G], v2: Local[G], i: BigInt): Unit = {
+  def varEqVarPlusInt(
+      v1: SymbolicTerm[G],
+      v2: SymbolicTerm[G],
+      i: BigInt,
+  ): Unit = {
     if (i >= 0)
       lessThanEqVars.getOrElseUpdate(v2, mutable.Set()).addOne(v1)
     if (i <= 0)
@@ -925,7 +974,11 @@ class AnnotationVariableInfoGetter[G](
   // n == m + k,
   // if k>=0 then m <= n
   // if k<=0 then n <= m
-  def varEqVarPlusVar(n: Local[G], m: Local[G], k: Local[G]): Unit = {
+  def varEqVarPlusVar(
+      n: SymbolicTerm[G],
+      m: SymbolicTerm[G],
+      k: SymbolicTerm[G],
+  ): Unit = {
     if (lowerBound.contains(k) && lowerBound(k) >= 0)
       lessThanEqVars.getOrElseUpdate(m, mutable.Set()).addOne(n)
     if (upperBound.contains(k) && upperBound(k) <= 0)
@@ -951,7 +1004,7 @@ class AnnotationVariableInfoGetter[G](
       case SetMember(e1, RangeSet(from, to)) =>
         isSimpleExpr(e1) && isSimpleExpr(from) && isSimpleExpr(to)
       case e: BinExpr[G] => isSimpleExpr(e.left) && isSimpleExpr(e.right)
-      case _: Local[G] => true
+      case t: SymbolicTerm[G] if isValidSymbolicTerm(t) => true
       case _: Constant[G] => true
       case _ => false
     }
@@ -962,7 +1015,7 @@ class AnnotationVariableInfoGetter[G](
       case Neq(e1, e2) =>
         e1 match {
           // x != 0
-          case v1: Local[G] =>
+          case v1: SymbolicTerm[G] if isValidSymbolicTerm(v1) =>
             equalCheck.isConstantInt(e2).foreach { i =>
               if (i == 0)
                 variableNotZero.add(v1)
@@ -971,7 +1024,7 @@ class AnnotationVariableInfoGetter[G](
         }
         e2 match {
           // 0 != x
-          case v2: Local[G] =>
+          case v2: SymbolicTerm[G] if isValidSymbolicTerm(v2) =>
             equalCheck.isConstantInt(e1).foreach { i =>
               if (i == 0)
                 variableNotZero.add(v2)
@@ -989,23 +1042,37 @@ class AnnotationVariableInfoGetter[G](
         lt(from, e1, equal = true)
         lt(e1, to, equal = false)
       // n == m + 1 then m < n
-      case Eq(v1: Local[G], Plus(v2: Local[G], i: ConstantInt[G])) =>
+      case Eq(v1: SymbolicTerm[G], Plus(v2: SymbolicTerm[G], i: ConstantInt[G]))
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         varEqVarPlusInt(v1, v2, i.value)
-      case Eq(v1: Local[G], Plus(i: ConstantInt[G], v2: Local[G])) =>
+      case Eq(v1: SymbolicTerm[G], Plus(i: ConstantInt[G], v2: SymbolicTerm[G]))
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         varEqVarPlusInt(v1, v2, i.value)
-      case Eq(Plus(v2: Local[G], i: ConstantInt[G]), v1: Local[G]) =>
+      case Eq(Plus(v2: SymbolicTerm[G], i: ConstantInt[G]), v1: SymbolicTerm[G])
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         varEqVarPlusInt(v1, v2, i.value)
-      case Eq(Plus(i: ConstantInt[G], v2: Local[G]), v1: Local[G]) =>
+      case Eq(Plus(i: ConstantInt[G], v2: SymbolicTerm[G]), v1: SymbolicTerm[G])
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) =>
         varEqVarPlusInt(v1, v2, i.value)
-      case Eq(v1: Local[G], Plus(v2: Local[G], v3: Local[G])) =>
+      case Eq(
+            v1: SymbolicTerm[G],
+            Plus(v2: SymbolicTerm[G], v3: SymbolicTerm[G]),
+          )
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) &&
+            isValidSymbolicTerm(v3) =>
         varEqVarPlusVar(v1, v2, v3)
-      case Eq(Plus(v2: Local[G], v3: Local[G]), v1: Local[G]) =>
+      case Eq(
+            Plus(v2: SymbolicTerm[G], v3: SymbolicTerm[G]),
+            v1: SymbolicTerm[G],
+          )
+          if isValidSymbolicTerm(v1) && isValidSymbolicTerm(v2) &&
+            isValidSymbolicTerm(v3) =>
         varEqVarPlusVar(v1, v2, v3)
       case _ =>
     }
   }
 
-  def addSynonym(v1: Local[G], v2: Local[G]): Unit = {
+  def addSynonym(v1: SymbolicTerm[G], v2: SymbolicTerm[G]): Unit = {
     (variableSynonyms.get(v1), variableSynonyms.get(v2)) match {
       // We make a new group
       case (None, None) =>
@@ -1027,7 +1094,7 @@ class AnnotationVariableInfoGetter[G](
     }
   }
 
-  def addValue(v: Local[G], x: BigInt): Unit =
+  def addValue(v: SymbolicTerm[G], x: BigInt): Unit =
     variableValues.get(v) match {
       case Some(y) =>
         if (x != y)
@@ -1040,7 +1107,7 @@ class AnnotationVariableInfoGetter[G](
         addGreaterEq(v, x)
     }
 
-  def addName(v: Local[G], expr: Expr[G]): Unit = {
+  def addName(v: SymbolicTerm[G], expr: Expr[G]): Unit = {
     // Add to constant list
     isConstantInt[G](expr) match {
       case Some(x) => addValue(v, x)
@@ -1058,10 +1125,10 @@ class AnnotationVariableInfoGetter[G](
         variableEqualities.view.mapValues(_.toSet).toMap,
         variableValues.toMap,
         variableSynonyms.toMap,
-        Set[Local[G]](),
-        Map[Local[G], Set[Local[G]]](),
-        Map[Local[G], BigInt](),
-        Map[Local[G], BigInt](),
+        Set[SymbolicTerm[G]](),
+        Map[SymbolicTerm[G], Set[SymbolicTerm[G]]](),
+        Map[SymbolicTerm[G], BigInt](),
+        Map[SymbolicTerm[G], BigInt](),
         usefulConditions.toSet,
       )
 
@@ -1096,11 +1163,11 @@ class AnnotationVariableInfoGetter[G](
   ): AnnotationVariableInfo[G] = {
     distributeInfo()
 
-    val varEq = mergeMaps[Local[G], mutable.ListBuffer[Expr[G]]](
+    val varEq = mergeMaps[SymbolicTerm[G], mutable.ListBuffer[Expr[G]]](
       prev.map(_.variableEqualities) :+ variableEqualities,
       (_, l, r) => l ++ r,
     )
-    val varVal = mergeMaps[Local[G], BigInt](
+    val varVal = mergeMaps[SymbolicTerm[G], BigInt](
       prev.map(_.variableValues) :+ variableValues,
       (v, x, y) =>
         if (x != y)
@@ -1108,7 +1175,7 @@ class AnnotationVariableInfoGetter[G](
         else
           x,
     )
-    val varSyn: mutable.Map[Local[G], BigInt] = variableSynonyms
+    val varSyn: mutable.Map[SymbolicTerm[G], BigInt] = variableSynonyms
     for (p <- prev) {
       for ((v, synonym_nr) <- p.variableSynonyms) {
         if (varSyn.contains(v) && varSyn(v) != synonym_nr) {
@@ -1125,17 +1192,17 @@ class AnnotationVariableInfoGetter[G](
       }
     }
     val varNotZero = prev.flatMap(_.variableNotZero) ++ variableNotZero
-    val varLessThen = mergeMaps[Local[G], mutable.Set[Local[G]]](
+    val varLessThen = mergeMaps[SymbolicTerm[G], mutable.Set[SymbolicTerm[G]]](
       prev.map(_.lessThanEqVars) :+ lessThanEqVars,
       (_, l, r) => l ++ r,
     )
     // Take the lowest upper bound
-    val varUpper = mergeMaps[Local[G], BigInt](
+    val varUpper = mergeMaps[SymbolicTerm[G], BigInt](
       prev.map(_.upperBound) :+ upperBound,
       (_, l, r) => l.min(r),
     )
     // Take the highest lower bound
-    val varLower = mergeMaps[Local[G], BigInt](
+    val varLower = mergeMaps[SymbolicTerm[G], BigInt](
       prev.map(_.lowerBound) :+ lowerBound,
       (_, l, r) => l.max(r),
     )
@@ -1180,10 +1247,10 @@ class AnnotationVariableInfoGetter[G](
     usefulConditions.clear()
   }
 
-  def filterInfo(assignedVars: Set[Variable[G]]): Unit = {
+  def filterInfo(assignedVars: Set[SymbolicTerm[G]]): Unit = {
     def const: Expr[G] => Boolean = isConstant(_, assignedVars)
-    def constantVar(l: Local[G]): Boolean =
-      constantType(l.t) && !assignedVars.contains(l.ref.decl)
+    def constantVar(l: SymbolicTerm[G]): Boolean =
+      constantType(l.t) && !assignedVars.contains(l)
 
     variableEqualities
       .filterInPlace((l, v) => constantVar(l) && v.forall(const))
@@ -1197,18 +1264,19 @@ class AnnotationVariableInfoGetter[G](
     usefulConditions.filterInPlace(const)
   }
 
-  def isConstant(e: Expr[G], assignedVars: Set[Variable[G]]): Boolean = {
+  def isConstant(e: Expr[G], assignedVars: Set[SymbolicTerm[G]]): Boolean = {
     def rec(e: Expr[G]) = isConstant(e, assignedVars)
+    // No need to check if the found SymbolicTerms are valid here since this is only ever called on expression containing previously checked terms
     e match {
-      case l @ Local(ref)
-          if constantType(l.t) && !assignedVars.contains(ref.decl) =>
+      case inv: AnyFunctionInvocation[G] =>
+        inv.args.forall(rec) && inv.givenMap.map(_._2).forall(rec) &&
+        inv.yields.map(_._1).forall(rec)
+      case t: SymbolicTerm[G]
+          if constantType(t.t) && !assignedVars.contains(t) =>
         true
       case _: Constant[G] => true
       case e: UnExpr[G] => rec(e.arg)
       case e: BinExpr[G] => rec(e.left) && rec(e.right)
-      case FunctionInvocation(_, args, _, given, yields, _) =>
-        args.forall(rec) && given.map(_._2).forall(rec) && yields.map(_._1)
-          .forall(rec)
       case _ => false
     }
   }
@@ -1235,12 +1303,13 @@ class AnnotationVariableInfoGetter[G](
     }
 
     // Group synonym sets
-    val synonymSets: mutable.Map[BigInt, mutable.Set[Local[G]]] = mutable.Map()
+    val synonymSets: mutable.Map[BigInt, mutable.Set[SymbolicTerm[G]]] = mutable
+      .Map()
     variableSynonyms.foreach { case (v, groupId) =>
       synonymSets.getOrElse(groupId, mutable.Set()).add(v)
     }
 
-    def hasValue(vars: mutable.Set[Local[G]]): Option[BigInt] = {
+    def hasValue(vars: mutable.Set[SymbolicTerm[G]]): Option[BigInt] = {
       vars.foreach { v =>
         if (variableValues.contains(v))
           return variableValues.get(v)
@@ -1271,7 +1340,7 @@ class AnnotationVariableInfoGetter[G](
       max.foreach { x => vars.foreach { lowerBound(_) = x } }
 
       // Collect all vars that are greater than
-      val greaterVars: mutable.Set[Local[G]] = mutable.Set()
+      val greaterVars: mutable.Set[SymbolicTerm[G]] = mutable.Set()
       vars.foreach { v =>
         lessThanEqVars(v).map { variableSynonyms(_) }.foreach { i =>
           greaterVars.addAll(synonymSets(i))

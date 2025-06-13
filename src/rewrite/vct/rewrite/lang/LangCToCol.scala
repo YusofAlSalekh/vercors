@@ -62,6 +62,23 @@ case object LangCToCol {
         .messageInContext(s"This declaration has a type that is not supported.")
   }
 
+  private case class UnsupportedArrayInitialiser(decl: Declaration[_])
+      extends UserError {
+    override def code: String = "unsupportedArrayInitialiser"
+    override def text: String =
+      decl.o.messageInContext(
+        "VerCors does not support array initialisers for multi-dimensional arrays yet"
+      )
+  }
+
+  private case class MissingArraySize(t: Type[_]) extends UserError {
+    override def code: String = "unsupportedArrayInitialiser"
+    override def text: String =
+      t.o.messageInContext(
+        "VerCors does not support arrays with incomplete sizes yet"
+      )
+  }
+
   private case class WrongStructType(decl: Node[_]) extends UserError {
     override def code: String = "wrongStructType"
 
@@ -595,9 +612,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                 )(c.o),
               )
           }
-        NewPointerArray(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(
-          c.o
-        )
+        NewPointer(rw.dispatch(t2), size, None)(ArrayMallocFailed(inv))(c.o)
       case CCast(CInvocation(CLocal("__vercors_malloc"), _, _, _, _), _) =>
         throw UnsupportedMalloc(c)
       case CCast(n @ Null(), t) if t.asPointer.isDefined => rw.dispatch(n)
@@ -889,7 +904,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         rw.variables.declare(v)
         val assign: Statement[Post] = assignLocal(
           Local(cNameSuccessor(d).ref),
-          NewNonNullPointerArray[Post](
+          NewNonNullPointer[Post](
             cNameSuccessor(d).t.asPointer.get.element,
             Local(v.ref),
             None,
@@ -903,7 +918,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         val assign: Statement[Post] = assignLocal(
           Local(cNameSuccessor(d).ref),
           // Since we set the size and blame together, we can assume the blame is not None
-          NewNonNullPointerArray[Post](
+          NewNonNullPointer[Post](
             cNameSuccessor(d).t.asPointer.get.element,
             c_const(size),
             None,
@@ -1574,6 +1589,25 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
+  private def getDimensions(cta: CTArray[Pre]): Seq[Expr[Post]] = {
+    cta.size match {
+      case Some(value) =>
+        rw.dispatch(value) +:
+          (cta.innerType match {
+            case inner: CTArray[Pre] => getDimensions(inner)
+            case _ => Nil
+          })
+      case None => throw MissingArraySize(cta)
+    }
+  }
+
+  @tailrec
+  private def getArrayType(cta: CTArray[Pre]): Type[Pre] =
+    cta.innerType match {
+      case inner: CTArray[Pre] => getArrayType(inner)
+      case inner => inner
+    }
+
   // TODO: (AS) Fixed-size arrays seem to become pointers but they're actually value types
   def rewriteArrayDeclaration(
       decl: CLocalDeclaration[Pre],
@@ -1587,36 +1621,50 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
     decl.decl.specs match {
       case Seq(CSpecificationType(cta @ CTArray(sizeOption, oldT))) =>
-        val t = rw.dispatch(oldT)
-        val v = new Variable[Post](TPointer(t, None))(o.sourceName(info.name))
+        val dimensions = getDimensions(cta)
+        val innerMostType = rw.dispatch(getArrayType(cta))
+        val v =
+          new Variable[Post](TPointerArray(innerMostType, dimensions, None))(
+            o.sourceName(info.name)
+          )
         cNameSuccessor(RefCLocalDeclaration(decl, 0)) = v
 
         (sizeOption, init.init) match {
           case (None, None) => throw WrongCType(decl)
           case (Some(size), None) =>
             val newArr =
-              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(
-                cta.blame
-              )
+              NewPointerArray[Post](innerMostType, dimensions, None)(cta.blame)
             Block(Seq(LocalDecl(v), assignLocal(v.get, newArr)))
           case (None, Some(CLiteralArray(exprs))) =>
+            oldT match {
+              case CTArray(_, _) => throw UnsupportedArrayInitialiser(decl)
+              case _ => {}
+            }
             val newArr =
-              NewNonNullPointerArray[Post](t, c_const[Post](exprs.size), None)(
-                cta.blame
-              )
+              NewPointerArray[Post](
+                innerMostType,
+                Seq(c_const[Post](exprs.size)),
+                None,
+              )(cta.blame)
             Block(
               Seq(LocalDecl(v), assignLocal(v.get, newArr)) ++
                 assignliteralArray(v, exprs, o)
             )
           case (Some(size), Some(CLiteralArray(exprs))) =>
+            oldT match {
+              case CTArray(_, _) => throw UnsupportedArrayInitialiser(decl)
+              case _ => {}
+            }
             val realSize = isConstantInt(size).filter(_ >= 0)
               .getOrElse(throw WrongCType(decl))
             if (realSize < exprs.size)
               logger.warn(s"Excess elements in array initializer: '${decl}'")
             val newArr =
-              NewNonNullPointerArray[Post](t, c_const[Post](realSize), None)(
-                cta.blame
-              )
+              NewPointerArray[Post](
+                innerMostType,
+                Seq(c_const[Post](realSize)),
+                None,
+              )(cta.blame)
             Block(
               Seq(LocalDecl(v), assignLocal(v.get, newArr)) ++
                 assignliteralArray(v, exprs.take(realSize.intValue), o)
@@ -2423,7 +2471,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   def pointerType(t: CPointerType[Pre]): Type[Post] =
     t match {
       case CTPointer(innerType) => TPointer(rw.dispatch(innerType), None)
-      case CTArray(_, innerType) => TPointer(rw.dispatch(innerType), None)
+      case cta @ CTArray(_, _) =>
+        TPointerArray(rw.dispatch(getArrayType(cta)), getDimensions(cta), None)
     }
 
   def vectorType(t: CType[Pre]): Type[Post] = {
@@ -2442,7 +2491,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def arrayType(t: CTArray[Pre]): Type[Post] = {
     // The size of an array for an parameter is ignored
-    TPointer(rw.dispatch(t.innerType), None)
+    TPointerArray(rw.dispatch(getArrayType(t)), getDimensions(t), None)
   }
 
   def structType(t: CType[Pre]): TClass[Post] =

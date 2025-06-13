@@ -130,8 +130,13 @@ final case class TUnion[G](types: Seq[Type[G]])(
 final case class TArray[G](element: Type[G])(
     implicit val o: Origin = DiagnosticOrigin
 ) extends Type[G] with TArrayImpl[G]
+final case class TPointerArray[G](
+    element: Type[G],
+    dimensions: Seq[Expr[G]],
+    unique: Option[BigInt],
+)(implicit val o: Origin = DiagnosticOrigin)
+    extends Type[G] with TPointerArrayImpl[G]
 
-// TODO: Add information for inner type to pointer block type
 final case class TPointerBlock[G]()(implicit val o: Origin = DiagnosticOrigin)
     extends Type[G] with TPointerBlockImpl[G]
 final case class TType[G](t: Type[G])(implicit val o: Origin = DiagnosticOrigin)
@@ -1263,6 +1268,11 @@ final case class CoerceLLVMIntInt[G]()(implicit val o: Origin)
 @family
 sealed trait Expr[G] extends NodeFamily[G] with ExprImpl[G]
 
+// For terms which we can safely reason about in ExpressionEqualityCheck
+sealed trait SymbolicTerm[G] extends Expr[G]
+// For terms which introduce a resource in a function precondition, invocations of these functions must be excluded from SymbolicTerms that are collected
+sealed trait ResourceTerm[G] extends Expr[G]
+
 sealed trait Constant[G] extends Expr[G] with ConstantImpl[G]
 sealed trait ConstantInt[G] extends Constant[G] with ConstantIntImpl[G]
 sealed trait ConstantFloat[G] extends Constant[G]
@@ -1469,7 +1479,7 @@ final case class ScopedExpr[G](declarations: Seq[Variable[G]], body: Expr[G])(
 ) extends Declarator[G] with Expr[G] with ScopedExprImpl[G]
 
 final case class Local[G](ref: Ref[G, Variable[G]])(implicit val o: Origin)
-    extends Expr[G] with LocalImpl[G]
+    extends Expr[G] with LocalImpl[G] with SymbolicTerm[G]
 final case class HeapLocal[G](ref: Ref[G, LocalHeapVariable[G]])(
     implicit val o: Origin
 ) extends Expr[G] with HeapLocalImpl[G]
@@ -1528,12 +1538,12 @@ final case class ADTFunctionInvocation[G](
     ref: Ref[G, ADTFunction[G]],
     args: Seq[Expr[G]],
 )(implicit val o: Origin)
-    extends Apply[G] with ADTFunctionInvocationImpl[G]
+    extends Apply[G] with ADTFunctionInvocationImpl[G] with SymbolicTerm[G]
 final case class ProverFunctionInvocation[G](
     ref: Ref[G, ProverFunction[G]],
     args: Seq[Expr[G]],
 )(implicit val o: Origin)
-    extends Apply[G] with ProverFunctionInvocationImpl[G]
+    extends Apply[G] with ProverFunctionInvocationImpl[G] with SymbolicTerm[G]
 
 sealed trait ApplyInlineable[G] extends Apply[G] with ApplyInlineableImpl[G]
 sealed trait InstanceApply[G] extends Node[G] with InstanceApplyImpl[G]
@@ -1615,7 +1625,7 @@ final case class ConstructorInvocation[G](
     extends AnyMethodInvocation[G] with ConstructorInvocationImpl[G]
 
 sealed trait AnyFunctionInvocation[G]
-    extends Invocation[G] with AnyFunctionInvocationImpl[G]
+    extends Invocation[G] with AnyFunctionInvocationImpl[G] with SymbolicTerm[G]
 final case class FunctionInvocation[G](
     ref: Ref[G, Function[G]],
     args: Seq[Expr[G]],
@@ -1843,7 +1853,7 @@ final case class Implies[G](left: Expr[G], right: Expr[G])(
 final case class Star[G](left: Expr[G], right: Expr[G])(implicit val o: Origin)
     extends Expr[G] with StarImpl[G]
 final case class Wand[G](left: Expr[G], right: Expr[G])(implicit val o: Origin)
-    extends Expr[G] with WandImpl[G]
+    extends Expr[G] with WandImpl[G] with ResourceTerm[G]
 final case class Scale[G](scale: Expr[G], res: Expr[G])(
     val blame: Blame[ScaleNegative]
 )(implicit val o: Origin)
@@ -1913,17 +1923,17 @@ final case class InLinePatternLocation[G](loc: Location[G], pattern: Expr[G])(
 
 final case class Perm[G](loc: Location[G], perm: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with PermImpl[G]
+) extends Expr[G] with PermImpl[G] with ResourceTerm[G]
 final case class PointsTo[G](loc: Location[G], perm: Expr[G], value: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with PointsToImpl[G]
+) extends Expr[G] with PointsToImpl[G] with ResourceTerm[G]
 final case class CurPerm[G](loc: Location[G])(implicit val o: Origin)
     extends Expr[G] with CurPermImpl[G]
 
 final case class Value[G](loc: Location[G])(implicit val o: Origin)
-    extends Expr[G] with ValueImpl[G]
+    extends Expr[G] with ValueImpl[G] with ResourceTerm[G]
 final case class AutoValue[G](loc: Location[G])(implicit val o: Origin)
-    extends Expr[G] with AutoValueImpl[G]
+    extends Expr[G] with AutoValueImpl[G] with ResourceTerm[G]
 
 final case class ValidArray[G](arr: Expr[G], len: Expr[G])(
     implicit val o: Origin
@@ -1934,16 +1944,16 @@ final case class ValidMatrix[G](mat: Expr[G], w: Expr[G], h: Expr[G])(
 
 final case class PermPointer[G](p: Expr[G], len: Expr[G], perm: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with PermPointerImpl[G]
+) extends Expr[G] with PermPointerImpl[G] with ResourceTerm[G]
 final case class PermPointerIndex[G](p: Expr[G], idx: Expr[G], perm: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with PermPointerIndexImpl[G]
+) extends Expr[G] with PermPointerIndexImpl[G] with ResourceTerm[G]
 
 final case class ResourceOfResourceValue[G](res: Expr[G])(
     implicit val o: Origin
 ) extends Expr[G] with ResourceOfResourceValueImpl[G]
 final case class ResourceValue[G](res: Expr[G])(implicit val o: Origin)
-    extends Expr[G] with ResourceValueImpl[G]
+    extends Expr[G] with ResourceValueImpl[G] with ResourceTerm[G]
 
 sealed trait Comparison[G] extends BinExpr[G] with ComparisonImpl[G]
 sealed trait AmbiguousComparison[G]
@@ -2080,28 +2090,35 @@ final case class NewArray[G](
     initialize: Boolean,
 )(val blame: Blame[ArraySizeError])(implicit val o: Origin)
     extends Expr[G] with NewArrayImpl[G]
-sealed trait NewPointer[G] extends Expr[G] with NewPointerImpl[G]
-final case class NewPointerArray[G](
+sealed trait PointerConstructor[G]
+    extends Expr[G] with PointerConstructorImpl[G]
+final case class NewPointer[G](
     element: Type[G],
     size: Expr[G],
     unique: Option[BigInt],
 )(val blame: Blame[ArraySizeError])(implicit val o: Origin)
-    extends NewPointer[G] with NewPointerArrayImpl[G]
-final case class NewConstPointerArray[G](element: Type[G], size: Expr[G])(
+    extends PointerConstructor[G] with NewPointerImpl[G]
+final case class NewConstPointer[G](element: Type[G], size: Expr[G])(
     val blame: Blame[ArraySizeError]
 )(implicit val o: Origin)
-    extends NewPointer[G] with NewConstPointerArrayImpl[G]
-final case class NewNonNullPointerArray[G](
+    extends PointerConstructor[G] with NewConstPointerImpl[G]
+final case class NewNonNullPointer[G](
     element: Type[G],
     size: Expr[G],
     unique: Option[BigInt],
 )(val blame: Blame[ArraySizeError])(implicit val o: Origin)
-    extends NewPointer[G] with NewNonNullPointerArrayImpl[G]
-final case class NewNonNullConstPointerArray[G](
+    extends PointerConstructor[G] with NewNonNullPointerImpl[G]
+final case class NewNonNullConstPointer[G](element: Type[G], size: Expr[G])(
+    val blame: Blame[ArraySizeError]
+)(implicit val o: Origin)
+    extends PointerConstructor[G] with NewNonNullConstPointerImpl[G]
+
+final case class NewPointerArray[G](
     element: Type[G],
-    size: Expr[G],
+    dimensions: Seq[Expr[G]],
+    unique: Option[BigInt],
 )(val blame: Blame[ArraySizeError])(implicit val o: Origin)
-    extends NewPointer[G] with NewNonNullConstPointerArrayImpl[G]
+    extends Expr[G] with NewPointerArrayImpl[G]
 
 final case class UniquePointerCoercion[G](e: Expr[G], t: Type[G])(
     implicit val o: Origin
@@ -2134,6 +2151,10 @@ final case class PointerSubscript[G](pointer: Expr[G], index: Expr[G])(
     val blame: Blame[PointerSubscriptError]
 )(implicit val o: Origin)
     extends Expr[G] with PointerSubscriptImpl[G]
+final case class PointerArraySubscript[G](array: Expr[G], index: Expr[G])(
+    val blame: Blame[PointerSubscriptError]
+)(implicit val o: Origin)
+    extends Expr[G] with PointerArraySubscriptImpl[G]
 final case class Length[G](arr: Expr[G])(val blame: Blame[ArrayNull])(
     implicit val o: Origin
 ) extends Expr[G] with LengthImpl[G]
@@ -2337,9 +2358,9 @@ final case class Committed[G](obj: Expr[G])(val blame: Blame[LockObjectNull])(
     implicit val o: Origin
 ) extends Expr[G] with CommittedImpl[G]
 final case class IdleToken[G](thread: Expr[G])(implicit val o: Origin)
-    extends Expr[G] with IdleTokenImpl[G]
+    extends Expr[G] with IdleTokenImpl[G] with ResourceTerm[G]
 final case class JoinToken[G](thread: Expr[G])(implicit val o: Origin)
-    extends Expr[G] with JoinTokenImpl[G]
+    extends Expr[G] with JoinTokenImpl[G] with ResourceTerm[G]
 
 final case class EmptyProcess[G]()(implicit val o: Origin)
     extends Expr[G] with EmptyProcessImpl[G]
@@ -2374,10 +2395,10 @@ final case class ModelNew[G](ref: Ref[G, Model[G]])(implicit val o: Origin)
 
 final case class ModelState[G](model: Expr[G], perm: Expr[G], state: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ModelStateImpl[G]
+) extends Expr[G] with ModelStateImpl[G] with ResourceTerm[G]
 final case class ModelAbstractState[G](model: Expr[G], state: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ModelAbstractStateImpl[G]
+) extends Expr[G] with ModelAbstractStateImpl[G] with ResourceTerm[G]
 final case class ModelCreate[G](model: Expr[G], init: Expr[G])(
     implicit val o: Origin
 ) extends Expr[G] with ModelCreateImpl[G]
@@ -2409,10 +2430,10 @@ final case class ModelChoose[G](
 
 final case class ModelPerm[G](loc: Expr[G], perm: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ModelPermImpl[G]
+) extends Expr[G] with ModelPermImpl[G] with ResourceTerm[G]
 final case class ActionPerm[G](loc: Expr[G], perm: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ActionPermImpl[G]
+) extends Expr[G] with ActionPermImpl[G] with ResourceTerm[G]
 
 sealed trait SmtlibType[G] extends Type[G]
 case class TSmtlibArray[G](index: Seq[Type[G]], value: Type[G])(
@@ -4293,7 +4314,7 @@ final case class PVLChorPerm[G](
     loc: Location[G],
     perm: Expr[G],
 )(implicit val o: Origin)
-    extends PVLExpr[G] with PVLChorPermImpl[G]
+    extends PVLExpr[G] with PVLChorPermImpl[G] with ResourceTerm[G]
 final case class PVLSender[G]()(implicit val o: Origin)
     extends Expr[G] with PVLSenderImpl[G] {
   var ref: Option[PVLCommunicateStatement[G]] = None

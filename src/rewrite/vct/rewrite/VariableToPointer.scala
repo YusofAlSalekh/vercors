@@ -70,14 +70,16 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
       case _ => false
     }
 
-  def makeNewPointerArray(t: Type[Post])(implicit o: Origin): NewPointer[Post] =
+  def makeNewPointerArray(
+      t: Type[Post]
+  )(implicit o: Origin): PointerConstructor[Post] =
     t match {
       case TNonNullPointer(innerType, unique) =>
-        NewNonNullPointerArray[Post](innerType, const(1), unique)(PanicBlame(
+        NewNonNullPointer[Post](innerType, const(1), unique)(PanicBlame(
           "Size is > 0"
         ))
       case TNonNullConstPointer(innerType) =>
-        NewNonNullConstPointerArray[Post](innerType, const(1))(PanicBlame(
+        NewNonNullConstPointer[Post](innerType, const(1))(PanicBlame(
           "Size is > 0"
         ))
     }
