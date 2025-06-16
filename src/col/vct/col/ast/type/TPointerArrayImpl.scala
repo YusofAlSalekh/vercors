@@ -7,7 +7,8 @@ import vct.col.print._
 trait TPointerArrayImpl[G] extends TPointerArrayOps[G] {
   this: TPointerArray[G] =>
   override def layout(implicit ctx: Ctx): Doc =
-    dimensions.foldLeft[Doc](element.show) { case (l, r) =>
-      l <> "[" <> r <> "]"
+    dimensions.foldLeft[Doc](element.show) {
+      case (l, Some(r)) => l <> "[" <> r <> "]"
+      case (l, None) => l <> "[]"
     }
 }

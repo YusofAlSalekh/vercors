@@ -86,6 +86,8 @@ object Types {
 
       case (_: TNull[G], pt: PointerType[G]) => pt.asNullable
       case (pt: PointerType[G], _: TNull[G]) => pt.asNullable
+      case (_: TNull[G], p: TPointerArray[G]) => TPointer(p.element, p.unique)
+      case (p: TPointerArray[G], _: TNull[G]) => TPointer(p.element, p.unique)
 
       case (TUnion(left), TUnion(right)) => TUnion((left ++ right).distinct)
       case (TUnion(left), right) => TUnion((left :+ right).distinct)

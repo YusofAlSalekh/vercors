@@ -132,7 +132,7 @@ final case class TArray[G](element: Type[G])(
 ) extends Type[G] with TArrayImpl[G]
 final case class TPointerArray[G](
     element: Type[G],
-    dimensions: Seq[Expr[G]],
+    dimensions: Seq[Option[Expr[G]]],
     unique: Option[BigInt],
 )(implicit val o: Origin = DiagnosticOrigin)
     extends Type[G] with TPointerArrayImpl[G]
@@ -1120,6 +1120,12 @@ final case class CoerceCVectorVector[G](size: BigInt, elementType: Type[G])(
 final case class CoerceNullLLVMPointer[G](elementType: Option[Type[G]])(
     implicit val o: Origin
 ) extends Coercion[G] with CoerceNullLLVMPointerImpl[G]
+final case class CoercePointerArrayPointer[G](
+    elementType: Type[G],
+    dimensions: Int,
+    unique: Option[BigInt],
+)(implicit val o: Origin)
+    extends Coercion[G] with CoercePointerArrayPointerImpl[G]
 
 final case class CoerceFracZFrac[G]()(implicit val o: Origin)
     extends Coercion[G] with CoerceFracZFracImpl[G]

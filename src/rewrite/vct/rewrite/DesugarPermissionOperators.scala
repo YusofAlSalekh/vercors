@@ -149,13 +149,17 @@ case class DesugarPermissionOperators[Pre <: Generation]()
           ) <= PointerBlockLength(dispatch(p))(FramedPtrBlockLength) &* starall(
             IteratedPtrInjective,
             TInt(),
-            i =>
-              (const(0) <= i && i < dispatch(len)) ==> Perm(
-                PointerLocation(PointerAdd(dispatch(p), i)(FramedPtrOffset))(
-                  FramedPtrOffset
-                ),
-                dispatch(perm),
-              ),
+            body =
+              i =>
+                (const(0) <= i && i < dispatch(len)) ==>
+                  Perm(
+                    PointerLocation(
+                      PointerAdd(dispatch(p), i)(FramedPtrOffset)
+                    )(FramedPtrOffset),
+                    dispatch(perm),
+                  ),
+            triggers =
+              i => Seq(Seq(PointerSubscript(dispatch(p), i)(FramedPtrOffset))),
           )
       case PermPointerIndex(p, idx, perm) =>
         (dispatch(p) !== Null()) &* const(0) <= PointerBlockOffset(dispatch(p))(

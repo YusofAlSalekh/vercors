@@ -71,10 +71,10 @@ case object LangCToCol {
       )
   }
 
-  private case class MissingArraySize(t: Type[_]) extends UserError {
+  private case class MissingArraySize(node: Node[_]) extends UserError {
     override def code: String = "unsupportedArrayInitialiser"
     override def text: String =
-      t.o.messageInContext(
+      node.o.messageInContext(
         "VerCors does not support arrays with incomplete sizes yet"
       )
   }
@@ -1589,16 +1589,12 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     }
   }
 
-  private def getDimensions(cta: CTArray[Pre]): Seq[Expr[Post]] = {
-    cta.size match {
-      case Some(value) =>
-        rw.dispatch(value) +:
-          (cta.innerType match {
-            case inner: CTArray[Pre] => getDimensions(inner)
-            case _ => Nil
-          })
-      case None => throw MissingArraySize(cta)
-    }
+  private def getDimensions(cta: CTArray[Pre]): Seq[Option[Expr[Post]]] = {
+    cta.size.map(rw.dispatch) +:
+      (cta.innerType match {
+        case inner: CTArray[Pre] => getDimensions(inner)
+        case _ => Nil
+      })
   }
 
   @tailrec
@@ -1621,10 +1617,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
     decl.decl.specs match {
       case Seq(CSpecificationType(cta @ CTArray(sizeOption, oldT))) =>
-        val dimensions = getDimensions(cta)
+        val optDimensions = getDimensions(cta)
         val innerMostType = rw.dispatch(getArrayType(cta))
         val v =
-          new Variable[Post](TPointerArray(innerMostType, dimensions, None))(
+          new Variable[Post](TPointerArray(innerMostType, optDimensions, None))(
             o.sourceName(info.name)
           )
         cNameSuccessor(RefCLocalDeclaration(decl, 0)) = v
@@ -1632,6 +1628,10 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
         (sizeOption, init.init) match {
           case (None, None) => throw WrongCType(decl)
           case (Some(size), None) =>
+            if (optDimensions.exists(_.isEmpty)) {
+              throw MissingArraySize(decl)
+            }
+            val dimensions = optDimensions.map(_.get)
             val newArr =
               NewPointerArray[Post](innerMostType, dimensions, None)(cta.blame)
             Block(Seq(LocalDecl(v), assignLocal(v.get, newArr)))

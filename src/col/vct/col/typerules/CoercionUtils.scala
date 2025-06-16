@@ -272,6 +272,15 @@ case object CoercionUtils {
           if elementL == elementR && uniqueL == uniqueR &&
             dimensionsL.length == dimensionsR.length =>
         CoerceIdentity(target)
+      case (
+            TPointerArray(elementL, dimensions, uniqueL),
+            TPointer(elementR, uniqueR),
+          ) if uniqueL == uniqueR =>
+        CoercionSequence(Seq(
+          CoercePointerArrayPointer(elementL, dimensions.length, uniqueL),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+        ))
       // Below two cases are for AddrOf struct fields which return unique non-null pointers before the TUnique qualifier is removed by the TypeQualifierCoercion
       case (
             s @ TNonNullPointer(a, Some(uniqueA)),
@@ -643,8 +652,11 @@ case object CoercionUtils {
         Some((CoerceIdentity(source), TPointer(innerType, None)))
       case LLVMTArray(numElements, innerType) if numElements > 0 =>
         Some((CoerceIdentity(source), TPointer(innerType, None)))
-      case t: TPointerArray[G] =>
-        Some((CoerceIdentity(source), TPointer(t.element, None)))
+      case TPointerArray(element, dimensions, unique) =>
+        Some((
+          CoercePointerArrayPointer(element, dimensions.length, unique),
+          TPointer(element, unique),
+        ))
       case _: TNull[G] =>
         val t = TPointer[G](TAnyValue(), None)
         Some((CoerceNullPointer(t), t))

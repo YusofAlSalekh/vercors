@@ -305,6 +305,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceCArrayPointer(_) => e
       case CoerceCPPArrayPointer(_) => e
       case CoerceCVectorVector(_, _) => e
+      case CoerceNullLLVMPointer(_) => e
+      case CoercePointerArrayPointer(_, _, _) => e
       case CoerceNullEnum(_) => e
 
       case CoerceIntRat() => e
