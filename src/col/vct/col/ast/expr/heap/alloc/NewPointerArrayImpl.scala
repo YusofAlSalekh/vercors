@@ -9,5 +9,6 @@ trait NewPointerArrayImpl[G] extends NewPointerArrayOps[G] {
   override def t: Type[G] =
     TPointerArray(element, dimensions.map(Some(_)), unique)
   override def layout(implicit ctx: Ctx): Doc =
-    Text("new") <+> element <> dimensions.mkString("[", ",", "]")
+    Text("new") <+> unique.map(u => Text(s"unique<$u>") <+> element)
+      .getOrElse(element.show) <> dimensions.mkString("[", ",", "]")
 }

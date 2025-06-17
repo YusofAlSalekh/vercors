@@ -7,8 +7,14 @@ import vct.col.print._
 trait TPointerArrayImpl[G] extends TPointerArrayOps[G] {
   this: TPointerArray[G] =>
   override def layout(implicit ctx: Ctx): Doc =
-    dimensions.foldLeft[Doc](element.show) {
+    dimensions.foldLeft[Doc](
+      unique.map(u => Text(s"unique<$u>") <+> element).getOrElse(element.show)
+    ) {
       case (l, Some(r)) => l <> "[" <> r <> "]"
       case (l, None) => l <> "[]"
     }
+
+  override val isConst: Boolean = false
+  override def descend: TPointerArray[G] =
+    TPointerArray(element, dimensions.tail, unique)
 }

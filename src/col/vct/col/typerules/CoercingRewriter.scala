@@ -307,6 +307,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceCVectorVector(_, _) => e
       case CoerceNullLLVMPointer(_) => e
       case CoercePointerArrayPointer(_, _, _) => e
+      case CoerceConstPointerArrayPointer(_, _) => e
       case CoerceNullEnum(_) => e
 
       case CoerceIntRat() => e
@@ -1626,6 +1627,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
         NewNonNullConstPointer(element, size)(nca.blame)
       case npa @ NewPointerArray(element, dimensions, unique) =>
         NewPointerArray(element, dimensions, unique)(npa.blame)
+      case npa @ NewConstPointerArray(element, dimensions) =>
+        NewConstPointerArray(element, dimensions)(npa.blame)
       case NewObject(cls) => NewObject(cls)
       case NewObjectUnique(cls, m) => NewObjectUnique(cls, m)
       case NoPerm() => NoPerm()

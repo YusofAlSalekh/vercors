@@ -130,12 +130,18 @@ final case class TUnion[G](types: Seq[Type[G]])(
 final case class TArray[G](element: Type[G])(
     implicit val o: Origin = DiagnosticOrigin
 ) extends Type[G] with TArrayImpl[G]
+sealed trait PointerArrayType[G] extends Type[G] with PointerArrayTypeImpl[G]
 final case class TPointerArray[G](
     element: Type[G],
     dimensions: Seq[Option[Expr[G]]],
     unique: Option[BigInt],
 )(implicit val o: Origin = DiagnosticOrigin)
-    extends Type[G] with TPointerArrayImpl[G]
+    extends PointerArrayType[G] with TPointerArrayImpl[G]
+final case class TConstPointerArray[G](
+    element: Type[G],
+    dimensions: Seq[Option[Expr[G]]],
+)(implicit val o: Origin = DiagnosticOrigin)
+    extends PointerArrayType[G] with TConstPointerArrayImpl[G]
 
 final case class TPointerBlock[G]()(implicit val o: Origin = DiagnosticOrigin)
     extends Type[G] with TPointerBlockImpl[G]
@@ -1126,6 +1132,11 @@ final case class CoercePointerArrayPointer[G](
     unique: Option[BigInt],
 )(implicit val o: Origin)
     extends Coercion[G] with CoercePointerArrayPointerImpl[G]
+final case class CoerceConstPointerArrayPointer[G](
+    elementType: Type[G],
+    dimensions: Int,
+)(implicit val o: Origin)
+    extends Coercion[G] with CoerceConstPointerArrayPointerImpl[G]
 
 final case class CoerceFracZFrac[G]()(implicit val o: Origin)
     extends Coercion[G] with CoerceFracZFracImpl[G]
@@ -2123,6 +2134,11 @@ final case class NewPointerArray[G](
     unique: Option[BigInt],
 )(val blame: Blame[ArraySizeError])(implicit val o: Origin)
     extends Expr[G] with NewPointerArrayImpl[G]
+final case class NewConstPointerArray[G](
+    element: Type[G],
+    dimensions: Seq[Expr[G]],
+)(val blame: Blame[ArraySizeError])(implicit val o: Origin)
+    extends Expr[G] with NewConstPointerArrayImpl[G]
 
 final case class UniquePointerCoercion[G](e: Expr[G], t: Type[G])(
     implicit val o: Origin

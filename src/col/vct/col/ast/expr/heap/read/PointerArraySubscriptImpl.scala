@@ -9,9 +9,7 @@ trait PointerArraySubscriptImpl[G] extends PointerArraySubscriptOps[G] {
   override def t: Type[G] = {
     val arrayT = array.t.asPointerArray.get
     if (arrayT.dimensions.length == 1) { arrayT.element }
-    else {
-      TPointerArray[G](arrayT.element, arrayT.dimensions.tail, arrayT.unique)
-    }
+    else { arrayT.descend }
   }
   override def layout(implicit ctx: Ctx): Doc =
     array.show <> "[" <> index <> "]"

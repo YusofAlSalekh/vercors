@@ -62,7 +62,7 @@ case object ImportPointer extends ImportADTBuilder("pointer") {
       inner.blame(PointerInsufficientPermission(expr))
   }
 
-  private case class DerefAddToSubscriptBlame(
+  case class DerefAddToSubscriptBlame(
       dpBlame: Blame[PointerDerefError],
       addBlame: Blame[PointerAddError],
   ) extends Blame[PointerSubscriptError] {

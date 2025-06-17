@@ -3,8 +3,8 @@ package vct.col.rewrite.adt
 import vct.col.ast._
 import vct.col.origin._
 import vct.col.rewrite.Generation
+import vct.col.rewrite.adt.ImportPointer.DerefAddToSubscriptBlame
 import vct.col.util.AstBuildHelpers.{ExprBuildHelpers, const}
-import vct.result.VerificationError.UserError
 
 case object ImportConstPointer extends ImportADTBuilder("const_pointer") {
   case class PointerNullOptNone(inner: Blame[PointerNull], expr: Expr[_])
@@ -47,7 +47,10 @@ case class ImportConstPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerFile,
     "const_pointer",
   )
-  private lazy val pointerOf = find[ADTFunction[Post]](pointerAdt, "const_pointer_of")
+  private lazy val pointerOf = find[ADTFunction[Post]](
+    pointerAdt,
+    "const_pointer_of",
+  )
   private lazy val pointerBlock = find[ADTFunction[Post]](
     pointerAdt,
     "const_pointer_block",
@@ -56,20 +59,28 @@ case class ImportConstPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerAdt,
     "const_pointer_offset",
   )
-  private lazy val pointerDeref = find[Function[Post]](pointerFile, "const_ptr_deref")
-  private lazy val pointerAdd = find[Function[Post]](pointerFile, "const_ptr_add")
+  private lazy val pointerDeref = find[Function[Post]](
+    pointerFile,
+    "const_ptr_deref",
+  )
+  private lazy val pointerAdd = find[Function[Post]](
+    pointerFile,
+    "const_ptr_add",
+  )
 
-  def isConstPointer(e: Expr[Pre]): Boolean = e.t match {
-    case TConstPointer(_) => true
-    case TNonNullConstPointer(_) => true
-    case _ => false
-  }
+  def isConstPointer(e: Expr[Pre]): Boolean =
+    e.t match {
+      case TConstPointer(_) => true
+      case TNonNullConstPointer(_) => true
+      case _ => false
+    }
 
-  def getInner(t: Type[Pre]): Type[Pre] = t match {
-    case TConstPointer(inner) => inner
-    case TNonNullConstPointer(inner) => inner
-    case _ => ???
-  }
+  def getInner(t: Type[Pre]): Type[Pre] =
+    t match {
+      case TConstPointer(inner) => inner
+      case TNonNullConstPointer(inner) => inner
+      case _ => ???
+    }
 
   override def applyCoercion(e: => Expr[Post], coercion: Coercion[Pre])(
       implicit o: Origin
@@ -82,24 +93,33 @@ case class ImportConstPointer[Pre <: Generation](importer: ImportADTImporter)
 
   override def postCoerce(t: Type[Pre]): Type[Post] =
     t match {
-      case TConstPointer(inner) => TOption(TAxiomatic(pointerAdt.ref, Seq(dispatch(inner))))
-      case TNonNullConstPointer(inner) => TAxiomatic(pointerAdt.ref, Seq(dispatch(inner)))
+      case TConstPointer(inner) =>
+        TOption(TAxiomatic(pointerAdt.ref, Seq(dispatch(inner))))
+      case TNonNullConstPointer(inner) =>
+        TAxiomatic(pointerAdt.ref, Seq(dispatch(inner)))
       case other => other.rewriteDefault()
     }
 
-  def isNullable(t: Type[Pre]): Boolean = t match {
-    case TConstPointer(_) => true
-    case TNonNullConstPointer(_) => false
+  def isNullable(t: Type[Pre]): Boolean =
+    t match {
+      case TConstPointer(_) => true
+      case TNonNullConstPointer(_) => false
+    }
+
+  def getPointer(pointer: Expr[Pre], blame: Blame[OptionNone])(
+      implicit o: Origin
+  ): Expr[Post] = {
+    val nullable = isNullable(pointer.t)
+    if (nullable) { OptGet(dispatch(pointer))(blame) }
+    else { dispatch(pointer) }
   }
 
-  def getPointer(pointer: Expr[Pre], blame: Blame[OptionNone])(implicit o: Origin): Expr[Post] = {
-    val nullable = isNullable(pointer.t)
-    if(nullable){
-      OptGet(dispatch(pointer))(
-        blame
-      )
-    } else {
-      dispatch(pointer)
+  override def preCoerce(e: Expr[Pre]): Expr[Pre] = {
+    implicit val o: Origin = e.o
+    e match {
+      case d @ DerefPointer(a @ PointerAdd(p, i)) =>
+        PointerSubscript(p, i)(DerefAddToSubscriptBlame(d.blame, a.blame))
+      case _ => super.preCoerce(e)
     }
   }
 
@@ -166,12 +186,12 @@ case class ImportConstPointer[Pre <: Generation](importer: ImportADTImporter)
       case len @ PointerBlockLength(pointer) if isConstPointer(pointer) =>
         val inner = dispatch(getInner(pointer.t))
         Size(ADTFunctionInvocation[Post](
-            typeArgs = Some((pointerAdt.ref, Seq(inner))),
-            ref = pointerBlock.ref,
-            args = Seq(
-              getPointer(pointer, PointerNullOptNone(len.blame, pointer))
-            ),
-          ))
+          typeArgs = Some((pointerAdt.ref, Seq(inner))),
+          ref = pointerBlock.ref,
+          args = Seq(
+            getPointer(pointer, PointerNullOptNone(len.blame, pointer))
+          ),
+        ))
       case off @ PointerBlockOffset(pointer) if isConstPointer(pointer) =>
         val inner = dispatch(getInner(pointer.t))
         ADTFunctionInvocation[Post](

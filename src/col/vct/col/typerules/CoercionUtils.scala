@@ -268,16 +268,30 @@ case object CoercionUtils {
       case (
             TPointerArray(elementL, dimensionsL, uniqueL),
             TPointerArray(elementR, dimensionsR, uniqueR),
-          )
-          if elementL == elementR && uniqueL == uniqueR &&
-            dimensionsL.length == dimensionsR.length =>
-        CoerceIdentity(target)
+          ) if uniqueL == uniqueR && dimensionsL.length == dimensionsR.length =>
+        getPointerCoercion(source, target, elementL, elementR)
+          .getOrElse(return None)
       case (
             TPointerArray(elementL, dimensions, uniqueL),
             TPointer(elementR, uniqueR),
           ) if uniqueL == uniqueR =>
         CoercionSequence(Seq(
           CoercePointerArrayPointer(elementL, dimensions.length, uniqueL),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+        ))
+      case (
+            TConstPointerArray(elementL, dimensionsL),
+            TConstPointerArray(elementR, dimensionsR),
+          ) if dimensionsL.length == dimensionsR.length =>
+        getPointerCoercion(source, target, elementL, elementR)
+          .getOrElse(return None)
+      case (
+            TConstPointerArray(elementL, dimensions),
+            TConstPointer(elementR),
+          ) =>
+        CoercionSequence(Seq(
+          CoerceConstPointerArrayPointer(elementL, dimensions.length),
           getPointerCoercion(source, target, elementL, elementR)
             .getOrElse(return None),
         ))
@@ -656,6 +670,11 @@ case object CoercionUtils {
         Some((
           CoercePointerArrayPointer(element, dimensions.length, unique),
           TPointer(element, unique),
+        ))
+      case TConstPointerArray(element, dimensions) =>
+        Some((
+          CoerceConstPointerArrayPointer(element, dimensions.length),
+          TConstPointer(element),
         ))
       case _: TNull[G] =>
         val t = TPointer[G](TAnyValue(), None)

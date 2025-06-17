@@ -36,7 +36,7 @@ trait AmbiguousSubscriptImpl[G] extends AmbiguousSubscriptOps[G] {
       if (arr.dimensions.length == 1)
         arr.element
       else
-        TPointerArray(arr.element, arr.dimensions.tail, arr.unique)
+        arr.descend
     } else if (isCPPArrayOp)
       collection.t.asCPPArray.get.innerType
     else if (isPointerOp)
