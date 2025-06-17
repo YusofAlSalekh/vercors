@@ -111,12 +111,7 @@ case class EncodeBreakReturn[Pre <: Generation]() extends Rewriter[Pre] {
       implicit val o: Origin = contract.o
       resultVariable match {
         case Some(dp @ DerefPointer(HeapLocal(_))) =>
-          val perm = Perm(
-            ByValueClassLocation(dp)(PanicBlame(
-              "Lost permission to return variable"
-            )),
-            WritePerm(),
-          )
+          val perm = Perm(ByValueClassLocation(dp), WritePerm())
           contract match {
             case inv @ LoopInvariant(invariant, _) =>
               inv.rewrite(invariant = dispatch(invariant) &* perm)

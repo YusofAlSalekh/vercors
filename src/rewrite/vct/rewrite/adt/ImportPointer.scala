@@ -62,6 +62,17 @@ case object ImportPointer extends ImportADTBuilder("pointer") {
       inner.blame(PointerInsufficientPermission(expr))
   }
 
+  private case class DerefAddToSubscriptBlame(
+      dpBlame: Blame[PointerDerefError],
+      addBlame: Blame[PointerAddError],
+  ) extends Blame[PointerSubscriptError] {
+    override def blame(error: PointerSubscriptError): Unit =
+      error match {
+        case error: PointerDerefError => dpBlame.blame(error)
+        case bounds: PointerBounds => addBlame.blame(bounds)
+      }
+  }
+
   private sealed trait Context
   private final case class InAxiom() extends Context
 }
@@ -548,6 +559,15 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           Nil,
         )(PanicBlame("ptr_deref requires nothing."))
       case other => dispatch(other)
+    }
+  }
+
+  override def preCoerce(e: Expr[Pre]): Expr[Pre] = {
+    implicit val o: Origin = e.o
+    e match {
+      case d @ DerefPointer(a @ PointerAdd(p, i)) =>
+        PointerSubscript(p, i)(DerefAddToSubscriptBlame(d.blame, a.blame))
+      case _ => super.preCoerce(e)
     }
   }
 

@@ -1912,9 +1912,7 @@ final case class PointerLocation[G](pointer: Expr[G])(
     val blame: Blame[PointerLocationError]
 )(implicit val o: Origin)
     extends Location[G] with PointerLocationImpl[G]
-final case class ByValueClassLocation[G](expr: Expr[G])(
-    val blame: Blame[PointerLocationError]
-)(implicit val o: Origin)
+final case class ByValueClassLocation[G](expr: Expr[G])(implicit val o: Origin)
     extends Location[G] with ByValueClassLocationImpl[G]
 final case class PredicateLocation[G](inv: ApplyAnyPredicate[G])(
     implicit val o: Origin

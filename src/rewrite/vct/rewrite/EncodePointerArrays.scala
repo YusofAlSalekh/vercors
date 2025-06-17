@@ -9,6 +9,7 @@ import vct.col.ast.{
   AnyMethodInvocation,
   ApplyCoercion,
   AxiomaticDataType,
+  ByValueClassLocation,
   CoercePointerArrayPointer,
   Coercion,
   ConstructorInvocation,
@@ -56,8 +57,10 @@ import vct.col.ast.{
 import vct.col.origin.{
   AbstractApplicable,
   Blame,
+  FramedPtrOffset,
   InstanceInvocationFailure,
   InvocationFailure,
+  IteratedPtrInjective,
   LabelContext,
   MismatchedArrayDimension,
   MismatchedPointerSize,
@@ -72,6 +75,7 @@ import vct.col.origin.{
   PreconditionFailed,
   TrueSatisfiable,
 }
+import vct.col.ref.Ref
 import vct.col.rewrite.EncodeArrayValues.PointerArrayCreationFailed
 import vct.col.rewrite.{Generation, RewriterBuilder}
 import vct.col.typerules.CoercingRewriter
@@ -156,6 +160,7 @@ case class EncodePointerArrays[Pre <: Generation]()
   ): Expr[Post] =
     coercion match {
       case CoercePointerArrayPointer(element, dimensions, unique) =>
+        initialiseAdt(element, dimensions, unique)
         adtFunctionInvocation[Post](
           pointerSucc.ref((element, dimensions, unique)),
           args = Seq(e),
@@ -193,10 +198,7 @@ case class EncodePointerArrays[Pre <: Generation]()
       case npa @ NewPointerArray(element, dimensions, unique) =>
         procedureInvocation(
           PointerArrayCreationFailed(npa, npa.blame),
-          constructors.getOrElseUpdate(
-            (element, dimensions.length, unique),
-            createConstructor(element, dimensions.length, unique),
-          ).ref,
+          initialiseAdt(element, dimensions.length, unique),
           dimensions.map(dispatch),
         )
       case inv: Invocation[Pre] =>
@@ -240,6 +242,7 @@ case class EncodePointerArrays[Pre <: Generation]()
   ): Blame[T] =
     args.zipWithIndex.flatMap { case (v, i) => v.t.asPointerArray.map((_, i)) }
       .flatMap { case (t, i) =>
+        initialiseAdt(t.element, t.dimensions.length, t.unique)
         val result = t.dimensions.filter(_.isDefined).map(d =>
           MismatchedArrayDimensionBlame(
             invokingNode,
@@ -291,6 +294,7 @@ case class EncodePointerArrays[Pre <: Generation]()
             app.args.flatMap { v => v.t.asPointerArray.map((v, _)) }.flatMap {
               case (v, t) =>
                 val dimensions = t.dimensions.length
+                initialiseAdt(t.element, dimensions, t.unique)
                 val result = t.dimensions.zipWithIndex.filter { case (d, _) =>
                   d.isDefined
                 }.map { case (d, i) =>
@@ -339,6 +343,7 @@ case class EncodePointerArrays[Pre <: Generation]()
         case other =>
           (super.dispatch(other), const[Post](0), arrayT.dimensions.length)
       }
+    initialiseAdt(arrayT.element, length, unique = arrayT.unique)
     val newIndex =
       adtFunctionInvocation[Post](
         dimSucc
@@ -358,6 +363,17 @@ case class EncodePointerArrays[Pre <: Generation]()
         length,
       )
     } else { (obj, newIndex, length) }
+  }
+
+  private def initialiseAdt(
+      element: Type[Pre],
+      length: Int,
+      unique: Option[BigInt],
+  ): Ref[Post, Procedure[Post]] = {
+    constructors.getOrElseUpdate(
+      (element, length, unique),
+      createConstructor(element, length, unique),
+    ).ref
   }
 
   private def createConstructor(
@@ -419,48 +435,55 @@ case class EncodePointerArrays[Pre <: Generation]()
         axiomType,
         args = args,
         requires = UnitAccountedPredicate(foldAnd(args.map(_.get > const(0)))),
-        ensures = UnitAccountedPredicate(
-          PointerBlockLength(
-            adtFunctionInvocation[Post](pointerFunction.ref, args = Seq(result))
-          )(NonNullPointerNull) === args.map(_.get)
-            .reduce((a: Expr[Post], b: Expr[Post]) => Mult(a, b)) &*
-            PointerBlockOffset(adtFunctionInvocation[Post](
+        ensures = {
+          val range =
+            (term: Local[Post]) =>
+              const[Post](0) <= term && term < args.map(_.get)
+                .reduce[Expr[Post]] { (a, b) => a * b }
+          val ptr = adtFunctionInvocation[Post](
+            pointerFunction.ref,
+            args = Seq(result),
+          )
+          val trigger =
+            (term: Local[Post]) => PointerSubscript(ptr, term)(FramedPtrOffset)
+          val l =
+            PointerBlockLength(adtFunctionInvocation[Post](
               pointerFunction.ref,
               args = Seq(result),
-            ))(NonNullPointerNull) === const(0) &*
-            foldAnd(dimFunctions.zip(args).map { case (f, a) =>
-              adtFunctionInvocation[Post](f.ref, args = Seq(result)) === a.get
-            }) &* starall(
-              PanicBlame("This is known to be injective!"),
+            ))(NonNullPointerNull) === args.map(_.get)
+              .reduce((a: Expr[Post], b: Expr[Post]) => Mult(a, b)) &*
+              PointerBlockOffset(ptr)(NonNullPointerNull) === const(0) &*
+              foldAnd(dimFunctions.zip(args).map { case (f, a) =>
+                adtFunctionInvocation[Post](f.ref, args = Seq(result)) === a.get
+              }) &* starall(
+                IteratedPtrInjective,
+                TInt(),
+                body = { term =>
+                  range(term) ==> Perm(
+                    PointerLocation(PointerAdd(ptr, term)(FramedPtrOffset))(
+                      NonNullPointerNull
+                    ),
+                    WritePerm(),
+                  )
+                },
+                triggers = t => Seq(Seq(trigger(t))),
+              )
+          UnitAccountedPredicate(if (element.asByValueClass.isDefined) {
+            l &* starall(
+              IteratedPtrInjective,
               TInt(),
               body = { term =>
-                (const[Post](0) <= term && term < args.map(_.get)
-                  .reduce[Expr[Post]] { (a, b) => a * b }) ==> Perm(
-                  PointerLocation(
-                    PointerAdd(
-                      adtFunctionInvocation[Post](
-                        pointerFunction.ref,
-                        args = Seq(result),
-                      ),
-                      term,
-                    )(PanicBlame("Must be in range!"))
-                  )(NonNullPointerNull),
+                range(term) ==> Perm(
+                  ByValueClassLocation(
+                    PointerSubscript(ptr, term)(FramedPtrOffset)
+                  ),
                   WritePerm(),
                 )
               },
-              triggers = { term =>
-                Seq(Seq(
-                  PointerSubscript(
-                    adtFunctionInvocation[Post](
-                      pointerFunction.ref,
-                      args = Seq(result),
-                    ),
-                    term,
-                  )(PanicBlame("Must be in range"))
-                ))
-              },
+              triggers = t => Seq(Seq(trigger(t))),
             )
-        ),
+          } else { l })
+        },
       )(o.where(name = s"create_${element}_pointer_array_${dimensions}_dim"))
     }))
   }

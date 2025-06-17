@@ -85,7 +85,7 @@ case class DisambiguateLocation[Pre <: Generation]() extends Rewriter[Pre] {
           InlinePattern(dispatch(inner), pattern, group)(expr.o),
         )(expr.o)
       case expr if expr.t.asByValueClass.isDefined =>
-        ByValueClassLocation(dispatch(expr))(blame)
+        ByValueClassLocation(dispatch(expr))
       case dp @ DerefPointer(p) => PointerLocation(dispatch(p))(dp.blame)
       case pas @ PointerArraySubscript(_, _) =>
         PointerLocation(AddrOf(dispatch(pas)))(pas.blame)
