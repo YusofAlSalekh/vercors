@@ -510,24 +510,56 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     t.bits match {
       case TypeSize.Exact(size) => c_const(size / 8)(sizeOfOrigin)
       case b @ (TypeSize.Unknown() | TypeSize.Minimally(_)) =>
-        functionInvocation(
-          TrueSatisfiable,
-          sizeOfFunctions.getOrElseUpdate(
-            t, {
-              rw.globalDeclarations.declare(withResult((result: Result[Post]) =>
-                function[Post](
-                  AbstractApplicable,
-                  TrueSatisfiable,
-                  TCInt(),
-                  ensures = UnitAccountedPredicate(b match {
-                    case TypeSize.Unknown() => tt
-                    case TypeSize.Minimally(size) => result >= c_const(size / 8)
-                  }),
-                )(o.where(name = s"sizeOf_$t"))
-              ))
-            },
-          ).ref[Function[Post]],
-        )(sizeOfOrigin)
+        // Special casing arrays with runtime size
+        t match {
+          case CTArray(Some(size), innerType) =>
+            val sizeVar = new Variable[Post](TCInt())
+            functionInvocation(
+              TrueSatisfiable,
+              sizeOfFunctions.getOrElseUpdate(
+                t, {
+                  rw.globalDeclarations
+                    .declare(withResult((result: Result[Post]) =>
+                      function[Post](
+                        AbstractApplicable,
+                        TrueSatisfiable,
+                        TCInt(),
+                        args = Seq(sizeVar),
+                        ensures = UnitAccountedPredicate(innerType.bits match {
+                          case TypeSize.Unknown() => tt
+                          case TypeSize.Minimally(size) =>
+                            result >= sizeVar.get * c_const(size / 8)
+                          case TypeSize.Exact(size) =>
+                            result === sizeVar.get * c_const(size / 8)
+                        }),
+                      )(o.where(name = s"sizeOf_$t"))
+                    ))
+                },
+              ).ref[Function[Post]],
+              args = Seq(rw.dispatch(size)),
+            )(sizeOfOrigin)
+          case _ =>
+            functionInvocation(
+              TrueSatisfiable,
+              sizeOfFunctions.getOrElseUpdate(
+                t, {
+                  rw.globalDeclarations
+                    .declare(withResult((result: Result[Post]) =>
+                      function[Post](
+                        AbstractApplicable,
+                        TrueSatisfiable,
+                        TCInt(),
+                        ensures = UnitAccountedPredicate(b match {
+                          case TypeSize.Unknown() => tt
+                          case TypeSize.Minimally(size) =>
+                            result >= c_const(size / 8)
+                        }),
+                      )(o.where(name = s"sizeOf_$t"))
+                    ))
+                },
+              ).ref[Function[Post]],
+            )(sizeOfOrigin)
+        }
     }
   }
 

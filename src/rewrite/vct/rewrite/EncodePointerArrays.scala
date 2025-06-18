@@ -8,6 +8,7 @@ import vct.col.ast.{
   AnyFunctionInvocation,
   AnyMethodInvocation,
   ApplyCoercion,
+  Assuming,
   AxiomaticDataType,
   ByValueClassLocation,
   CoerceConstPointerArrayPointer,
@@ -21,13 +22,18 @@ import vct.col.ast.{
   FunctionInvocation,
   InlinePattern,
   InstanceFunctionInvocation,
+  IntegerPointerCast,
   Invocation,
   InvocationStatement,
   InvokeConstructor,
   InvokeMethod,
   InvokeProcedure,
   InvokingNode,
+  IterationContract,
+  LLVMLoopContract,
   Local,
+  Loop,
+  LoopInvariant,
   MethodInvocation,
   Mult,
   NewConstPointerArray,
@@ -46,6 +52,8 @@ import vct.col.ast.{
   Procedure,
   ProcedureInvocation,
   Result,
+  Scope,
+  ScopedExpr,
   SplitAccountedPredicate,
   Statement,
   TAxiomatic,
@@ -82,6 +90,7 @@ import vct.col.origin.{
 }
 import vct.col.ref.Ref
 import vct.col.rewrite.EncodeArrayValues.PointerArrayCreationFailed
+import vct.col.rewrite.error.ExtraNode
 import vct.col.rewrite.{Generation, RewriterBuilder}
 import vct.col.typerules.CoercingRewriter
 import vct.col.util.AstBuildHelpers._
@@ -95,14 +104,12 @@ case object EncodePointerArrays extends RewriterBuilder {
 
   override def desc: String = "Encodes (multi-dimensional) C-style arrays"
 
-  private case class PointerToArrayUnsupportedError(node: Node[_])
-      extends UserError {
-    override def code: String = "pointerToArrayUnsupported"
+  private case class InvalidPatternLocation(node: Node[_]) extends UserError {
+    override def code: String = "pointerArrayTriggerPattern"
 
     override def text: String =
-      node.o.messageInContext(
-        "We currently do not support creating a pointer to a sized array, try coercing to a normal pointer first"
-      )
+      node.o
+        .messageInContext("We do not support putting a trigger pattern here")
   }
 
   private case class CalculatedPointerAddBlame(
@@ -161,22 +168,37 @@ case class EncodePointerArrays[Pre <: Generation]()
     ADTFunction[Post],
   ] = SuccessionMap()
 
+  private val currentVariableContext: mutable.HashSet[Variable[Pre]] = mutable
+    .HashSet()
+
   override def applyCoercion(e: => Expr[Post], coercion: Coercion[Pre])(
       implicit o: Origin
   ): Expr[Post] =
     coercion match {
       case CoercePointerArrayPointer(element, dimensions, unique) =>
-        initialiseAdt(element, dimensions, unique, false)
-        adtFunctionInvocation[Post](
-          pointerSucc.ref((element, dimensions, unique, false)),
-          args = Seq(e),
-        )
+        initialiseAdt(element, dimensions, unique, isConst = false)
+        // Should be safe to check type on Post since it's always a pointer or pointer array type
+        e.t match {
+          // Only possibility is the new AxiomaticDataType we introduce in this rewriter
+          case TAxiomatic(_, _) =>
+            adtFunctionInvocation[Post](
+              pointerSucc.ref((element, dimensions, unique, false)),
+              args = Seq(e),
+            )
+          case _ => e
+        }
       case CoerceConstPointerArrayPointer(element, dimensions) =>
-        initialiseAdt(element, dimensions, None, true)
-        adtFunctionInvocation[Post](
-          pointerSucc.ref((element, dimensions, None, true)),
-          args = Seq(e),
-        )
+        initialiseAdt(element, dimensions, None, isConst = true)
+        // Should be safe to check type on Post since it's always a pointer or pointer array type
+        e.t match {
+          // Only possibility is the new AxiomaticDataType we introduce in this rewriter
+          case TAxiomatic(_, _) =>
+            adtFunctionInvocation[Post](
+              pointerSucc.ref((element, dimensions, None, true)),
+              args = Seq(e),
+            )
+          case _ => e
+        }
       case other => super.applyCoercion(e, other)
     }
 
@@ -184,17 +206,9 @@ case class EncodePointerArrays[Pre <: Generation]()
     implicit val o: Origin = e.o;
 
     e match {
-      case AddrOf(sub @ PointerArraySubscript(a, _)) =>
-        if (a.t.asPointerArray.get.dimensions.length == 1)
-          calculatePointer(sub, 0)._1
-        else
-          throw PointerToArrayUnsupportedError(e)
-      // This is quite an ugly solution, however since we have no non-identity coercions to PointerArraySubscript, this *should* be fine...
+      case AddrOf(sub @ PointerArraySubscript(a, _)) => calculatePointer(sub)
       case AddrOf(ApplyCoercion(sub @ PointerArraySubscript(a, _), _)) =>
-        if (a.t.asPointerArray.get.dimensions.length == 1)
-          calculatePointer(sub, 0)._1
-        else
-          throw PointerToArrayUnsupportedError(e)
+        calculatePointer(sub)
       case AddrOf(ApplyCoercion(inner, c)) =>
         applyCoercion(dispatch(inner), c) match {
           case PointerArraySubscript(_, _) =>
@@ -203,10 +217,17 @@ case class EncodePointerArrays[Pre <: Generation]()
             )
           case _ => super.postCoerce(e)
         }
+      case AddrOf(inner) if inner.t.asPointerArray.isDefined =>
+        val t = inner.t.asPointerArray.get
+        adtFunctionInvocation(
+          pointerSucc
+            .ref((t.element, t.dimensions.length, t.unique, t.isConst)),
+          args = Seq(dispatch(inner)),
+        )
       case sub @ PointerArraySubscript(a, _)
           if a.t.asPointerArray.get.dimensions.length == 1 =>
-        DerefPointer(calculatePointer(sub, 0)._1)(sub.blame)
-      case sub @ PointerArraySubscript(_, _) => calculatePointer(sub, 0)._1
+        DerefPointer(calculatePointer(sub))(sub.blame)
+      case sub @ PointerArraySubscript(_, _) => calculatePointer(sub)
       case npa @ NewPointerArray(element, dimensions, unique) =>
         procedureInvocation(
           PointerArrayCreationFailed(npa, npa.blame),
@@ -218,6 +239,37 @@ case class EncodePointerArrays[Pre <: Generation]()
           PointerArrayCreationFailed(npa, npa.blame),
           initialiseAdt(element, dimensions.length, None, isConst = true),
           dimensions.map(dispatch),
+        )
+      case IntegerPointerCast(value, t, size)
+          if value.t.asPointerArray.isDefined =>
+        val arrayT = value.t.asPointerArray.get
+        IntegerPointerCast(
+          adtFunctionInvocation(
+            pointerSucc.ref((
+              arrayT.element,
+              arrayT.dimensions.length,
+              arrayT.unique,
+              arrayT.isConst,
+            )),
+            args = Seq(dispatch(value)),
+          ),
+          dispatch(t),
+          dispatch(size),
+        )
+      case IntegerPointerCast(value, t: PointerArrayType[Pre], size) =>
+        val v = new Variable(dispatch(t))
+        // TODO: This might not work in contracts...
+        ScopedExpr(
+          Seq(v),
+          Assuming(
+            adtFunctionInvocation[Post](
+              pointerSucc
+                .ref((t.element, t.dimensions.length, t.unique, t.isConst)),
+              args = Seq(v.get),
+            ) ===
+              IntegerPointerCast(dispatch(value), dispatch(t), dispatch(size)),
+            v.get,
+          ),
         )
       case inv: Invocation[Pre] =>
         inv match {
@@ -261,7 +313,7 @@ case class EncodePointerArrays[Pre <: Generation]()
     args.zipWithIndex.flatMap { case (v, i) => v.t.asPointerArray.map((_, i)) }
       .flatMap { case (t, i) =>
         initialiseAdt(t.element, t.dimensions.length, t.unique, t.isConst)
-        val result = t.dimensions.filter(_.isDefined).map(d =>
+        t.dimensions.filter(_.isDefined).map(d =>
           MismatchedArrayDimensionBlame(
             invokingNode,
             d.get,
@@ -269,15 +321,16 @@ case class EncodePointerArrays[Pre <: Generation]()
             inBlame,
           )
         )
-
-        if (t.dimensions.forall(_.isDefined)) {
-          MismatchedPointerSizeBlame(invokingNode, declArgs(i), inBlame) +:
-            result
-        } else { result }
       }.foldLeft(inBlame) { case (r, l) => PreBlameSplit.left(l, r) }
 
-  override def postCoerce(s: Statement[Pre]): Statement[Post] =
+  override def postCoerce(s: Statement[Pre]): Statement[Post] = {
+    implicit val o: Origin = s.o
     s match {
+      case Scope(variables, _) =>
+        currentVariableContext ++= variables
+        val res = s.rewriteDefault()
+        currentVariableContext --= variables
+        res
       case inv: InvocationStatement[Pre] =>
         inv match {
           case inv: InvokeProcedure[Pre] =>
@@ -293,8 +346,36 @@ case class EncodePointerArrays[Pre <: Generation]()
               rewriteBlame(inv, inv.args, inv.ref.decl.args, inv.blame)
             )
         }
+      case loop: Loop[Pre] =>
+        loop.contract match {
+          case inv @ LoopInvariant(invariant, _) =>
+            loop.rewrite(contract =
+              inv.rewrite(invariant =
+                foldAnd(
+                  currentVariableContext.flatMap(v =>
+                    v.t.asPointerArray.map((v, _))
+                  ).flatMap { case (v, t) =>
+                    val dimensions = t.dimensions.length
+                    initialiseAdt(t.element, dimensions, t.unique, t.isConst)
+                    t.dimensions.zipWithIndex.filter { case (d, _) =>
+                      d.isDefined
+                    }.map { case (d, i) =>
+                      adtFunctionInvocation[Post](
+                        dimSucc
+                          .ref((t.element, dimensions, t.unique, i, t.isConst)),
+                        args = Seq(Local(succ(v))),
+                      ) === dispatch(d.get)
+                    }
+                  }
+                ) &* super.dispatch(invariant)
+              )
+            )
+          case _: IterationContract[Pre] => throw ExtraNode
+          case _: LLVMLoopContract[Pre] => throw ExtraNode
+        }
       case _ => super.postCoerce(s)
     }
+  }
 
   override def postCoerce(t: Type[Pre]): Type[Post] =
     t match {
@@ -316,31 +397,20 @@ case class EncodePointerArrays[Pre <: Generation]()
               case (v, t) =>
                 val dimensions = t.dimensions.length
                 initialiseAdt(t.element, dimensions, t.unique, t.isConst)
-                val result = t.dimensions.zipWithIndex.filter { case (d, _) =>
-                  d.isDefined
-                }.map { case (d, i) =>
-                  UnitAccountedPredicate(
-                    adtFunctionInvocation[Post](
-                      dimSucc
-                        .ref((t.element, dimensions, t.unique, i, t.isConst)),
-                      args = Seq(Local(succ(v))),
-                    ) === dispatch(d.get)
-                  )
-                }
-                if (t.dimensions.forall(_.isDefined)) {
-                  UnitAccountedPredicate(
-                    PointerLength[Post](adtFunctionInvocation(
-                      pointerSucc
-                        .ref((t.element, dimensions, t.unique, t.isConst)),
-                      args = Seq(Local(succ(v))),
-                    ))(NonNullPointerNull) ===
-                      t.dimensions.map(d => dispatch(d.get))
-                        .reduce(Mult[Post](_, _))
-                  ) +: result
-                } else { result }
+                t.dimensions.zipWithIndex.filter { case (d, _) => d.isDefined }
+                  .map { case (d, i) =>
+                    UnitAccountedPredicate(
+                      adtFunctionInvocation[Post](
+                        dimSucc
+                          .ref((t.element, dimensions, t.unique, i, t.isConst)),
+                        args = Seq(Local(succ(v))),
+                      ) === dispatch(d.get)
+                    )
+                  }
             }.foldLeft(oldRequires) { case (r, l) =>
               SplitAccountedPredicate(l, r)
             }
+        currentVariableContext ++= app.args
         allScopes.anySucceed(
           app,
           app.rewrite(contract =
@@ -349,11 +419,27 @@ case class EncodePointerArrays[Pre <: Generation]()
             )
           ),
         )
+        currentVariableContext --= app.args
       case _ => super.postCoerce(decl)
     }
   }
 
-  private def calculatePointer(
+  private def calculatePointer(sub: PointerArraySubscript[Pre]): Expr[Post] = {
+    implicit val o: Origin = sub.o
+    val arrayT = sub.array.t.asPointerArray.get
+    val (obj, index, length) = calculateOffset(sub, arrayT.dimensions.length)
+    initialiseAdt(arrayT.element, length, arrayT.unique, arrayT.isConst)
+    PointerAdd(
+      adtFunctionInvocation[Post](
+        pointerSucc
+          .ref((arrayT.element, length, arrayT.unique, arrayT.isConst)),
+        args = Seq(obj),
+      ),
+      index,
+    )(CalculatedPointerAddBlame(sub.blame))
+  }
+
+  private def calculateOffset(
       sub: PointerArraySubscript[Pre],
       depth: Int,
   ): (Expr[Post], Expr[Post], Int) = {
@@ -361,37 +447,21 @@ case class EncodePointerArrays[Pre <: Generation]()
     val arrayT = sub.array.t.asPointerArray.get
     val (obj, index, length) =
       sub.array match {
+        case p: InlinePattern[Pre] => throw InvalidPatternLocation(p)
         case inner: PointerArraySubscript[Pre] =>
-          calculatePointer(inner, depth + 1)
+          calculateOffset(inner, depth + 1)
         case other =>
           (super.dispatch(other), const[Post](0), arrayT.dimensions.length)
       }
-    initialiseAdt(arrayT.element, length, arrayT.unique, arrayT.isConst)
-    val newIndex =
-      adtFunctionInvocation[Post](
-        dimSucc.ref((
-          arrayT.element,
-          length,
-          arrayT.unique,
-          length - depth - 1,
-          arrayT.isConst,
-        )),
-        args = Seq(obj),
-      ) * index + super.dispatch(sub.index)
-    if (depth == 0) {
-      (
-        PointerAdd(
-          adtFunctionInvocation[Post](
-            pointerSucc
-              .ref((arrayT.element, length, arrayT.unique, arrayT.isConst)),
-            args = Seq(obj),
-          ),
-          newIndex,
-        )(CalculatedPointerAddBlame(sub.blame)),
-        newIndex,
-        length,
-      )
-    } else { (obj, newIndex, length) }
+    val newIndex = {
+      Seq.range(length - depth + 1, length).map(i =>
+        adtFunctionInvocation[Post](
+          dimSucc.ref(arrayT.element, length, arrayT.unique, i, arrayT.isConst),
+          args = Seq(obj),
+        )
+      ).fold(super.dispatch(sub.index))(Mult(_, _)) + index
+    }
+    (obj, newIndex, length)
   }
 
   private def initialiseAdt(
@@ -453,10 +523,31 @@ case class EncodePointerArrays[Pre <: Generation]()
           ) === term
         },
       ))
+    val ptr =
+      (t: Expr[Post]) =>
+        adtFunctionInvocation[Post](pointerFunction.ref, args = Seq(t))
+    val boundsAxiom =
+      new ADTAxiom[Post](forall(
+        axiomType,
+        { term =>
+          InlinePattern(
+            PointerBlockLength(ptr(term))(NonNullPointerNull),
+            group = 1,
+          ) ===
+            dimFunctions
+              .map(f => adtFunctionInvocation[Post](f.ref, args = Seq(term)))
+              .reduce((a: Expr[Post], b: Expr[Post]) => Mult(a, b)) &&
+            InlinePattern(
+              PointerBlockOffset(ptr(term))(NonNullPointerNull),
+              group = 2,
+            ) === const(0)
+        },
+      ))
     arraySucc((element, dimensions, unique, isConst)) = globalDeclarations
       .declare(
         new AxiomaticDataType(
-          dimFunctions ++ Seq(pointerFunction, invFunction, invAxiom),
+          dimFunctions ++
+            Seq(pointerFunction, invFunction, invAxiom, boundsAxiom),
           Nil,
         )(o.where(name =
           if (isConst) { s"const_pointer_${dimensions}_array_$element" }
@@ -477,22 +568,12 @@ case class EncodePointerArrays[Pre <: Generation]()
             (term: Local[Post]) =>
               const[Post](0) <= term && term < args.map(_.get)
                 .reduce[Expr[Post]] { (a, b) => a * b }
-          val ptr = adtFunctionInvocation[Post](
-            pointerFunction.ref,
-            args = Seq(result),
-          )
           val trigger =
-            (term: Local[Post]) => PointerSubscript(ptr, term)(FramedPtrOffset)
-          val bounds =
-            PointerBlockLength(adtFunctionInvocation[Post](
-              pointerFunction.ref,
-              args = Seq(result),
-            ))(NonNullPointerNull) === args.map(_.get)
-              .reduce((a: Expr[Post], b: Expr[Post]) => Mult(a, b)) &*
-              PointerBlockOffset(ptr)(NonNullPointerNull) === const(0) &*
-              foldAnd(dimFunctions.zip(args).map { case (f, a) =>
-                adtFunctionInvocation[Post](f.ref, args = Seq(result)) === a.get
-              })
+            (term: Local[Post]) =>
+              PointerSubscript(ptr(result), term)(FramedPtrOffset)
+          val bounds = foldAnd(dimFunctions.zip(args).map { case (f, a) =>
+            adtFunctionInvocation[Post](f.ref, args = Seq(result)) === a.get
+          })
           val l =
             if (isConst)
               bounds
@@ -502,9 +583,9 @@ case class EncodePointerArrays[Pre <: Generation]()
                 TInt(),
                 body = { term =>
                   range(term) ==> Perm(
-                    PointerLocation(PointerAdd(ptr, term)(FramedPtrOffset))(
-                      NonNullPointerNull
-                    ),
+                    PointerLocation(
+                      PointerAdd(ptr(result), term)(FramedPtrOffset)
+                    )(NonNullPointerNull),
                     WritePerm(),
                   )
                 },
@@ -518,7 +599,7 @@ case class EncodePointerArrays[Pre <: Generation]()
               body = { term =>
                 range(term) ==> Perm(
                   ByValueClassLocation(
-                    PointerSubscript(ptr, term)(FramedPtrOffset)
+                    PointerSubscript(ptr(result), term)(FramedPtrOffset)
                   ),
                   WritePerm(),
                 )

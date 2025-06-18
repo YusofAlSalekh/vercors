@@ -1161,62 +1161,117 @@ class AnnotationVariableInfoGetter[G](
   def finalInfo(
       prev: Seq[AnnotationVariableInfoGetter[G]]
   ): AnnotationVariableInfo[G] = {
-    distributeInfo()
-
-    val varEq = mergeMaps[SymbolicTerm[G], mutable.ListBuffer[Expr[G]]](
-      prev.map(_.variableEqualities) :+ variableEqualities,
-      (_, l, r) => l ++ r,
-    )
-    val varVal = mergeMaps[SymbolicTerm[G], BigInt](
-      prev.map(_.variableValues) :+ variableValues,
-      (v, x, y) =>
-        if (x != y)
-          throw InconsistentVariableEquality(v, x, y)
-        else
-          x,
-    )
-    val varSyn: mutable.Map[SymbolicTerm[G], BigInt] = variableSynonyms
+    // I've changed this to do the distribution later, that means I'm doing a bunch of copying first though
+    // it would probably be possible to merge everything into this getter so that there isn't this much duplication
+    val varEq = mutable.Map.newBuilder
+      .addAll(mergeMaps[SymbolicTerm[G], mutable.ListBuffer[Expr[G]]](
+        prev.map(_.variableEqualities) :+ variableEqualities,
+        (_, l, r) => l ++ r,
+      )).result()
+    val varVal = mutable.Map.newBuilder
+      .addAll(mergeMaps[SymbolicTerm[G], BigInt](
+        prev.map(_.variableValues) :+ variableValues,
+        (v, x, y) =>
+          if (x != y)
+            throw InconsistentVariableEquality(v, x, y)
+          else
+            x,
+      )).result()
+    val varSyn: mutable.Map[SymbolicTerm[G], BigInt] = mutable.Map()
+    var groupNumber = 0
     for (p <- prev) {
+      val mappingPrevNew: mutable.Map[BigInt, BigInt] = mutable.Map()
       for ((v, synonym_nr) <- p.variableSynonyms) {
-        if (varSyn.contains(v) && varSyn(v) != synonym_nr) {
-          val old_nr = varSyn(v)
-          // Update varSyns to new nr
-          varSyn.mapValuesInPlace((k, nr) =>
-            if (nr == old_nr)
-              synonym_nr
-            else
-              nr
-          )
-        } else
-          varSyn(v) = synonym_nr
+        if (varSyn.contains(v)) {
+          if (
+            mappingPrevNew.contains(synonym_nr) &&
+            mappingPrevNew(synonym_nr) != varSyn(v)
+          ) {
+            // Merge
+            varSyn.mapValuesInPlace((_, group) =>
+              if (group == mappingPrevNew(synonym_nr))
+                varSyn(v)
+              else
+                group
+            )
+          }
+          mappingPrevNew(synonym_nr) = varSyn(v)
+        } else if (mappingPrevNew.contains(synonym_nr)) {
+          varSyn(v) = mappingPrevNew(synonym_nr)
+        } else {
+          varSyn(v) = groupNumber
+          groupNumber += 1
+        }
       }
     }
-    val varNotZero = prev.flatMap(_.variableNotZero) ++ variableNotZero
-    val varLessThen = mergeMaps[SymbolicTerm[G], mutable.Set[SymbolicTerm[G]]](
-      prev.map(_.lessThanEqVars) :+ lessThanEqVars,
-      (_, l, r) => l ++ r,
-    )
+    val mappingThisNew: mutable.Map[BigInt, BigInt] = mutable.Map()
+    for ((v, synonym_nr) <- variableSynonyms) {
+      if (varSyn.contains(v)) {
+        if (
+          mappingThisNew.contains(synonym_nr) &&
+          mappingThisNew(synonym_nr) != varSyn(v)
+        ) {
+          // Merge
+          varSyn.mapValuesInPlace((_, group) =>
+            if (group == mappingThisNew(synonym_nr))
+              varSyn(v)
+            else
+              group
+          )
+        }
+        mappingThisNew(synonym_nr) = varSyn(v)
+      } else if (mappingThisNew.contains(synonym_nr)) {
+        varSyn(v) = mappingThisNew(synonym_nr)
+      } else {
+        varSyn(v) = groupNumber
+        groupNumber += 1
+      }
+    }
+    val varNotZero = mutable.Set.newBuilder
+      .addAll(prev.flatMap(_.variableNotZero) ++ variableNotZero).result()
+    val varLessThen = mutable.Map.newBuilder
+      .addAll(mergeMaps[SymbolicTerm[G], mutable.Set[SymbolicTerm[G]]](
+        prev.map(_.lessThanEqVars) :+ lessThanEqVars,
+        (_, l, r) => l ++ r,
+      )).result()
     // Take the lowest upper bound
-    val varUpper = mergeMaps[SymbolicTerm[G], BigInt](
-      prev.map(_.upperBound) :+ upperBound,
-      (_, l, r) => l.min(r),
-    )
+    val varUpper = mutable.Map.newBuilder
+      .addAll(mergeMaps[SymbolicTerm[G], BigInt](
+        prev.map(_.upperBound) :+ upperBound,
+        (_, l, r) => l.min(r),
+      )).result()
     // Take the highest lower bound
-    val varLower = mergeMaps[SymbolicTerm[G], BigInt](
-      prev.map(_.lowerBound) :+ lowerBound,
-      (_, l, r) => l.max(r),
-    )
-    val useful = (prev.flatMap(_.usefulConditions) ++ usefulConditions).toSet
+    val varLower = mutable.Map.newBuilder
+      .addAll(mergeMaps[SymbolicTerm[G], BigInt](
+        prev.map(_.lowerBound) :+ lowerBound,
+        (_, l, r) => l.max(r),
+      )).result()
+    val useful: mutable.ArrayBuffer[Expr[G]] = mutable
+      .ArrayBuffer((prev.flatMap(_.usefulConditions) ++ usefulConditions): _*)
+
+    val getter =
+      new AnnotationVariableInfoGetter[G](
+        varEq,
+        varVal,
+        varSyn,
+        varNotZero,
+        varLessThen,
+        varUpper,
+        varLower,
+        useful,
+      )
+
+    getter.distributeInfo()
 
     AnnotationVariableInfo(
-      varEq.view.mapValues(_.toSet).toMap,
-      varVal,
-      varSyn.toMap,
-      varNotZero.toSet,
-      varLessThen.view.mapValues(_.toSet).toMap,
-      varUpper,
-      varLower,
-      useful,
+      getter.variableEqualities.view.mapValues(_.toSet).toMap,
+      getter.variableValues.toMap,
+      getter.variableSynonyms.toMap,
+      getter.variableNotZero.toSet,
+      getter.lessThanEqVars.view.mapValues(_.toSet).toMap,
+      getter.upperBound.toMap,
+      getter.lowerBound.toMap,
+      getter.usefulConditions.toSet,
     )
   }
 
@@ -1306,7 +1361,7 @@ class AnnotationVariableInfoGetter[G](
     val synonymSets: mutable.Map[BigInt, mutable.Set[SymbolicTerm[G]]] = mutable
       .Map()
     variableSynonyms.foreach { case (v, groupId) =>
-      synonymSets.getOrElse(groupId, mutable.Set()).add(v)
+      synonymSets.getOrElseUpdate(groupId, mutable.Set()).add(v)
     }
 
     def hasValue(vars: mutable.Set[SymbolicTerm[G]]): Option[BigInt] = {
@@ -1342,12 +1397,11 @@ class AnnotationVariableInfoGetter[G](
       // Collect all vars that are greater than
       val greaterVars: mutable.Set[SymbolicTerm[G]] = mutable.Set()
       vars.foreach { v =>
-        lessThanEqVars(v).map { variableSynonyms(_) }.foreach { i =>
-          greaterVars.addAll(synonymSets(i))
-        }
+        lessThanEqVars.get(v).toSeq.flatMap(_.map(variableSynonyms(_)))
+          .foreach { i => greaterVars.addAll(synonymSets(i)) }
       }
       // Redistribute all greater vars again
-      vars.foreach { lessThanEqVars(_).addAll(greaterVars) }
+      vars.foreach { lessThanEqVars.get(_).foreach(_.addAll(greaterVars)) }
 
     }
   }

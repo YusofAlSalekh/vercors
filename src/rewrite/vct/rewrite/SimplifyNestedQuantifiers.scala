@@ -4,9 +4,9 @@ import com.typesafe.scalalogging.LazyLogging
 import hre.util.ScopedStack
 import vct.col.ast.{Variable, _}
 import vct.col.ast.util.ExpressionEqualityCheck.{
+  AskSMTSolver,
   Neg,
   Pos,
-  AskSMTSolver,
   isValidSymbolicTerm,
 }
 import vct.col.ast.util.{AnnotationVariableInfoGetter, ExpressionEqualityCheck}
@@ -20,6 +20,7 @@ import vct.col.rewrite.SimplifyNestedQuantifiers.{
   NotAllowedInTrigger,
   NotAllowedInTriggerSet,
 }
+import vct.col.rewrite.error.ExtraNode
 import vct.col.util.AstBuildHelpers._
 import vct.col.util.{AstBuildHelpers, Substitute}
 import vct.result.Message
@@ -380,7 +381,8 @@ case class SimplifyNestedQuantifiers[Pre <: Generation]()
     val loopInvariant: LoopInvariant[Pre] =
       loopContract match {
         case l: LoopInvariant[Pre] => l
-        case _ => return dispatch(loopContract)
+        case _: IterationContract[Pre] | _: LLVMLoopContract[Pre] =>
+          throw ExtraNode
       }
 
     topLevel = true

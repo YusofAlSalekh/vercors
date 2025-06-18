@@ -84,13 +84,13 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
         ))
     }
 
-  // TODO: Replace the asByReferenceClass checks with something that more clearly communicates that we want to exclude all reference types
   def getAddresses(
       e: Node[Pre],
       isConst: Boolean = false,
   ): Option[(Node[Pre], PointerSort)] =
     e match {
-      case Local(Ref(v)) if v.t.asByReferenceClass.isEmpty =>
+      case Local(Ref(v))
+          if v.t.asByReferenceClass.isEmpty && v.t.asPointerArray.isEmpty =>
         Some(v, getPointerSort(isConst, None))
       case AddrOfConstCast(e) => getAddresses(e, isConst = true)
       case AddrOfUniqueCast(Local(Ref(v)), unique) =>
@@ -100,7 +100,6 @@ case class VariableToPointer[Pre <: Generation]() extends Rewriter[Pre] {
     }
 
   override def dispatch(program: Program[Pre]): Program[Rewritten[Pre]] = {
-    // TODO: Replace the asByReferenceClass checks with something that more clearly communicates that we want to exclude all reference types
     addressedSet.addAll(program.flatCollect { case AddrOf(e) =>
       getAddresses(e)
     })

@@ -271,7 +271,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 pointerField.getOrElseUpdate(
                   (newT, pointerT.unique), {
                     globalDeclarations.declare(new SilverField(newT)(
-                      PointerField(newT, pointerT.unique)
+                      PointerField(t, pointerT.unique)
                     ))
                   },
                 ).ref,
@@ -297,7 +297,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerField.getOrElseUpdate(
       (tElement, ptrT.unique), {
         globalDeclarations.declare(new SilverField(tElement)(
-          PointerField(tElement, ptrT.unique)
+          PointerField(ptrT.element, ptrT.unique)
         ))
       },
     ).ref
