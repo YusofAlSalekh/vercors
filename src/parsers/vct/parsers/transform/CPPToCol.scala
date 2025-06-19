@@ -1849,6 +1849,36 @@ case class CPPToCol[G](
             (currentNamespacePath.reverse :+ convert(name)).mkString("::")
           ))
         )
+      case ValProverType(_, name, ints, _) =>
+        Seq(new ProverType(convert(ints))(origin(decl).sourceName(
+          (currentNamespacePath.reverse :+ convert(name)).mkString("::")
+        )))
+      case ValProverFunction(_, t, name, _, args, _, ints, _) =>
+        Seq(
+          new ProverFunction(
+            convert(ints),
+            args.map(convert(_)).getOrElse(Nil),
+            convert(t),
+          )(origin(decl).sourceName(
+            (currentNamespacePath.reverse :+ convert(name)).mkString("::")
+          ))
+        )
+    }
+
+  def convert(
+      implicit int: ValProverInterpretationsContext
+  ): Seq[(ProverLanguage[G], String)] =
+    int match {
+      case ValProverInterpretations0(int) => Seq(convert(int))
+      case ValProverInterpretations1(int, ints) => convert(int) +: convert(ints)
+    }
+
+  def convert(
+      implicit int: ValProverInterpretationContext
+  ): (ProverLanguage[G], String) =
+    int match {
+      case ValInterpSmtlib(_, int) => SmtLib()(origin(int)) -> convert(int)
+      case ValInterpBoogie(_, int) => Boogie()(origin(int)) -> convert(int)
     }
 
   def convert(
