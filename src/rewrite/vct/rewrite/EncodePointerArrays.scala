@@ -8,6 +8,8 @@ import vct.col.ast.{
   AnyFunctionInvocation,
   AnyMethodInvocation,
   ApplyCoercion,
+  AssignExpression,
+  AssignStmt,
   Assuming,
   AxiomaticDataType,
   ByValueClassLocation,
@@ -310,6 +312,13 @@ case class EncodePointerArrays[Pre <: Generation]()
                 )
             }
         }
+      case e: AssignExpression[Pre] =>
+        e.target match {
+          case Local(Ref(v)) => currentVariableContext += v
+          case _ =>
+        }
+        e.rewriteDefault()
+
       case _ => super.postCoerce(e)
     }
   }
@@ -337,10 +346,16 @@ case class EncodePointerArrays[Pre <: Generation]()
     implicit val o: Origin = s.o
     s match {
       case Scope(variables, _) =>
-        currentVariableContext ++= variables
+        // Not adding variables until they're assigned since VerCors scopes don't match normal programming scopes since you can refer to a variable before its declaration
         val res = s.rewriteDefault()
         currentVariableContext --= variables
         res
+      case s: AssignStmt[Pre] =>
+        s.target match {
+          case Local(Ref(v)) => currentVariableContext += v
+          case _ =>
+        }
+        s.rewriteDefault()
       case inv: InvocationStatement[Pre] =>
         inv match {
           case inv: InvokeProcedure[Pre] =>
