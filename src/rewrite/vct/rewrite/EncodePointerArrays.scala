@@ -19,6 +19,7 @@ import vct.col.ast.{
   Declaration,
   DerefPointer,
   Expr,
+  FramedProof,
   FunctionInvocation,
   InlinePattern,
   InstanceFunctionInvocation,
@@ -40,6 +41,11 @@ import vct.col.ast.{
   NewPointerArray,
   Node,
   Null,
+  ParBarrier,
+  ParBlock,
+  ParParallel,
+  ParRegion,
+  ParSequential,
   Perm,
   PointerAdd,
   PointerArraySubscript,
@@ -49,6 +55,7 @@ import vct.col.ast.{
   PointerLength,
   PointerLocation,
   PointerSubscript,
+  Predicate,
   Procedure,
   ProcedureInvocation,
   Result,
@@ -170,6 +177,9 @@ case class EncodePointerArrays[Pre <: Generation]()
 
   private val currentVariableContext: mutable.HashSet[Variable[Pre]] = mutable
     .HashSet()
+
+  // NOTE 1: We currently do not handle expressions that introduce new variables (Binders, ScopedExpr) of the PointerArray type, the size will not be available in these expressions
+  // NOTE 2: This rewriter is a bit aggressive with adding its dimensions requirements everywhere (it basically replicates PropagateContextEverywhere) even if this would be unnecessary. I don't believe this'll significantly hurt performance though
 
   override def applyCoercion(e: => Expr[Post], coercion: Coercion[Pre])(
       implicit o: Origin
@@ -351,30 +361,56 @@ case class EncodePointerArrays[Pre <: Generation]()
           case inv @ LoopInvariant(invariant, _) =>
             loop.rewrite(contract =
               inv.rewrite(invariant =
-                foldAnd(
-                  currentVariableContext.flatMap(v =>
-                    v.t.asPointerArray.map((v, _))
-                  ).flatMap { case (v, t) =>
-                    val dimensions = t.dimensions.length
-                    initialiseAdt(t.element, dimensions, t.unique, t.isConst)
-                    t.dimensions.zipWithIndex.filter { case (d, _) =>
-                      d.isDefined
-                    }.map { case (d, i) =>
-                      adtFunctionInvocation[Post](
-                        dimSucc
-                          .ref((t.element, dimensions, t.unique, i, t.isConst)),
-                        args = Seq(Local(succ(v))),
-                      ) === dispatch(d.get)
-                    }
-                  }
-                ) &* super.dispatch(invariant)
+                getDimensionExpr &* super.dispatch(invariant)
               )
             )
           case _: IterationContract[Pre] => throw ExtraNode
           case _: LLVMLoopContract[Pre] => throw ExtraNode
         }
+      case bar: ParBarrier[Pre] =>
+        bar.rewrite(
+          requires = getDimensionExpr &* dispatch(bar.requires),
+          ensures = getDimensionExpr &* dispatch(bar.ensures),
+        )
+      case frame: FramedProof[Pre] =>
+        frame.rewrite(
+          pre = getDimensionExpr &* dispatch(frame.pre),
+          post = getDimensionExpr &* dispatch(frame.post),
+        )
       case _ => super.postCoerce(s)
     }
+  }
+
+  override def postCoerce(parRegion: ParRegion[Pre]): ParRegion[Post] = {
+    implicit val o: Origin = parRegion.o
+
+    parRegion match {
+      case block: ParBlock[Pre] =>
+        block.rewrite(
+          requires = getDimensionExpr &* dispatch(block.requires),
+          ensures = getDimensionExpr &* dispatch(block.ensures),
+        )
+      case _: ParParallel[Pre] | _: ParSequential[Pre] =>
+        parRegion.rewriteDefault()
+    }
+  }
+
+  private def getDimensionExpr(implicit o: Origin): Expr[Post] = {
+    foldAnd(
+      currentVariableContext.flatMap(v => v.t.asPointerArray.map((v, _)))
+        .flatMap { case (v, t) =>
+          implicit val o: Origin = v.o.where(context = "Dimension invariant")
+          val dimensions = t.dimensions.length
+          initialiseAdt(t.element, dimensions, t.unique, t.isConst)
+          t.dimensions.zipWithIndex.filter { case (d, _) => d.isDefined }
+            .map { case (d, i) =>
+              adtFunctionInvocation[Post](
+                dimSucc.ref((t.element, dimensions, t.unique, i, t.isConst)),
+                args = Seq(Local(succ(v))),
+              ) === dispatch(d.get)
+            }
+        }
+    )
   }
 
   override def postCoerce(t: Type[Pre]): Type[Post] =
@@ -411,6 +447,8 @@ case class EncodePointerArrays[Pre <: Generation]()
               SplitAccountedPredicate(l, r)
             }
         currentVariableContext ++= app.args
+        currentVariableContext ++= app.contract.givenArgs
+        currentVariableContext ++= app.contract.yieldsArgs
         allScopes.anySucceed(
           app,
           app.rewrite(contract =
@@ -420,6 +458,15 @@ case class EncodePointerArrays[Pre <: Generation]()
           ),
         )
         currentVariableContext --= app.args
+        currentVariableContext --= app.contract.givenArgs
+        currentVariableContext --= app.contract.yieldsArgs
+      case p: Predicate[Pre] if p.body.isDefined =>
+        currentVariableContext ++= p.args
+        globalDeclarations.succeed(
+          p,
+          p.rewrite(body = Some(getDimensionExpr &* dispatch(p.body.get))),
+        )
+        currentVariableContext --= p.args
       case _ => super.postCoerce(decl)
     }
   }

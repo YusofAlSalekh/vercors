@@ -1200,6 +1200,7 @@ class AnnotationVariableInfoGetter[G](
           varSyn(v) = mappingPrevNew(synonym_nr)
         } else {
           varSyn(v) = groupNumber
+          mappingPrevNew(synonym_nr) = groupNumber
           groupNumber += 1
         }
       }
@@ -1224,6 +1225,7 @@ class AnnotationVariableInfoGetter[G](
         varSyn(v) = mappingThisNew(synonym_nr)
       } else {
         varSyn(v) = groupNumber
+        mappingThisNew(synonym_nr) = groupNumber
         groupNumber += 1
       }
     }
