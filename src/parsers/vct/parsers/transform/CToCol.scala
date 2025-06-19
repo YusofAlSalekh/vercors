@@ -475,11 +475,11 @@ case class CToCol[G](
           },
         )
       case Statement10(GpgpuAtomicBlock0(whiff, _, impl, den)) =>
-       GpgpuAtomic(
-        convert(impl),
-        whiff.map(convert(_)).getOrElse(Block(Nil)),
-        den.map(convert(_)).getOrElse(Block(Nil)),
-       )
+        GpgpuAtomic(
+          convert(impl),
+          whiff.map(convert(_)).getOrElse(Block(Nil)),
+          den.map(convert(_)).getOrElse(Block(Nil)),
+        )
     }
 
   def convert(implicit block: CompoundStatementContext): Statement[G] =
@@ -1635,6 +1635,34 @@ case class CToCol[G](
             typeArgs.map(convert(_)).getOrElse(Nil),
           )(origin(decl).sourceName(convert(name)))
         )
+      case ValProverType(_, name, ints, _) =>
+        Seq(
+          new ProverType(convert(ints))(origin(decl).sourceName(convert(name)))
+        )
+      case ValProverFunction(_, t, name, _, args, _, ints, _) =>
+        Seq(
+          new ProverFunction(
+            convert(ints),
+            args.map(convert(_)).getOrElse(Nil),
+            convert(t),
+          )(origin(decl).sourceName(convert(name)))
+        )
+    }
+
+  def convert(
+      implicit int: ValProverInterpretationsContext
+  ): Seq[(ProverLanguage[G], String)] =
+    int match {
+      case ValProverInterpretations0(int) => Seq(convert(int))
+      case ValProverInterpretations1(int, ints) => convert(int) +: convert(ints)
+    }
+
+  def convert(
+      implicit int: ValProverInterpretationContext
+  ): (ProverLanguage[G], String) =
+    int match {
+      case ValInterpSmtlib(_, int) => SmtLib()(origin(int)) -> convert(int)
+      case ValInterpBoogie(_, int) => Boogie()(origin(int)) -> convert(int)
     }
 
   def convert(
