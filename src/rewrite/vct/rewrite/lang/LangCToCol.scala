@@ -177,17 +177,17 @@ case object LangCToCol {
         .blame(KernelPredicateNotInjective(Left(kernel), error.resource))
   }
 
-
   private case class KernelInvFailure(kernel: CGpgpuKernelSpecifier[_])
-    extends Blame[ParInvariantNotEstablished] {
+      extends Blame[ParInvariantNotEstablished] {
 
     override def blame(error: ParInvariantNotEstablished): Unit =
       error match {
-        case ParInvariantNotEstablished(failure, node) => 
-          PanicBlame("Establishing Kernel invariant cannot fail, since an identical predicate is required before.")
-            .blame(KernelInvariantNotEstablished(failure, node))
+        case ParInvariantNotEstablished(failure, node) =>
+          PanicBlame(
+            "Establishing Kernel invariant cannot fail, since an identical predicate is required before."
+          ).blame(KernelInvariantNotEstablished(failure, node))
       }
-      
+
   }
   private case class KernelParFailure(kernel: CGpgpuKernelSpecifier[_])
       extends Blame[ParBlockFailure] {
@@ -322,7 +322,8 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   private val cudaCurrentGrid: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
   private val cudaCurrentBlock: ScopedStack[ParBlockDecl[Post]] = ScopedStack()
 
-  private val cudaKernelInvBlock: ScopedStack[ParInvariantDecl[Post]] = ScopedStack()
+  private val cudaKernelInvBlock: ScopedStack[ParInvariantDecl[Post]] =
+    ScopedStack()
 
   private val dynamicSharedMemNames: mutable.Set[CNameTarget[Pre]] = mutable
     .Set()
@@ -381,7 +382,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       }.size == 3
     ) { indices = indices.removed(RefCudaVecX[Pre](RefCudaBlockIdx[Pre]())) }
 
-    def contains(e: RefCudaVecDim[Pre]): Boolean = indicesConstant.contains(e)
+    def contains(e: RefCudaVecDim[Pre]): Boolean = indices.contains(e)
   }
 
   private def hasNoSharedMemNames(node: Node[Pre]): Boolean = {
@@ -1135,174 +1136,177 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           val UnitAccountedPredicate(contractEnsures: Expr[Pre]) =
             contract.ensures
 
-        val parBody = body.map(impl => {
-          implicit val o: Origin = impl.o
-          val threadIdx = new CudaVec(RefCudaThreadIdx())
-          val blockIdx = new CudaVec(RefCudaBlockIdx())
-          val gridDecl = new ParBlockDecl[Post]()
-          val blockDecl = new ParBlockDecl[Post]()
-          val invDecl = new ParInvariantDecl[Post]()
+          val parBody = body.map(impl => {
+            implicit val o: Origin = impl.o
+            val threadIdx = new CudaVec(RefCudaThreadIdx())
+            val blockIdx = new CudaVec(RefCudaBlockIdx())
+            val gridDecl = new ParBlockDecl[Post]()
+            val blockDecl = new ParBlockDecl[Post]()
+            val invDecl = new ParInvariantDecl[Post]()
 
-          cudaCurrentThreadIdx.having(threadIdx) {
-            cudaCurrentBlockIdx.having(blockIdx) {
-              cudaCurrentGrid.having(gridDecl) {
-                cudaCurrentBlock.having(blockDecl) {
-                  cudaKernelInvBlock.having(invDecl) {
-                    val contextBlock = foldStar(
-                      unfoldStar(contract.contextEverywhere)
-                        .filter(hasNoSharedMemNames)
-                        .map(allThreadsInBlock(KernelNotInjective(kernelSpec)))
-                    )
-                    def getIters(idxs: CudaVec, dims: CudaVec)
-                        : Seq[IterVariable[Post]] = {
-                      var innerIters =
-                        idxs.indices.zip(dims.indices.values)
-                          .filter { case ((cudaIndex, _), _) =>
-                            !constantIdx.contains(cudaIndex)
-                          }.map { case ((_, index), dim) =>
-                            IterVariable(index, c_const(0), dim.get)
-                          }.toSeq
-                      // Always have atleast the x dimension
-                      if (innerIters.isEmpty) {
-                        innerIters = Seq(IterVariable(
-                          idxs.indices.head._2,
-                          c_const(0),
-                          dims.indices.head._2.get,
-                        ))
-                      }
-                      innerIters
-                    }
-
-                    // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
-                    val sub = Substitute[Post](
-                      cudaConstantDims.top.indices.values
-                        .map(v => (v.get, c_const[Post](0))).toMap
-                    )
-
-                    val innerContent = ParStatement(
-                      ParBlock(
-                        decl = blockDecl,
-                        iters = getIters(threadIdx, blockDim),
-                        // Context is already inherited
-                        context_everywhere = Star(
-                          nonZeroThreads,
-                          sub.dispatch(rw.dispatch(contract.contextEverywhere)),
-                        ),
-                        requires = sub.dispatch(rw.dispatch(contractRequires)),
-                        ensures = sub.dispatch(rw.dispatch(contractEnsures)),
-                        content = rw.dispatch(implFiltered.get),
-                      )(KernelParFailure(kernelSpec))
-                    )
-                    val outerContent = ParStatement[Post](
-                      ParBlock(
-                        decl = gridDecl,
-                        iters = getIters(blockIdx, gridDim),
-                        // Context is added to requires and ensures here
-                        context_everywhere = tt,
-                        requires = Star(
-                          nonZeroThreads,
-                          Star(
-                            contextBlock,
-                            foldStar(
-                              unfoldStar(contractRequires)
-                                .filter(hasNoSharedMemNames)
-                                .map(allThreadsInBlock(
-                                  KernelNotInjective(kernelSpec)
-                                ))
-                            ),
-                          ),
-                        ),
-                        ensures = Star(
-                          nonZeroThreads,
-                          Star(
-                            contextBlock,
-                            foldStar(
-                              unfoldStar(contractEnsures)
-                                .filter(hasNoSharedMemNames)
-                                .map(allThreadsInBlock(
-                                  KernelNotInjective(kernelSpec)
-                                ))
-                            ),
-                          ),
-                        ),
-                        // Add shared memory initialization before beginning of inner parallel block
-                        content = Scope[Post](
-                          sharedMemDecls,
-                          Block[Post](sharedMemInits ++ Seq(innerContent)),
-                        ),
-                      )(KernelParFailure(kernelSpec))
-                    )
-                    val invariant = rw.dispatch(contract.kernelInvariant)
-                    val parStmt = ParInvariant(
-                      decl = invDecl,
-                      inv = invariant,
-                      content = outerContent
-                    )(KernelInvFailure(kernelSpec))
-                    // For constant
-                    val constants: Seq[Variable[Post]] =
-                      constantIdx.indices.values.toSeq
-                    if (constants.nonEmpty) {
-                      Scope[Post](
-                        constants,
-                        Block[Post](
-                          constants
-                            .map(c => assignLocal(c.get, c_const[Post](0))) ++
-                            Seq(parStmt)
-                        ),
+            cudaCurrentThreadIdx.having(threadIdx) {
+              cudaCurrentBlockIdx.having(blockIdx) {
+                cudaCurrentGrid.having(gridDecl) {
+                  cudaCurrentBlock.having(blockDecl) {
+                    cudaKernelInvBlock.having(invDecl) {
+                      val contextBlock = foldStar(
+                        unfoldStar(contract.contextEverywhere)
+                          .filter(hasNoSharedMemNames).map(allThreadsInBlock(
+                            KernelNotInjective(kernelSpec)
+                          ))
                       )
-                    } else { parStmt }
+                      def getIters(idxs: CudaVec, dims: CudaVec)
+                          : Seq[IterVariable[Post]] = {
+                        var innerIters =
+                          idxs.indices.zip(dims.indices.values)
+                            .filter { case ((cudaIndex, _), _) =>
+                              !constantIdx.contains(cudaIndex)
+                            }.map { case ((_, index), dim) =>
+                              IterVariable(index, c_const(0), dim.get)
+                            }.toSeq
+                        // Always have atleast the x dimension
+                        if (innerIters.isEmpty) {
+                          innerIters = Seq(IterVariable(
+                            idxs.indices.head._2,
+                            c_const(0),
+                            dims.indices.head._2.get,
+                          ))
+                        }
+                        innerIters
+                      }
+
+                      // Substitute all constant values (except threadIdx.x and blockIdx.x if all threads/blocks are constant)
+                      val sub = Substitute[Post](
+                        cudaConstantDims.top.indices.values
+                          .map(v => (v.get, c_const[Post](0))).toMap
+                      )
+
+                      val innerContent = ParStatement(
+                        ParBlock(
+                          decl = blockDecl,
+                          iters = getIters(threadIdx, blockDim),
+                          // Context is already inherited
+                          context_everywhere = Star(
+                            nonZeroThreads,
+                            sub
+                              .dispatch(rw.dispatch(contract.contextEverywhere)),
+                          ),
+                          requires = sub
+                            .dispatch(rw.dispatch(contractRequires)),
+                          ensures = sub.dispatch(rw.dispatch(contractEnsures)),
+                          content = rw.dispatch(implFiltered.get),
+                        )(KernelParFailure(kernelSpec))
+                      )
+                      val outerContent = ParStatement[Post](
+                        ParBlock(
+                          decl = gridDecl,
+                          iters = getIters(blockIdx, gridDim),
+                          // Context is added to requires and ensures here
+                          context_everywhere = tt,
+                          requires = Star(
+                            nonZeroThreads,
+                            Star(
+                              contextBlock,
+                              foldStar(
+                                unfoldStar(contractRequires)
+                                  .filter(hasNoSharedMemNames)
+                                  .map(allThreadsInBlock(
+                                    KernelNotInjective(kernelSpec)
+                                  ))
+                              ),
+                            ),
+                          ),
+                          ensures = Star(
+                            nonZeroThreads,
+                            Star(
+                              contextBlock,
+                              foldStar(
+                                unfoldStar(contractEnsures)
+                                  .filter(hasNoSharedMemNames)
+                                  .map(allThreadsInBlock(
+                                    KernelNotInjective(kernelSpec)
+                                  ))
+                              ),
+                            ),
+                          ),
+                          // Add shared memory initialization before beginning of inner parallel block
+                          content = Scope[Post](
+                            sharedMemDecls,
+                            Block[Post](sharedMemInits ++ Seq(innerContent)),
+                          ),
+                        )(KernelParFailure(kernelSpec))
+                      )
+                      val invariant = rw.dispatch(contract.kernelInvariant)
+                      val parStmt =
+                        ParInvariant(
+                          decl = invDecl,
+                          inv = invariant,
+                          content = outerContent,
+                        )(KernelInvFailure(kernelSpec))
+                      // For constant
+                      val constants: Seq[Variable[Post]] =
+                        constantIdx.indices.values.toSeq
+                      if (constants.nonEmpty) {
+                        Scope[Post](
+                          constants,
+                          Block[Post](
+                            constants
+                              .map(c => assignLocal(c.get, c_const[Post](0))) ++
+                              Seq(parStmt)
+                          ),
+                        )
+                      } else { parStmt }
+                    }
                   }
                 }
               }
             }
-          }
-        })
-         
+          })
 
-        val gridContext: Expr[Post] =
-          foldStar(
-            unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-          //Don't scale kernelInvariants since they are established outside the par block
-        val kernelInvs: Expr[Post] =
-          foldStar(
-            unfoldStar(contract.kernelInvariant).filter(hasNoSharedMemNames)
-            .map(rw.dispatch)
-          )(o)
-        val requires: Expr[Post] =
-          foldStar(
-            Seq(gridContext, nonZeroThreads, kernelInvs) ++ unfoldStar(contractRequires)
-              .filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-        val ensures: Expr[Post] =
-          foldStar(
-            Seq(gridContext, nonZeroThreads, kernelInvs) ++ unfoldStar(contractEnsures)
-              .filter(hasNoSharedMemNames)
-              .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
-          )(o)
-        val result =
-          new Procedure[Post](
-            returnType = TVoid(),
-            args = newArgs,
-            outArgs = Nil,
-            typeArgs = Nil,
-            body = parBody,
-            contract =
-              ApplicableContract(
-                UnitAccountedPredicate(requires)(o),
-                UnitAccountedPredicate(ensures)(o),
-                // Context everywhere is already passed down in the body
-                tt,
-                tt,
-                contract.signals.map(rw.dispatch),
-                newGivenArgs,
-                newYieldsArgs,
-                contract.decreases.map(rw.dispatch),
-              )(contract.blame)(contract.o),
-          )(AbstractApplicable)(o)
-        kernelSpecifier = None
+          val gridContext: Expr[Post] =
+            foldStar(
+              unfoldStar(contract.contextEverywhere).filter(hasNoSharedMemNames)
+                .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          // Don't scale kernelInvariants since they are established outside the par block
+          val kernelInvs: Expr[Post] =
+            foldStar(
+              unfoldStar(contract.kernelInvariant).filter(hasNoSharedMemNames)
+                .map(rw.dispatch)
+            )(o)
+          val requires: Expr[Post] =
+            foldStar(
+              Seq(gridContext, nonZeroThreads, kernelInvs) ++
+                unfoldStar(contractRequires).filter(hasNoSharedMemNames)
+                  .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          val ensures: Expr[Post] =
+            foldStar(
+              Seq(gridContext, nonZeroThreads, kernelInvs) ++
+                unfoldStar(contractEnsures).filter(hasNoSharedMemNames)
+                  .map(allThreadsInGrid(KernelNotInjective(kernelSpec)))
+            )(o)
+          val result =
+            new Procedure[Post](
+              returnType = TVoid(),
+              args = newArgs,
+              outArgs = Nil,
+              typeArgs = Nil,
+              body = parBody,
+              contract =
+                ApplicableContract(
+                  UnitAccountedPredicate(requires)(o),
+                  UnitAccountedPredicate(ensures)(o),
+                  // Context everywhere is already passed down in the body
+                  tt,
+                  tt,
+                  contract.signals.map(rw.dispatch),
+                  newGivenArgs,
+                  newYieldsArgs,
+                  contract.decreases.map(rw.dispatch),
+                )(contract.blame)(contract.o),
+            )(AbstractApplicable)(o)
+          kernelSpecifier = None
 
           result
         }
@@ -1833,7 +1837,9 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def gpuAtomic(atomic: GpgpuAtomic[Pre]): Statement[Post] = {
     implicit val o: Origin = atomic.o
-    ParAtomic[Post](List(cudaKernelInvBlock.top.ref), rw.dispatch(atomic.impl))(o)
+    ParAtomic[Post](List(cudaKernelInvBlock.top.ref), rw.dispatch(atomic.impl))(
+      o
+    )
   }
 
   def getInnerPointerInfo(
