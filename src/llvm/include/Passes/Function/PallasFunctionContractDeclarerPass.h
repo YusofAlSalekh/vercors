@@ -64,12 +64,12 @@ class PallasFunctionContractDeclarerPass
     void addEmptyContextEverywhere(col::ApplicableContract &contract,
                                    Function &f);
 
-     /**
+    /**
      * Adds an empty kernel_invariant (i.e. kernel_invariant true;) to the
      * given contract if it does not already have a kernel_invariant-clause.
      */
     void addEmptyKernelInvariant(col::ApplicableContract &contract,
-                                   Function &f);
+                                 Function &f);
 
     /**
      * Tries to add a clause, that is represented by the given metadata-node, to

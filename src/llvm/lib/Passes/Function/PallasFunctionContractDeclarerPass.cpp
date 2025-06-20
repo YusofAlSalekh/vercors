@@ -441,14 +441,13 @@ void PallasFunctionContractDeclarerPass::addEmptyContextEverywhere(
 void PallasFunctionContractDeclarerPass::addEmptyKernelInvariant(
     col::ApplicableContract &contract, Function &f) {
     if (contract.has_kernel_invariant())
-        return; 
+        return;
     // Build expression for kernelInvariant
     auto *kernelInvariant =
         contract.mutable_kernel_invariant()->mutable_boolean_value();
     kernelInvariant->set_allocated_origin(
         llvm2col::generateFunctionContractOrigin(f, "true"));
     kernelInvariant->set_value(true);
-    
 }
 void PallasFunctionContractDeclarerPass::extendPredicate(
     col::AccountedPredicate *newPred, col::Origin *newPredOrigin,

@@ -296,6 +296,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceNullAnyClass() => e
       case CoerceNullPointer(_) => e
       case CoerceNonNullPointer(_) => e
+      case CoercePointerNonNull(_) => e
       case CoerceFracZFrac() => e
       case CoerceZFracRat() => e
       case CoerceFloatRat(_) => e
@@ -308,6 +309,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceNullLLVMPointer(_) => e
       case CoercePointerArrayPointer(_, _, _) => e
       case CoerceConstPointerArrayPointer(_, _) => e
+      case CoercePointerPointerArray(_, _, _) => e
+      case CoerceConstPointerPointerArray(_, _) => e
       case CoerceNullEnum(_) => e
 
       case CoerceIntRat() => e
@@ -1222,6 +1225,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case op @ BitXor(left, right, bits, signed) =>
         BitXor(int(left), int(right), bits, signed)(op.blame)
       case Cast(value, typeValue) => Cast(value, typeValue)
+      case t @ ToNonNull(value) => ToNonNull(pointer(value)._1)(t.blame)
       case PointerCast(value, typeValue, fromSize, toSize) =>
         PointerCast(value, typeValue, fromSize, toSize)
       case IntegerPointerCast(value, typeValue, elementSize) =>

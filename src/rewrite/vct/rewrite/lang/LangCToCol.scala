@@ -2545,8 +2545,7 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
   def pointerType(t: CPointerType[Pre]): Type[Post] =
     t match {
       case CTPointer(innerType) => TPointer(rw.dispatch(innerType), None)
-      case cta @ CTArray(_, _) =>
-        TPointerArray(rw.dispatch(getArrayType(cta)), getDimensions(cta), None)
+      case cta @ CTArray(_, _) => arrayType(cta)
     }
 
   def vectorType(t: CType[Pre]): Type[Post] = {

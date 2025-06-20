@@ -1111,6 +1111,9 @@ final case class CoerceNullPointer[G](target: Type[G])(implicit val o: Origin)
 final case class CoerceNonNullPointer[G](target: Type[G])(
     implicit val o: Origin
 ) extends Coercion[G] with CoerceNonNullPointerImpl[G]
+final case class CoercePointerNonNull[G](target: Type[G])(
+    implicit val o: Origin
+) extends Coercion[G] with CoercePointerNonNullImpl[G]
 final case class CoerceNullEnum[G](targetEnum: Ref[G, Enum[G]])(
     implicit val o: Origin
 ) extends Coercion[G] with CoerceNullEnumImpl[G]
@@ -1138,6 +1141,17 @@ final case class CoerceConstPointerArrayPointer[G](
     dimensions: Int,
 )(implicit val o: Origin)
     extends Coercion[G] with CoerceConstPointerArrayPointerImpl[G]
+final case class CoercePointerPointerArray[G](
+    elementType: Type[G],
+    dimensions: Seq[Option[Expr[G]]],
+    unique: Option[BigInt],
+)(implicit val o: Origin)
+    extends Coercion[G] with CoercePointerPointerArrayImpl[G]
+final case class CoerceConstPointerPointerArray[G](
+    elementType: Type[G],
+    dimensions: Seq[Option[Expr[G]]],
+)(implicit val o: Origin)
+    extends Coercion[G] with CoerceConstPointerPointerArrayImpl[G]
 
 final case class CoerceFracZFrac[G]()(implicit val o: Origin)
     extends Coercion[G] with CoerceFracZFracImpl[G]
@@ -2334,6 +2348,9 @@ final case class InstanceOf[G](value: Expr[G], typeValue: Expr[G])(
 final case class Cast[G](value: Expr[G], typeValue: Expr[G])(
     implicit val o: Origin
 ) extends Expr[G] with CastImpl[G]
+final case class ToNonNull[G](value: Expr[G])(val blame: Blame[PointerNull])(
+    implicit val o: Origin
+) extends Expr[G] with ToNonNullImpl[G]
 final case class PointerCast[G](
     value: Expr[G],
     t: Type[G],

@@ -665,6 +665,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           PointerBlockLength(pointer)(pointerLen.blame) -
             PointerBlockOffset(pointer)(pointerLen.blame)
         )
+      case to @ ToNonNull(value) =>
+        OptGet(dispatch(value))(PointerNullOptNone(to.blame, value))
       case PointerCast(value, targetType, fromSize, toSize) =>
         val newValue = dispatch(value)
         (targetType, value.t) match {

@@ -210,13 +210,8 @@ case class TypeQualifierCoercion[Pre <: Generation]()
 
   override def postCoerce(loc: Location[Pre]): Location[Post] =
     loc match {
-      // TODO: This code was broken a while ago
-      case AmbiguousLocation(pointer) =>
-        pointer.t match {
-          case t: PointerType[Pre] if isConstElement(t.element) =>
-            throw NoPermissionForConstPointer(loc)
-          case _ => loc.rewriteDefault()
-        }
+      case AmbiguousLocation(pointer) if isConstElement(pointer.t) =>
+        throw NoPermissionForConstPointer(loc)
       case other => other.rewriteDefault()
     }
 

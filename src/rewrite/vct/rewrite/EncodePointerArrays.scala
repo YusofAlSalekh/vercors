@@ -1,5 +1,6 @@
 package vct.rewrite
 
+import hre.util.ScopedStack
 import vct.col.ast.{
   ADTAxiom,
   ADTFunction,
@@ -14,7 +15,9 @@ import vct.col.ast.{
   AxiomaticDataType,
   ByValueClassLocation,
   CoerceConstPointerArrayPointer,
+  CoerceConstPointerPointerArray,
   CoercePointerArrayPointer,
+  CoercePointerPointerArray,
   Coercion,
   ConstructorInvocation,
   ContractApplicable,
@@ -54,12 +57,14 @@ import vct.col.ast.{
   PointerArrayType,
   PointerBlockLength,
   PointerBlockOffset,
+  PointerCast,
   PointerLength,
   PointerLocation,
   PointerSubscript,
   Predicate,
   Procedure,
   ProcedureInvocation,
+  Program,
   Result,
   Scope,
   ScopedExpr,
@@ -71,6 +76,8 @@ import vct.col.ast.{
   TInt,
   TNonNullConstPointer,
   TNonNullPointer,
+  TPointer,
+  ToNonNull,
   Type,
   UnitAccountedPredicate,
   Variable,
@@ -85,6 +92,8 @@ import vct.col.origin.{
   IteratedPtrInjective,
   LabelContext,
   MismatchedArrayDimension,
+  NodeVerificationFailure,
+  NonNullCoercionError,
   NonNullPointerNull,
   Origin,
   PanicBlame,
@@ -95,6 +104,7 @@ import vct.col.origin.{
   PreBlameSplit,
   PreconditionFailed,
   TrueSatisfiable,
+  UnsafeCoercion,
 }
 import vct.col.ref.Ref
 import vct.col.rewrite.EncodeArrayValues.PointerArrayCreationFailed
@@ -142,6 +152,14 @@ case object EncodePointerArrays extends RewriterBuilder {
       blame.blame(MismatchedArrayDimension(invokingNode, dimensionExpr, v))
   }
 
+  private case class NonNullCoercionBlame(
+      blame: Blame[UnsafeCoercion],
+      node: Node[_],
+  ) extends Blame[PointerNull] {
+    override def blame(error: PointerNull): Unit =
+      blame.blame(NonNullCoercionError(node))
+  }
+
   private val ConstructorOrigin: Origin = Origin(
     Seq(LabelContext("Pointer array constructors"))
   )
@@ -162,6 +180,10 @@ case class EncodePointerArrays[Pre <: Generation]()
       : SuccessionMap[(Type[Pre], Int, Option[BigInt], Boolean), ADTFunction[
         Post
       ]] = SuccessionMap()
+  private val fromPointerSucc
+      : SuccessionMap[(Type[Pre], Int, Option[BigInt], Boolean), ADTFunction[
+        Post
+      ]] = SuccessionMap()
   private val dimSucc: SuccessionMap[
     (Type[Pre], Int, Option[BigInt], Int, Boolean),
     ADTFunction[Post],
@@ -170,6 +192,15 @@ case class EncodePointerArrays[Pre <: Generation]()
   private val currentVariableContext: mutable.HashSet[Variable[Pre]] = mutable
     .HashSet()
 
+  private val globalBlame: ScopedStack[Blame[UnsafeCoercion]] = ScopedStack()
+
+  override def postCoerce(program: Program[Pre]): Program[Post] = {
+    globalBlame.having(program.blame) {
+      program.rewrite(declarations =
+        globalDeclarations.dispatch(program.declarations)
+      )
+    }
+  }
   // NOTE 1: We currently do not handle expressions that introduce new variables (Binders, ScopedExpr) of the PointerArray type, the size will not be available in these expressions
   // NOTE 2: This rewriter is a bit aggressive with adding its dimensions requirements everywhere (it basically replicates PropagateContextEverywhere) even if this would be unnecessary. I don't believe this'll significantly hurt performance though
 
@@ -201,6 +232,30 @@ case class EncodePointerArrays[Pre <: Generation]()
             )
           case _ => e
         }
+      case CoercePointerPointerArray(element, dimensions, unique) =>
+        initialiseAdt(element, dimensions.length, unique, isConst = false)
+        val newE =
+          e.t match {
+            case TPointer(_, _) =>
+              ToNonNull[Post](e)(NonNullCoercionBlame(globalBlame.top, e))
+            case _ => e
+          }
+        adtFunctionInvocation[Post](
+          fromPointerSucc.ref((element, dimensions.length, unique, false)),
+          args = Seq(newE),
+        )
+      case CoerceConstPointerPointerArray(element, dimensions) =>
+        initialiseAdt(element, dimensions.length, None, isConst = true)
+        val newE =
+          e.t match {
+            case TConstPointer(_) =>
+              ToNonNull[Post](e)(NonNullCoercionBlame(globalBlame.top, e))
+            case _ => e
+          }
+        adtFunctionInvocation[Post](
+          fromPointerSucc.ref((element, dimensions.length, None, true)),
+          args = Seq(newE),
+        )
       case other => super.applyCoercion(e, other)
     }
 
@@ -562,8 +617,9 @@ case class EncodePointerArrays[Pre <: Generation]()
       new ADTFunction(
         Seq(new Variable[Post](pointerType)(o.where(name = "ptr"))),
         axiomType,
-      )(o.where(name = s"get_${element}_pointer_inv"))
-    val invAxiom =
+      )(o.where(name = s"from_${element}_pointer"))
+    fromPointerSucc((element, dimensions, unique, isConst)) = invFunction
+    val invAxiom1 =
       new ADTAxiom[Post](forall(
         axiomType,
         { term =>
@@ -571,6 +627,18 @@ case class EncodePointerArrays[Pre <: Generation]()
             invFunction.ref,
             args = Seq(InlinePattern(
               adtFunctionInvocation(pointerFunction.ref, args = Seq(term))
+            )),
+          ) === term
+        },
+      ))
+    val invAxiom2 =
+      new ADTAxiom[Post](forall(
+        pointerType,
+        { term =>
+          adtFunctionInvocation[Post](
+            pointerFunction.ref,
+            args = Seq(InlinePattern(
+              adtFunctionInvocation(invFunction.ref, args = Seq(term))
             )),
           ) === term
         },
@@ -598,8 +666,13 @@ case class EncodePointerArrays[Pre <: Generation]()
     arraySucc((element, dimensions, unique, isConst)) = globalDeclarations
       .declare(
         new AxiomaticDataType(
-          dimFunctions ++
-            Seq(pointerFunction, invFunction, invAxiom, boundsAxiom),
+          dimFunctions ++ Seq(
+            pointerFunction,
+            invFunction,
+            invAxiom1,
+            invAxiom2,
+            boundsAxiom,
+          ),
           Nil,
         )(o.where(name =
           if (isConst) { s"const_pointer_${dimensions}_array_$element" }

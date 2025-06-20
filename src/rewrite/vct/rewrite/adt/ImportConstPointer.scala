@@ -206,6 +206,8 @@ case class ImportConstPointer[Pre <: Generation](importer: ImportADTImporter)
           PointerBlockLength(pointer)(pointerLen.blame) -
             PointerBlockOffset(pointer)(pointerLen.blame)
         )
+      case to @ ToNonNull(value) if value.t.asPointer.get.isConst =>
+        getPointer(value, PointerNullOptNone(to.blame, value))
       case other => other.rewriteDefault()
     }
   }

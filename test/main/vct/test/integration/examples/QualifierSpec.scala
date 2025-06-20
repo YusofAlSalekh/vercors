@@ -66,7 +66,7 @@ int f(struct vec v){
   vercors should error withCode "noPermissionForConstPointer" in "Specify perm const pointer" c
   """
 /*@
- requires x!= NULL ** \pointer_length(x)==1 ** Perm(x, 1\2);
+ requires x!= NULL ** \pointer_length(x)==1 ** Perm(*x, 1\2);
 @*/
 void f(const int* x){
   int y = x[0];

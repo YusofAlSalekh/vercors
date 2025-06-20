@@ -281,6 +281,33 @@ case object CoercionUtils {
             .getOrElse(return None),
         ))
       case (
+            TPointer(elementL, uniqueL),
+            TPointerArray(elementR, dimensions, uniqueR),
+          )
+          if uniqueL == uniqueR && dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          CoercePointerNonNull(TNonNullPointer(elementL, uniqueL)),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoercePointerPointerArray(elementL, dimensions, uniqueL),
+        ))
+      case (
+            TNonNullPointer(elementL, uniqueL),
+            TPointerArray(elementR, dimensions, uniqueR),
+          )
+          if uniqueL == uniqueR && dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoercePointerPointerArray(elementL, dimensions, uniqueL),
+        ))
+      case (
             TConstPointerArray(elementL, dimensionsL),
             TConstPointerArray(elementR, dimensionsR),
           ) if dimensionsL.length == dimensionsR.length =>
@@ -294,6 +321,30 @@ case object CoercionUtils {
           CoerceConstPointerArrayPointer(elementL, dimensions.length),
           getPointerCoercion(source, target, elementL, elementR)
             .getOrElse(return None),
+        ))
+      case (TConstPointer(elementL), TConstPointerArray(elementR, dimensions))
+          if dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          CoercePointerNonNull(TNonNullConstPointer(elementL)),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoerceConstPointerPointerArray(elementL, dimensions),
+        ))
+      case (
+            TNonNullConstPointer(elementL),
+            TConstPointerArray(elementR, dimensions),
+          )
+          if dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoerceConstPointerPointerArray(elementL, dimensions),
         ))
       // Below two cases are for AddrOf struct fields which return unique non-null pointers before the TUnique qualifier is removed by the TypeQualifierCoercion
       case (
