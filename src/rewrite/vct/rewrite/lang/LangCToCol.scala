@@ -1636,7 +1636,6 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
       case inner => inner
     }
 
-  // TODO: (AS) Fixed-size arrays seem to become pointers but they're actually value types
   def rewriteArrayDeclaration(
       decl: CLocalDeclaration[Pre],
       cta: CTArray[Pre],

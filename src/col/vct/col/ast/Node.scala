@@ -1471,12 +1471,12 @@ final case class ForPerm[G](
     loc: Location[G],
     body: Expr[G],
 )(implicit val o: Origin)
-    extends Binder[G] with ForPermImpl[G]
+    extends Binder[G] with ForPermImpl[G] with ResourceTerm[G]
 @scopes[Variable]
 @scopes[LocalHeapVariable]
 final case class ForPermWithValue[G](binding: Variable[G], body: Expr[G])(
     implicit val o: Origin
-) extends Binder[G] with ForPermWithValueImpl[G]
+) extends Binder[G] with ForPermWithValueImpl[G] with ResourceTerm[G]
 @scopes[Variable]
 @scopes[LocalHeapVariable]
 final case class Let[G](binding: Variable[G], value: Expr[G], main: Expr[G])(
@@ -1567,7 +1567,7 @@ sealed trait InstanceApply[G] extends Node[G] with InstanceApplyImpl[G]
 
 final case class PredicateApplyExpr[G](apply: ApplyAnyPredicate[G])(
     implicit val o: Origin
-) extends ApplyInlineable[G] with PredicateApplyExprImpl[G]
+) extends ApplyInlineable[G] with PredicateApplyExprImpl[G] with ResourceTerm[G]
 @family
 sealed trait ApplyAnyPredicate[G]
     extends NodeFamily[G] with ApplyAnyPredicateImpl[G]
@@ -1943,7 +1943,7 @@ final case class PointsTo[G](loc: Location[G], perm: Expr[G], value: Expr[G])(
     implicit val o: Origin
 ) extends Expr[G] with PointsToImpl[G] with ResourceTerm[G]
 final case class CurPerm[G](loc: Location[G])(implicit val o: Origin)
-    extends Expr[G] with CurPermImpl[G]
+    extends Expr[G] with CurPermImpl[G] with ResourceTerm[G]
 
 final case class Value[G](loc: Location[G])(implicit val o: Origin)
     extends Expr[G] with ValueImpl[G] with ResourceTerm[G]
@@ -1952,10 +1952,10 @@ final case class AutoValue[G](loc: Location[G])(implicit val o: Origin)
 
 final case class ValidArray[G](arr: Expr[G], len: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ValidArrayImpl[G]
+) extends Expr[G] with ValidArrayImpl[G] with ResourceTerm[G]
 final case class ValidMatrix[G](mat: Expr[G], w: Expr[G], h: Expr[G])(
     implicit val o: Origin
-) extends Expr[G] with ValidMatrixImpl[G]
+) extends Expr[G] with ValidMatrixImpl[G] with ResourceTerm[G]
 
 final case class PermPointer[G](p: Expr[G], len: Expr[G], perm: Expr[G])(
     implicit val o: Origin

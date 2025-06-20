@@ -12,10 +12,7 @@ import vct.col.origin.{
   TypeName,
 }
 import vct.col.rewrite.{Generation, Rewriter, RewriterBuilder}
-import vct.col.util.AstBuildHelpers.foldStar
 import vct.result.VerificationError.UserError
-
-import scala.annotation.tailrec
 
 case object DisambiguateLocation extends RewriterBuilder {
 

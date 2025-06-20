@@ -85,7 +85,6 @@ import vct.col.origin.{
   IteratedPtrInjective,
   LabelContext,
   MismatchedArrayDimension,
-  MismatchedPointerSize,
   NonNullPointerNull,
   Origin,
   PanicBlame,
@@ -141,15 +140,6 @@ case object EncodePointerArrays extends RewriterBuilder {
   ) extends Blame[PreconditionFailed] {
     override def blame(error: PreconditionFailed): Unit =
       blame.blame(MismatchedArrayDimension(invokingNode, dimensionExpr, v))
-  }
-
-  private case class MismatchedPointerSizeBlame(
-      invokingNode: InvokingNode[_],
-      v: Variable[_],
-      blame: Blame[InvocationFailure],
-  ) extends Blame[PreconditionFailed] {
-    override def blame(error: PreconditionFailed): Unit =
-      blame.blame(MismatchedPointerSize(invokingNode, v))
   }
 
   private val ConstructorOrigin: Origin = Origin(

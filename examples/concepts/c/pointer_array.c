@@ -109,6 +109,8 @@ void parameterInLoop(int n, int m, int a[m][n]) {
 }
 
 //@ requires n > 0 && m > 0;
+//@ ensures \pointer(\result, m * n, write);
+//@ ensures (\forall int i = 0 .. n, int j = 0 .. m; {:\result[j * n + i]:} == j * n + i);
 int *localInLoop(int n, int m) {
     int a[m][n];
 

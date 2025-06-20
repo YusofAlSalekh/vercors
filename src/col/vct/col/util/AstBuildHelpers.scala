@@ -523,7 +523,7 @@ object AstBuildHelpers {
   implicit class InvocationStatementBuildHelpers[Pre, Post](
       apply: InvocationStatement[Pre]
   )(implicit rewriter: AbstractRewriter[Pre, Post]) {
-    def rewrite[T <: InstanceInvocationFailure](
+    def rewrite(
         args: => Seq[Expr[Post]] = apply.args.map(rewriter.dispatch),
         outArgs: => Seq[Expr[Post]] = apply.outArgs.map(rewriter.dispatch),
         typeArgs: => Seq[Type[Post]] = apply.typeArgs.map(rewriter.dispatch),

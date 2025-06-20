@@ -342,23 +342,6 @@ case class MismatchedArrayDimension(
         .inlineContextText}` may not match type ${v.t}"
 }
 
-case class MismatchedPointerSize(node: InvokingNode[_], v: Variable[_])
-    extends InvocationFailure {
-  override def code: String = "arrayPointerSize"
-
-  override def position: String = node.o.shortPositionText
-
-  override def desc: String =
-    Message.messagesInContext(
-      node.o -> "Call to applicable may fail, because ...",
-      v.o ->
-        s"... the pointer passed to this variable may have the wrong length$errUrl",
-    )
-
-  override def inlineDesc: String =
-    s"Call ${node.o.inlineContextText} might fail because the pointer passed to ${v.o.inlineContextText} may have the wrong length"
-}
-
 case class SYCLItemMethodPreconditionFailed(node: InvokingNode[_])
     extends NodeVerificationFailure with FrontendInvocationError {
   override def code: String = "syclItemMethodPreFailed"
