@@ -821,6 +821,15 @@ case class KernelPredicateNotInjective(
     s"${predicate.o.inlineContextText} does not have a unique location for every thread, and it could not be simplified away."
 }
 
+case class KernelInvariantNotEstablished(
+  failure: ContractFailure,
+  node: ParInvariant[_],
+) extends KernelFailure with WithContractFailure {
+  override def baseCode: String = "notEstablished"
+  override def descInContext: String = "This kernel invariant may not be establised, since"
+  override def inlineDescWithSource(node: String, failure: String): String = s"`$node` may not be established, since $failure."
+}
+
 sealed trait KernelBarrierFailure extends VerificationFailure
 case class KernelBarrierNotEstablished(
     failure: ContractFailure,

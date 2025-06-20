@@ -257,6 +257,7 @@ case class LangJavaToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
                   else
                     fieldPerms,
                 contextEverywhere = tt,
+                kernelInvariant = tt,
                 signals = Nil,
                 givenArgs = Nil,
                 yieldsArgs = Nil,

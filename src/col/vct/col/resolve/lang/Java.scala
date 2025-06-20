@@ -346,6 +346,7 @@ case object Java extends LazyLogging {
             UnitAccountedPredicate(tt),
             UnitAccountedPredicate(tt),
             tt,
+            tt,
             Nil,
             Nil,
             Nil,
@@ -378,6 +379,7 @@ case object Java extends LazyLogging {
           ApplicableContract(
             UnitAccountedPredicate(tt),
             UnitAccountedPredicate(tt),
+            tt,
             tt,
             Nil,
             Nil,

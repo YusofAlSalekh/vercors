@@ -987,6 +987,7 @@ final case class ApplicableContract[G](
     requires: AccountedPredicate[G],
     ensures: AccountedPredicate[G],
     contextEverywhere: Expr[G],
+    kernelInvariant: Expr[G],
     signals: Seq[SignalsClause[G]],
     givenArgs: Seq[Variable[G]],
     yieldsArgs: Seq[Variable[G]],
