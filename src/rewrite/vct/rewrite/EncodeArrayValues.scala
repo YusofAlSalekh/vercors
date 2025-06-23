@@ -657,7 +657,7 @@ case class EncodeArrayValues[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(ArrayCreationFailed(newArr))
-      case newPointerArr @ NewPointerArray(element, size, unique) =>
+      case newPointerArr @ NewPointer(element, size, unique) =>
         val method = pointerArrayCreationMethods.getOrElseUpdate(
           (element, unique),
           makePointerCreationMethodFor(
@@ -675,7 +675,7 @@ case class EncodeArrayValues[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(PointerArrayCreationFailed(newPointerArr, newPointerArr.blame))
-      case newPointerArr @ NewNonNullPointerArray(element, size, unique) =>
+      case newPointerArr @ NewNonNullPointer(element, size, unique) =>
         val method = nonNullPointerArrayCreationMethods.getOrElseUpdate(
           (element, unique),
           makePointerCreationMethodFor(
@@ -693,7 +693,7 @@ case class EncodeArrayValues[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(PointerArrayCreationFailed(newPointerArr, newPointerArr.blame))
-      case ncpa @ NewConstPointerArray(element, size) =>
+      case ncpa @ NewConstPointer(element, size) =>
         val method = constPointerArrayCreationMethods.getOrElseUpdate(
           (element),
           makePointerCreationMethodFor(
@@ -711,7 +711,7 @@ case class EncodeArrayValues[Pre <: Generation]() extends Rewriter[Pre] {
           Nil,
           Nil,
         )(PointerArrayCreationFailed(ncpa, ncpa.blame))
-      case ncpa @ NewNonNullConstPointerArray(element, size) =>
+      case ncpa @ NewNonNullConstPointer(element, size) =>
         val method = constPointerArrayCreationMethods.getOrElseUpdate(
           (element),
           makePointerCreationMethodFor(

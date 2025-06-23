@@ -34,6 +34,7 @@ import vct.rewrite.{
   EncodeAssuming,
   EncodeAutoValue,
   EncodeByValueClassUsage,
+  EncodePointerArrays,
   EncodePointerComparison,
   EncodeRange,
   EncodeResourceValues,
@@ -42,11 +43,11 @@ import vct.rewrite.{
   HeapVariableToRef,
   InlineTrivialLets,
   LowerHeapVariables,
+  MakeUniqueMethodCopies,
   MonomorphizeClass,
   SmtlibToProverTypes,
-  VariableToPointer,
   TypeQualifierCoercion,
-  MakeUniqueMethodCopies,
+  VariableToPointer,
 }
 import vct.rewrite.lang.ReplaceSYCLTypes
 import vct.rewrite.pallas.{
@@ -418,6 +419,7 @@ case class SilverTransformation(
         IterationContractToParBlock,
         PropagateContextEverywhere, // inline context_everywhere into loop invariants
         EncodeArrayValues, // maybe don't target shift lemmas on generated function for \values
+        EncodePointerArrays,
         GivenYieldsToArgs,
         CheckProcessAlgebra,
         EncodeCurrentThread,

@@ -296,6 +296,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceNullAnyClass() => e
       case CoerceNullPointer(_) => e
       case CoerceNonNullPointer(_) => e
+      case CoercePointerNonNull(_) => e
       case CoerceFracZFrac() => e
       case CoerceZFracRat() => e
       case CoerceFloatRat(_) => e
@@ -305,6 +306,11 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case CoerceCArrayPointer(_) => e
       case CoerceCPPArrayPointer(_) => e
       case CoerceCVectorVector(_, _) => e
+      case CoerceNullLLVMPointer(_) => e
+      case CoercePointerArrayPointer(_, _, _) => e
+      case CoerceConstPointerArrayPointer(_, _) => e
+      case CoercePointerPointerArray(_, _, _) => e
+      case CoerceConstPointerPointerArray(_, _) => e
       case CoerceNullEnum(_) => e
 
       case CoerceIntRat() => e
@@ -1219,6 +1225,7 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case op @ BitXor(left, right, bits, signed) =>
         BitXor(int(left), int(right), bits, signed)(op.blame)
       case Cast(value, typeValue) => Cast(value, typeValue)
+      case t @ ToNonNull(value) => ToNonNull(pointer(value)._1)(t.blame)
       case PointerCast(value, typeValue, fromSize, toSize) =>
         PointerCast(value, typeValue, fromSize, toSize)
       case IntegerPointerCast(value, typeValue, elementSize) =>
@@ -1614,14 +1621,18 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case Neq(left, right) => nonAny(e, left, right, Neq(_, _))
       case na @ NewArray(element, dims, moreDims, initialize) =>
         NewArray(element, dims.map(int), moreDims, initialize)(na.blame)
-      case na @ NewPointerArray(element, size, unique) =>
-        NewPointerArray(element, size, unique)(na.blame)
-      case nca @ NewConstPointerArray(element, size) =>
-        NewConstPointerArray(element, size)(nca.blame)
-      case na @ NewNonNullPointerArray(element, size, unique) =>
-        NewNonNullPointerArray(element, size, unique)(na.blame)
-      case nca @ NewNonNullConstPointerArray(element, size) =>
-        NewNonNullConstPointerArray(element, size)(nca.blame)
+      case na @ NewPointer(element, size, unique) =>
+        NewPointer(element, size, unique)(na.blame)
+      case nca @ NewConstPointer(element, size) =>
+        NewConstPointer(element, size)(nca.blame)
+      case na @ NewNonNullPointer(element, size, unique) =>
+        NewNonNullPointer(element, size, unique)(na.blame)
+      case nca @ NewNonNullConstPointer(element, size) =>
+        NewNonNullConstPointer(element, size)(nca.blame)
+      case npa @ NewPointerArray(element, dimensions, unique) =>
+        NewPointerArray(element, dimensions, unique)(npa.blame)
+      case npa @ NewConstPointerArray(element, dimensions) =>
+        NewConstPointerArray(element, dimensions)(npa.blame)
       case NewObject(cls) => NewObject(cls)
       case NewObjectUnique(cls, m) => NewObjectUnique(cls, m)
       case NoPerm() => NoPerm()
@@ -1675,6 +1686,11 @@ abstract class CoercingRewriter[Pre <: Generation]()
       case off @ PointerBlockOffset(p) =>
         PointerBlockOffset(pointer(p)._1)(off.blame)
       case len @ PointerLength(p) => PointerLength(pointer(p)._1)(len.blame)
+      case get @ PointerArraySubscript(a, index) =>
+        if (a.t.asPointerArray.isDefined)
+          PointerArraySubscript(a, int(index))(get.blame)
+        else
+          throw IncoercibleText(a, s"pointer array")
       case get @ PointerSubscript(p, index) =>
         PointerSubscript(pointer(p)._1, int(index))(get.blame)
       case PointerEq(l, r, elementSize) =>

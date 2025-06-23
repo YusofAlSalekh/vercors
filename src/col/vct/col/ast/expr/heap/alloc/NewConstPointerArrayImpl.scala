@@ -1,12 +1,12 @@
 package vct.col.ast.expr.heap.alloc
 
-import vct.col.ast.{NewConstPointerArray, TConstPointer, Type}
 import vct.col.ast.ops.NewConstPointerArrayOps
+import vct.col.ast.{NewConstPointerArray, TConstPointerArray, Type}
 import vct.col.print._
 
-trait NewConstPointerArrayImpl[G] extends NewConstPointerArrayOps[G] { this: NewConstPointerArray[G] =>
-  override lazy val t: Type[G] = TConstPointer[G](element)
-
+trait NewConstPointerArrayImpl[G] extends NewConstPointerArrayOps[G] {
+  this: NewConstPointerArray[G] =>
+  override def t: Type[G] = TConstPointerArray(element, dimensions.map(Some(_)))
   override def layout(implicit ctx: Ctx): Doc =
-    Text("new") <+> "const" <+> element <> "[" <> size <> "]"
+    Text("new const") <+> element <> dimensions.mkString("[", ",", "]")
 }

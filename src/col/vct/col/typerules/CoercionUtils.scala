@@ -231,7 +231,7 @@ case object CoercionUtils {
       case (TNull(), TEnum(target)) => CoerceNullEnum(target)
       case (TNull(), LLVMTPointer(target)) => CoerceNullLLVMPointer(target)
 
-      case (CTArray(_, innerType), TArray(element)) if element == innerType =>
+      case (t: CTArray[G], TArray(element)) if element == t.innerMostType =>
         CoerceCArrayPointer(element)
       case (CPPTArray(_, innerType), TArray(element)) if element == innerType =>
         CoerceCPPArrayPointer(element)
@@ -265,6 +265,87 @@ case object CoercionUtils {
         CoerceIdentity(target)
       case (TNonNullPointer(TVoid(), _), TNonNullPointer(_, _)) =>
         CoerceIdentity(target)
+      case (
+            TPointerArray(elementL, dimensionsL, uniqueL),
+            TPointerArray(elementR, dimensionsR, uniqueR),
+          ) if uniqueL == uniqueR && dimensionsL.length == dimensionsR.length =>
+        getPointerCoercion(source, target, elementL, elementR)
+          .getOrElse(return None)
+      case (
+            TPointerArray(elementL, dimensions, uniqueL),
+            TPointer(elementR, uniqueR),
+          ) if uniqueL == uniqueR =>
+        CoercionSequence(Seq(
+          CoercePointerArrayPointer(elementL, dimensions.length, uniqueL),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+        ))
+      case (
+            TPointer(elementL, uniqueL),
+            TPointerArray(elementR, dimensions, uniqueR),
+          )
+          if uniqueL == uniqueR && dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          CoercePointerNonNull(TNonNullPointer(elementL, uniqueL)),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoercePointerPointerArray(elementL, dimensions, uniqueL),
+        ))
+      case (
+            TNonNullPointer(elementL, uniqueL),
+            TPointerArray(elementR, dimensions, uniqueR),
+          )
+          if uniqueL == uniqueR && dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoercePointerPointerArray(elementL, dimensions, uniqueL),
+        ))
+      case (
+            TConstPointerArray(elementL, dimensionsL),
+            TConstPointerArray(elementR, dimensionsR),
+          ) if dimensionsL.length == dimensionsR.length =>
+        getPointerCoercion(source, target, elementL, elementR)
+          .getOrElse(return None)
+      case (
+            TConstPointerArray(elementL, dimensions),
+            TConstPointer(elementR),
+          ) =>
+        CoercionSequence(Seq(
+          CoerceConstPointerArrayPointer(elementL, dimensions.length),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+        ))
+      case (TConstPointer(elementL), TConstPointerArray(elementR, dimensions))
+          if dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          CoercePointerNonNull(TNonNullConstPointer(elementL)),
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoerceConstPointerPointerArray(elementL, dimensions),
+        ))
+      case (
+            TNonNullConstPointer(elementL),
+            TConstPointerArray(elementR, dimensions),
+          )
+          if dimensions.length == 1 ||
+            elementL.asPointerArray.isDefined &&
+            elementL.asPointerArray.get.dimensions.length ==
+            dimensions.length - 1 =>
+        CoercionSequence(Seq(
+          getPointerCoercion(source, target, elementL, elementR)
+            .getOrElse(return None),
+          CoerceConstPointerPointerArray(elementL, dimensions),
+        ))
       // Below two cases are for AddrOf struct fields which return unique non-null pointers before the TUnique qualifier is removed by the TypeQualifierCoercion
       case (
             s @ TNonNullPointer(a, Some(uniqueA)),
@@ -276,7 +357,8 @@ case object CoercionUtils {
             t @ CTPointer(TUnique(b, uniqueB)),
           ) if uniqueA == uniqueB =>
         getPointerCoercion(s, t, a, b).getOrElse(return None)
-      case (CTArray(_, innerType), t @ CTPointer(element)) =>
+      case (at: CTArray[G], t @ CTPointer(element)) =>
+        val innerType = at.innerMostType
         if (element == innerType) { CoerceCArrayPointer(innerType) }
         else {
           CoercionSequence(Seq(
@@ -626,7 +708,10 @@ case object CoercionUtils {
       case t: CTPointer[G] =>
         Some((CoerceIdentity(source), TPointer(t.innerType, None)))
       case t: CTArray[G] =>
-        Some((CoerceCArrayPointer(t.innerType), TPointer(t.innerType, None)))
+        Some((
+          CoerceCArrayPointer(t.innerMostType),
+          TPointer(t.innerMostType, None),
+        ))
       case t: CPPPrimitiveType[G] => chainCPPCoercion(t, getAnyPointerCoercion)
       case t: CPPTArray[G] =>
         Some((CoerceCPPArrayPointer(t.innerType), TPointer(t.innerType, None)))
@@ -636,6 +721,16 @@ case object CoercionUtils {
         Some((CoerceIdentity(source), TPointer(innerType, None)))
       case LLVMTArray(numElements, innerType) if numElements > 0 =>
         Some((CoerceIdentity(source), TPointer(innerType, None)))
+      case TPointerArray(element, dimensions, unique) =>
+        Some((
+          CoercePointerArrayPointer(element, dimensions.length, unique),
+          TPointer(element, unique),
+        ))
+      case TConstPointerArray(element, dimensions) =>
+        Some((
+          CoerceConstPointerArrayPointer(element, dimensions.length),
+          TConstPointer(element),
+        ))
       case _: TNull[G] =>
         val t = TPointer[G](TAnyValue(), None)
         Some((CoerceNullPointer(t), t))

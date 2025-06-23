@@ -13,6 +13,8 @@ class CSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/c/vector_type.c"
   vercors should verify using silicon example "concepts/c/pointer_casts.c"
   vercors should verify using silicon example "concepts/c/pointer_tests.c"
+  vercors should verify using silicon example "concepts/c/pointer_relations.c"
+  vercors should verify using silicon example "concepts/c/pointer_array.c"
   vercors should verify using silicon flags("--backend-option", "--exhaleMode=2") example "concepts/c/tagged_struct.c"
   vercors should verify using silicon example "concepts/c/void.c"
 
@@ -627,7 +629,7 @@ class CSpec extends VercorsSpec {
   vercors should verify using silicon example "concepts/c/mismatched_provenance.c"
   vercors should verify using silicon example "concepts/c/ptr_comparisons.c"
   vercors should verify using silicon flag "--target" flag "x86_64-linux-unknown" flag "--dev-no-sat" example "concepts/c/pointer_tag.c"
-  vercors should verify using silicon flags("--target", "x86_64-linux-unknown", "--dev-no-sat", "--opaque-bitwise-operators", "--dev-split-verification-by-procedure") example "concepts/c/xor_linked_list.c"
+  vercors should verify using silicon flags("--target", "x86_64-linux-unknown", "--dev-no-sat", "--opaque-bitwise-operators") example "concepts/c/xor_linked_list.c"
   vercors should verify using silicon in "Pointer address correctly offset based on type size" c
     """
     #include <stdint.h>

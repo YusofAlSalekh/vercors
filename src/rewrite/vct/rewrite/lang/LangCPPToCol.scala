@@ -2745,13 +2745,11 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           case (None, None) => throw WrongCPPType(decl)
           case (Some(size), None) =>
             val newArr =
-              NewNonNullPointerArray[Post](t, rw.dispatch(size), None)(
-                cta.blame
-              )
+              NewNonNullPointer[Post](t, rw.dispatch(size), None)(cta.blame)
             Block(Seq(LocalDecl(v), assignLocal(v.get, newArr)))
           case (None, Some(CPPLiteralArray(exprs))) =>
             val newArr =
-              NewNonNullPointerArray[Post](t, c_const[Post](exprs.size), None)(
+              NewNonNullPointer[Post](t, c_const[Post](exprs.size), None)(
                 cta.blame
               )
             Block(
@@ -2764,7 +2762,7 @@ case class LangCPPToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
             if (realSize < exprs.size)
               logger.warn(s"Excess elements in array initializer: '${decl}'")
             val newArr =
-              NewNonNullPointerArray[Post](t, c_const[Post](realSize), None)(
+              NewNonNullPointer[Post](t, c_const[Post](realSize), None)(
                 cta.blame
               )
             Block(

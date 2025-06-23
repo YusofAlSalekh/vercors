@@ -155,7 +155,7 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
             fieldRef,
             structSize,
             fieldSize,
-            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].sizes(1)),
+            dispatch(t.cls.decl.asInstanceOf[ByValueClass[Pre]].childSizes.head),
           )
         }).getOrElse(Nil)
       }
@@ -371,8 +371,8 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
                 InlinePattern(PointerCast(
                   a,
                   TNonNullPointer(newT, unique),
-                  dispatch(cls.sizes.head),
-                  dispatch(cls.sizes(1)),
+                  dispatch(cls.size),
+                  dispatch(cls.childSizes.head),
                 )) === adtFunctionInvocation(
                   byValFieldSucc.ref(field),
                   args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
@@ -393,9 +393,12 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
                         dispatch(innerF.t),
                         unique,
                         byValFieldSucc.ref(field),
-                        dispatch(cls.sizes.head),
-                        dispatch(cls.sizes(1)),
-                        dispatch(cls.sizes(2)),
+                        dispatch(cls.size),
+                        dispatch(cls.childSizes.head),
+                        dispatch(
+                          t.cls.decl.asInstanceOf[ByValueClass[Pre]].childSizes
+                            .head
+                        ),
                       )
                     }).getOrElse(Nil)
                 case _ => Nil
@@ -448,10 +451,90 @@ case class ClassToRef[Pre <: Generation]() extends Rewriter[Pre] {
           },
         ))
     }
+    val outerRelationAxioms =
+      if (fieldFunctions.isEmpty)
+        Nil
+      else {
+        Seq(
+          new ADTAxiom[Post](forall(
+            TNonNullPointer(axiomType, None),
+            body = { a =>
+              Eq(
+                InlinePattern(
+                  IntegerPointerCast(a, TInt(), dispatch(cls.size)),
+                  group = 1,
+                ),
+                InlinePattern(
+                  IntegerPointerCast(
+                    adtFunctionInvocation[Post](
+                      fieldFunctions.head.ref,
+                      None,
+                      args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
+                    ),
+                    TInt(),
+                    dispatch(cls.childSizes.head),
+                  ),
+                  group = 2,
+                ),
+              )
+            },
+          )),
+          new ADTAxiom[Post](forall(
+            TNonNullPointer(axiomType, None),
+            body = { a =>
+              GreaterEq(
+                InlinePattern(
+                  IntegerPointerCast(a, TInt(), dispatch(cls.size)),
+                  group = 1,
+                ) + dispatch(cls.size),
+                InlinePattern(
+                  IntegerPointerCast(
+                    adtFunctionInvocation[Post](
+                      fieldFunctions.last.ref,
+                      None,
+                      args = Seq(PointerToAdt(a, axiomType)(NonNullPointerNull)),
+                    ),
+                    TInt(),
+                    dispatch(cls.childSizes.last),
+                  ),
+                  group = 2,
+                ) + dispatch(cls.childSizes.last),
+              )
+            },
+          )),
+        )
+      }
+    val innerRelationAxioms = fieldFunctions.zipWithIndex.sliding(2).collect {
+      case Seq((f1, i), (f2, j)) =>
+        new ADTAxiom[Post](forall(
+          axiomType,
+          body = { a =>
+            LessEq(
+              InlinePattern(
+                IntegerPointerCast(
+                  adtFunctionInvocation[Post](f1.ref, None, args = Seq(a)),
+                  TInt(),
+                  dispatch(cls.childSizes(i)),
+                ),
+                group = 1,
+              ) + dispatch(cls.childSizes(i)),
+              InlinePattern(
+                IntegerPointerCast(
+                  adtFunctionInvocation[Post](f2.ref, None, args = Seq(a)),
+                  TInt(),
+                  dispatch(cls.childSizes(j)),
+                ),
+                group = 2,
+              ),
+            )
+          },
+        ))
+    }
     byValConsSucc(cls) = constructor
     byValClassSucc(cls) =
       new AxiomaticDataType[Post](
-        destructorAxioms ++ fieldFunctions ++ fieldInverses ++ castAxioms,
+        destructorAxioms ++ fieldFunctions ++ fieldInverses ++ castAxioms ++
+          innerRelationAxioms ++ outerRelationAxioms,
         Nil,
       )(o.withContent(LabelContext(ByValueClassADTLabel)))
     globalDeclarations.succeed(cls, byValClassSucc(cls))

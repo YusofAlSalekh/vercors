@@ -62,6 +62,17 @@ case object ImportPointer extends ImportADTBuilder("pointer") {
       inner.blame(PointerInsufficientPermission(expr))
   }
 
+  case class DerefAddToSubscriptBlame(
+      dpBlame: Blame[PointerDerefError],
+      addBlame: Blame[PointerAddError],
+  ) extends Blame[PointerSubscriptError] {
+    override def blame(error: PointerSubscriptError): Unit =
+      error match {
+        case error: PointerDerefError => dpBlame.blame(error)
+        case bounds: PointerBounds => addBlame.blame(bounds)
+      }
+  }
+
   private sealed trait Context
   private final case class InAxiom() extends Context
 }
@@ -260,7 +271,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
                 pointerField.getOrElseUpdate(
                   (newT, pointerT.unique), {
                     globalDeclarations.declare(new SilverField(newT)(
-                      PointerField(newT, pointerT.unique)
+                      PointerField(t, pointerT.unique)
                     ))
                   },
                 ).ref,
@@ -286,7 +297,7 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
     pointerField.getOrElseUpdate(
       (tElement, ptrT.unique), {
         globalDeclarations.declare(new SilverField(tElement)(
-          PointerField(tElement, ptrT.unique)
+          PointerField(ptrT.element, ptrT.unique)
         ))
       },
     ).ref
@@ -512,6 +523,22 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           Nil,
           Nil,
         )(PanicBlame("ptr_deref requires nothing."))
+      case DerefPointer(add @ PointerAdd(pointer, offset)) =>
+        FunctionInvocation[Post](
+          ref = pointerDeref.ref,
+          args = Seq(
+            FunctionInvocation[Post](
+              ref = pointerAdd.ref,
+              args = Seq(unwrapOption(pointer, add.blame), dispatch(offset)),
+              typeArgs = Nil,
+              Nil,
+              Nil,
+            )(NoContext(PointerBoundsPreconditionFailed(add.blame, pointer)))
+          ),
+          typeArgs = Nil,
+          Nil,
+          Nil,
+        )(PanicBlame("ptr_deref requires nothing."))
       case deref @ DerefPointer(pointer) =>
         FunctionInvocation[Post](
           ref = pointerDeref.ref,
@@ -532,6 +559,15 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           Nil,
         )(PanicBlame("ptr_deref requires nothing."))
       case other => dispatch(other)
+    }
+  }
+
+  override def preCoerce(e: Expr[Pre]): Expr[Pre] = {
+    implicit val o: Origin = e.o
+    e match {
+      case d @ DerefPointer(a @ PointerAdd(p, i)) =>
+        PointerSubscript(p, i)(DerefAddToSubscriptBlame(d.blame, a.blame))
+      case _ => super.preCoerce(e)
     }
   }
 
@@ -629,6 +665,8 @@ case class ImportPointer[Pre <: Generation](importer: ImportADTImporter)
           PointerBlockLength(pointer)(pointerLen.blame) -
             PointerBlockOffset(pointer)(pointerLen.blame)
         )
+      case to @ ToNonNull(value) =>
+        OptGet(dispatch(value))(PointerNullOptNone(to.blame, value))
       case PointerCast(value, targetType, fromSize, toSize) =>
         val newValue = dispatch(value)
         (targetType, value.t) match {

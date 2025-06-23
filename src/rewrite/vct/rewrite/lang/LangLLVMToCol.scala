@@ -730,10 +730,6 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
 
   def rewriteStruct(t: LLVMTStruct[Pre]): Unit = {
     val LLVMTStruct(name, packed, elements) = t
-    val casts =
-      rw.c.sizeOf(t, t.o) +: rw.c.getFirstTypes(t).map { ct =>
-        rw.c.sizeOf(ct, t.o)
-      }
     val newStruct =
       new ByValueClass[Post](
         Seq(),
@@ -747,7 +743,8 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           }
         }._1,
         t.packed,
-        casts,
+        rw.c.sizeOf(t, t.o),
+        elements.collect { t => rw.c.sizeOf(t, t.o) },
       )(t.o.withContent(TypeName("struct")))
 
     rw.globalDeclarations.declare(newStruct)
@@ -1313,7 +1310,7 @@ case class LangLLVMToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val elements = rw.dispatch(alloc.numElements)
     assignLocal(
       v,
-      NewNonNullPointerArray[Post](newT, elements, None)(PanicBlame(
+      NewNonNullPointer[Post](newT, elements, None)(PanicBlame(
         "allocation should never fail"
       )),
     )

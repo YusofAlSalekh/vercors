@@ -28,6 +28,7 @@ import vct.col.ast.{
   TByValueClass,
   TNonNullPointer,
   UnitAccountedPredicate,
+  Value,
   Variable,
   WritePerm,
 }
@@ -252,6 +253,14 @@ case class LowerHeapVariables[Pre <: Generation]() extends Rewriter[Pre] {
         // localLowered.contains(v) should always be true since all localStripped HeapLocals would be caught by DerefPointer(HeapLocal(Ref(v)))
         Local(localLowered.ref(v))
       }
+      case Perm(PointerLocation(DerefHeapVariable(Ref(v))), _)
+          if !globalStripped.contains(v) =>
+        Value(HeapVariableLocation[Post](globalLowered(v).ref)) &*
+          node.rewriteDefault()
+      case Value(PointerLocation(DerefHeapVariable(Ref(v))))
+          if !globalStripped.contains(v) =>
+        Value(HeapVariableLocation[Post](globalLowered(v).ref)) &*
+          node.rewriteDefault()
       case _ => node.rewriteDefault()
     }
   }

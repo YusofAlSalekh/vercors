@@ -119,12 +119,24 @@ case class TypeQualifierCoercion[Pre <: Generation]()
                     val it =
                       field.t match {
                         case TPointer(it, _) => it
+                        case TPointerArray(it, _, _) => it
                         case _ => ??? // Not allowed
                       }
                     val (info, innerResType) = getUnqualified(it)
                     if (info.const)
                       ??? // Not allowed
-                    val resType = TPointer(innerResType, Some(unique))
+                    val resType =
+                      field.t match {
+                        case TPointer(_, _) =>
+                          TPointer(innerResType, Some(unique))
+                        case TPointerArray(_, dimensions, _) =>
+                          TPointerArray(
+                            innerResType,
+                            dimensions.map(_.map(dispatch)),
+                            Some(unique),
+                          )
+                        case _ => ??? // Not allowed
+                      }
                     val resField = field.rewrite(t = resType)
                     uniqueField((field, pointerInstanceFields)) = resField
                     resField
@@ -185,7 +197,7 @@ case class TypeQualifierCoercion[Pre <: Generation]()
         return UniquePointerCoercion(e, dispatch(t))
       case CoerceBetweenUniqueClass(_, t) =>
         return UniquePointerCoercion(e, dispatch(t))
-      case _ =>
+      case _ => return super.applyCoercion(e, coercion)
     }
     e
   }
@@ -198,12 +210,8 @@ case class TypeQualifierCoercion[Pre <: Generation]()
 
   override def postCoerce(loc: Location[Pre]): Location[Post] =
     loc match {
-      case AmbiguousLocation(pointer) =>
-        pointer.t match {
-          case t: PointerType[Pre] if isConstElement(t.element) =>
-            throw NoPermissionForConstPointer(loc)
-          case _ => loc.rewriteDefault()
-        }
+      case AmbiguousLocation(pointer) if isConstElement(pointer.t) =>
+        throw NoPermissionForConstPointer(loc)
       case other => other.rewriteDefault()
     }
 
@@ -212,6 +220,8 @@ case class TypeQualifierCoercion[Pre <: Generation]()
       case TConst(t) => dispatch(t)
       case TUnique(t, _) => dispatch(t)
       case TPointer(it, None) => makePointer(it)
+      case TPointerArray(it, dimensions, None) =>
+        makePointerArray(it, dimensions)
       case tu: TClassUnique[Pre] =>
         val map = TypeQualifierCoercion.getUniqueMap(tu)
         val c = tu.cls.decl
@@ -230,18 +240,26 @@ case class TypeQualifierCoercion[Pre <: Generation]()
       case PostAssignExpression(target, _)
           if target.t.isInstanceOf[TConst[Pre]] =>
         throw DisallowedConstAssignment(target)
-      case npa @ NewPointerArray(t, size, _) =>
+      case npa @ NewPointer(t, size, _) =>
         val (info, newT) = getUnqualified(t)
         if (info.const)
-          NewConstPointerArray(newT, dispatch(size))(npa.blame)
+          NewConstPointer(newT, dispatch(size))(npa.blame)
         else
-          NewPointerArray(newT, dispatch(size), info.unique)(npa.blame)
-      case npa @ NewNonNullPointerArray(t, size, _) =>
+          NewPointer(newT, dispatch(size), info.unique)(npa.blame)
+      case npa @ NewPointerArray(t, dimensions, _) =>
         val (info, newT) = getUnqualified(t)
         if (info.const)
-          NewNonNullConstPointerArray(newT, dispatch(size))(npa.blame)
+          NewConstPointerArray(newT, dimensions.map(dispatch))(npa.blame)
         else
-          NewNonNullPointerArray(newT, dispatch(size), info.unique)(npa.blame)
+          NewPointerArray(newT, dimensions.map(dispatch), info.unique)(
+            npa.blame
+          )
+      case npa @ NewNonNullPointer(t, size, _) =>
+        val (info, newT) = getUnqualified(t)
+        if (info.const)
+          NewNonNullConstPointer(newT, dispatch(size))(npa.blame)
+        else
+          NewNonNullPointer(newT, dispatch(size), info.unique)(npa.blame)
       case newO @ NewObjectUnique(cls, _) =>
         val map = TypeQualifierCoercion
           .getUniqueMap(newO.t.asInstanceOf[TClassUnique[Pre]])
@@ -269,9 +287,9 @@ case class TypeQualifierCoercion[Pre <: Generation]()
         val v = new Variable[Post](TNonNullConstPointer(t))
         val l = Local[Post](v.ref)
         val newP =
-          NewNonNullConstPointerArray(dispatch(ref.decl.t), const(1))(
-            PanicBlame("Size >0")
-          )(a.o)
+          NewNonNullConstPointer(dispatch(ref.decl.t), const(1))(PanicBlame(
+            "Size >0"
+          ))(a.o)
         ScopedExpr(
           Seq(v),
           With[Post](
@@ -339,15 +357,36 @@ case class TypeQualifierCoercion[Pre <: Generation]()
     else
       TPointer(resType, info.unique)
   }
+
+  def makePointerArray(
+      t: Type[Pre],
+      dimensions: Seq[Option[Expr[Pre]]],
+  ): Type[Post] = {
+    implicit val o: Origin = t.o
+    val (info, resType) = getUnqualified(t)
+    if (info.const)
+      TConstPointerArray(resType, dimensions.map(_.map(dispatch)))
+    else
+      TPointerArray(resType, dimensions.map(_.map(dispatch)), info.unique)
+  }
 }
 
 case object MakeUniqueMethodCopies extends RewriterBuilder {
   override def key: String = "MakeUniqueMethodCopies"
   override def desc: String =
     "Makes copies of called function that are specialized for unique pointers."
+
+  private sealed trait PointerLike[G] {
+    def t: Type[G]
+  }
+  private case class Pointer[G](t: PointerType[G]) extends PointerLike[G]
+  private case class PointerArray[G](t: PointerArrayType[G])
+      extends PointerLike[G]
 }
 
 case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
+  import MakeUniqueMethodCopies._
+
   val copyTypes
       : ScopedStack[(Map[Type[Pre], Type[Post]], GlobalDeclaration[Pre])] =
     ScopedStack()
@@ -376,10 +415,11 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
 
   case class CoercedArg(originalParamT: Type[Pre], givenArgT: Type[Pre])
 
-  def getPointers(t: Type[Pre]): Seq[PointerType[Pre]] = {
-    def getPointersRec(n: Node[Pre]): Seq[PointerType[Pre]] =
+  private def getPointers(t: Type[Pre]): Seq[PointerLike[Pre]] = {
+    def getPointersRec(n: Node[Pre]): Seq[PointerLike[Pre]] =
       n match {
-        case t: PointerType[Pre] => Seq(t)
+        case t: PointerType[Pre] => Seq(Pointer(t))
+        case t: PointerArrayType[Pre] => Seq(PointerArray(t))
         case tc: TClass[Pre] =>
           // Do not support type args yet. We should instantiate them or something?
           if (tc.typeArgs.nonEmpty)
@@ -392,7 +432,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
           tc.cls.decl.decls.flatMap {
             // Fields are also pointers
             case field: InstanceField[Pre] =>
-              getPointers(field.t) :+ TPointer(field.t, None)
+              getPointers(field.t) :+ Pointer(TPointer(field.t, None))
             case _: JavaClassDeclaration[Pre] | _: PVLClassDeclaration[Pre] =>
               ???
             case _ => Seq()
@@ -401,7 +441,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
       }
     // Just go over all subnodes of the type. Only TClassUnique is a special instance, since it contains
     // a TClass as explicit node
-    val builder = IndexedSeq.newBuilder[PointerType[Pre]]
+    val builder = IndexedSeq.newBuilder[PointerLike[Pre]]
     def visitTypes(n: Node[Pre]): Unit = {
       builder ++= getPointersRec(n)
       n match {
@@ -474,17 +514,35 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
     (b._1 :+ a, b._2)
   }
 
-  def getCoercionPerParam(
+  private def getCoercionPerParam(
       paramT: Type[Pre],
       argT: Type[Pre],
-  ): (Seq[CoercedArg], Seq[PointerType[Pre]]) =
+  ): (Seq[CoercedArg], Seq[PointerLike[Pre]]) =
     (paramT, argT) match {
       // Unpack pointers first, since the outer pointer is structurally the same
       case (p @ TPointer(paramT, paramU), a @ TPointer(argT, argU))
           if paramU == argU =>
         addFirst(CoercedArg(p, a), getCoercionPerParam(paramT, argT))
+      case (
+            p @ TPointerArray(paramT, paramD, paramU),
+            a @ TPointerArray(argT, argD, argU),
+          ) if paramD.length == argD.length && paramU == argU =>
+        addFirst(CoercedArg(p, a), getCoercionPerParam(paramT, argT))
+      case (p @ TPointerArray(paramT, _, paramU), a @ TPointer(argT, argU))
+          if paramU == argU =>
+        addFirst(CoercedArg(p, a), getCoercionPerParam(paramT, argT))
+      case (p @ TPointer(paramT, paramU), a @ TPointerArray(argT, _, argU))
+          if paramU == argU =>
+        addFirst(CoercedArg(p, a), getCoercionPerParam(paramT, argT))
       // Now we should have two different pointers
       case (p: PointerType[Pre], a: PointerType[Pre]) =>
+        (Seq(CoercedArg(p, a)), getPointers(p.element))
+      case (p: PointerArrayType[Pre], a: PointerArrayType[Pre])
+          if p.dimensions.length == a.dimensions.length =>
+        ((Seq(CoercedArg(p, a)), getPointers(p.element)))
+      case (p: PointerArrayType[Pre], a: PointerType[Pre]) =>
+        (Seq(CoercedArg(p, a)), getPointers(p.element))
+      case (p: PointerType[Pre], a: PointerArrayType[Pre]) =>
         (Seq(CoercedArg(p, a)), getPointers(p.element))
       // Other case can only be if it was a class
       case (p, a) =>
@@ -506,7 +564,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
               if pf.t == af.t =>
             if (!(pf.flags == af.flags))
               ???
-            (Seq(), getPointers(pf.t) :+ TPointer(pf.t, None))
+            (Seq(), getPointers(pf.t) :+ Pointer(TPointer(pf.t, None)))
           case (pf: InstanceField[Pre], af: InstanceField[Pre]) =>
             if (!(pf.flags.isEmpty && af.flags.isEmpty))
               ???
@@ -514,16 +572,16 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
             getCoercionPerParam(pf.t, af.t)
           // Not instance field, so we do not care
           case _ => (Seq(), Seq())
-        }.foldLeft[(Seq[CoercedArg], Seq[PointerType[Pre]])](
+        }.foldLeft[(Seq[CoercedArg], Seq[PointerLike[Pre]])](
           // We still need to add our own coercion
           (Seq(CoercedArg(p, a)), Seq())
         ) { case (r, m) => combine(r, m) }
     }
 
-  def getCoercionAndPointers(
+  private def getCoercionAndPointers(
       params: Seq[Variable[Pre]],
       args: Seq[Expr[Pre]],
-  ): (Seq[CoercedArg], Seq[PointerType[Pre]]) = {
+  ): (Seq[CoercedArg], Seq[PointerLike[Pre]]) = {
     if (params.length != args.length)
       ???
     params.map(_.t).zip(args).map {
@@ -532,7 +590,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
       case (originalT, _) =>
         // No coercions, just get pointers
         (Seq(), getPointers(originalT))
-    }.foldLeft[(Seq[CoercedArg], Seq[PointerType[Pre]])]((Seq(), Seq())) {
+    }.foldLeft[(Seq[CoercedArg], Seq[PointerLike[Pre]])]((Seq(), Seq())) {
       case (r, m) => combine(r, m)
     }
   }
@@ -555,7 +613,7 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
       seenClasses.having(mutable.Set()) {
 
         var (coercions, nonCoercedPointers) =
-          args.foldLeft(Seq[CoercedArg](), Seq[PointerType[Pre]]()) {
+          args.foldLeft(Seq[CoercedArg](), Seq[PointerLike[Pre]]()) {
             case (res, (fArgs, invArgs)) =>
               combine(res, getCoercionAndPointers(fArgs, invArgs))
           }
@@ -576,10 +634,10 @@ case class MakeUniqueMethodCopies[Pre <: Generation]() extends Rewriter[Pre] {
                   throw DisallowedQualifiedMethodCoercion(calledOrigin, l)
             )
         // If any nonCoercedPointer is in the coercion set, invocation is wrong
-        if (m.keySet.intersect(nonCoercedPointers.toSet).nonEmpty)
+        if (m.keySet.intersect(nonCoercedPointers.map(_.t).toSet).nonEmpty)
           throw DisallowedQualifiedMethodCoercion(
             calledOrigin,
-            m.keySet.intersect(nonCoercedPointers.toSet).head,
+            m.keySet.intersect(nonCoercedPointers.map(_.t).toSet).head,
           )
         m
       }
