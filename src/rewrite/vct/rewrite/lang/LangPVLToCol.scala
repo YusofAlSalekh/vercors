@@ -230,11 +230,14 @@ case class LangPVLToCol[Pre <: Generation](
   def rewriteMainMethod(main: VeSUVMainMethod[Pre]): Unit = {
     implicit val o: Origin = main.o
     main.drop()
-    val body: Option[Statement[Post]] =
-      main.body match {
-        case None => None
-        case Some(s) => Some(s.rewriteDefault())
+    val body: Option[Statement[Post]] = {
+      rw.labelDecls.scope {
+        main.body match {
+          case None => None
+          case Some(s) => Some(s.rewriteDefault())
+        }
       }
+    }
     val empty_pred: AccountedPredicate[Post] = UnitAccountedPredicate(
       BooleanValue(value = true)
     )

@@ -3526,6 +3526,7 @@ final class JavaAnnotationInterface[G](
 
 sealed trait JavaClassDeclaration[G]
     extends ClassDeclaration[G] with JavaClassDeclarationImpl[G]
+@scopes[LabelDecl]
 final class JavaSharedInitialization[G](
     val isStatic: Boolean,
     val initialization: Statement[G],
