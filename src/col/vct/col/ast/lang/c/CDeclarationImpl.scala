@@ -8,8 +8,6 @@ import vct.col.print._
 trait CDeclarationImpl[G]
     extends CDeclarationOps[G] with CDeclarationFamilyOps[G] {
   this: CDeclaration[G] =>
-  override def check(context: CheckContext[G]): Seq[CheckError] =
-    contract.kernelInvariant.checkSubType(TResource())
 
   // PB: Please keep in sync with ApplicableContractImpl
   def layoutContract(implicit ctx: Ctx): Doc =

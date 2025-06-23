@@ -8,10 +8,9 @@ import vct.col.ast.{
   UnitAccountedPredicate,
 }
 import vct.col.ast.node.NodeFamilyImpl
-import vct.col.check.{CheckContext, CheckError, TypeError}
+import vct.col.check.{CheckContext, CheckError}
 import vct.col.print._
 import vct.col.ast.ops.{ApplicableContractFamilyOps, ApplicableContractOps}
-import vct.col.typerules.CoercionUtils
 
 trait ApplicableContractImpl[G]
     extends NodeFamilyImpl[G]
@@ -21,14 +20,8 @@ trait ApplicableContractImpl[G]
 
   // Requires and ensures are checked in UnitAccountedPredicate
   override def check(context: CheckContext[G]): Seq[CheckError] =
-    (CoercionUtils.getCoercion(contextEverywhere.t, TResource()) match {
-      case Some(_) => Nil
-      case None => Seq(TypeError(contextEverywhere, TResource()))
-    }) ++
-      (CoercionUtils.getCoercion(kernelInvariant.t, TResource()) match {
-        case Some(_) => Nil
-        case None => Seq(TypeError(kernelInvariant, TResource()))
-      })
+    contextEverywhere.checkSubType(TResource()) ++
+      kernelInvariant.checkSubType(TResource())
 
   override def checkContextRecursor[T](
       context: CheckContext[G],
