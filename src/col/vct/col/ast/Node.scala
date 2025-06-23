@@ -3026,7 +3026,6 @@ final case class CInit[G](decl: CDeclarator[G], init: Option[Expr[G]])(
 @family
 final case class CDeclaration[G](
     contract: ApplicableContract[G],
-    kernelInvariant: Expr[G],
     specs: Seq[CDeclarationSpecifier[G]],
     inits: Seq[CInit[G]],
 )(implicit val o: Origin)
