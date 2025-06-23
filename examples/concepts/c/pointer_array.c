@@ -134,6 +134,7 @@ int *localInLoop(int n, int m) {
         //@ assert (\forall int idx = 0 .. (m * n); idx % n == i; lemma(n, m, i, idx) ==> {:*(a + idx):} == (idx / n) * n + (idx % n));
     }
 
+    // Not a good example since we're returning stack memory. Once we add leak checks this will fail
     return a;
 }
 

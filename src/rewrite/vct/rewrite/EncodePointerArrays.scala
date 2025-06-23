@@ -77,6 +77,7 @@ import vct.col.ast.{
   TNonNullConstPointer,
   TNonNullPointer,
   TPointer,
+  TPointerArray,
   ToNonNull,
   Type,
   UnitAccountedPredicate,
@@ -313,21 +314,15 @@ case class EncodePointerArrays[Pre <: Generation]()
           dispatch(t),
           dispatch(size),
         )
-      case IntegerPointerCast(value, t: PointerArrayType[Pre], size) =>
-        val v = new Variable(dispatch(t))
-        // TODO: This might not work in contracts...
-        ScopedExpr(
-          Seq(v),
-          Assuming(
-            adtFunctionInvocation[Post](
-              pointerSucc
-                .ref((t.element, t.dimensions.length, t.unique, t.isConst)),
-              args = Seq(v.get),
-            ) ===
-              IntegerPointerCast(dispatch(value), dispatch(t), dispatch(size)),
-            v.get,
-          ),
-        )
+
+      // Support for integer pointer cast here only makes sense if we support pointers to arrays
+      // Currently we cannot even parse a cast like this, e.g. (int (*)[8][5])addr
+      // case IntegerPointerCast(value, t: PointerType[Pre], size) if t.element.asPointerArray.isDefined =>
+      //   val arrayT = t.element
+      //   adtFunctionInvocation[Post](fromPointerSucc.ref((arrayT.element, arrayT.dimensions.length, arrayT.unique, arrayT.isConst)), args= Seq(IntegerPointerCast(dispatch(value), t match {
+      //     case TPointerArray(element, _, unique) => dispatch(TNonNullPointer(element, unique))
+      //     case TConstPointerArray(element, _) => dispatch(TNonNullConstPointer(element))
+      //   }, dispatch(size))))
       case inv: Invocation[Pre] =>
         inv match {
           case inv: AnyMethodInvocation[Pre] =>
