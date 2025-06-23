@@ -43,7 +43,7 @@ case class SpecifyImplicitLabels[Pre <: Generation]() extends Rewriter[Pre] {
       case Label(decl, impl) if isBreakable(impl) =>
         val newLabel = decl.rewrite()
         labelDecls.succeedOnly(decl, newLabel)
-        val newImpl = labelStack.having(newLabel) { dispatch(impl) }
+        val newImpl = labelStack.having(newLabel) { impl.rewriteDefault() }
         Label(newLabel, newImpl)(stat.o)
       case stat if isBreakable(stat) =>
         implicit val o: Origin = stat.o
