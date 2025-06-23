@@ -2932,8 +2932,8 @@ abstract class CoercingRewriter[Pre <: Generation]()
 
   def coerce(node: CDeclaration[Pre]): CDeclaration[Pre] = {
     implicit val o: Origin = node.o
-    val CDeclaration(contract, kernelInvariant, specs, init) = node
-    CDeclaration(contract, res(kernelInvariant), specs, init)
+    val CDeclaration(contract, specs, init) = node
+    CDeclaration(contract, specs, init)
   }
 
   def coerce(node: GpuMemoryFence[Pre]): GpuMemoryFence[Pre] = {

@@ -125,8 +125,6 @@ case class CToCol[G](
           contract =>
             new CDeclaration[G](
               contract.consumeApplicableContract(blame(decl)),
-              AstBuildHelpers
-                .foldStar[G](contract.consume(contract.kernel_invariant)),
               specs = convert(declSpecs),
               inits = maybeInits.map(convert(_)) getOrElse Nil,
             ),

@@ -35,7 +35,6 @@ trait CTStructImpl[G] extends CTStructOps[G] {
         ref.decl.decl match {
           case CDeclaration(
                 _,
-                _,
                 Seq(CStructDeclaration(Some(_), decls)),
                 Seq(),
               ) =>

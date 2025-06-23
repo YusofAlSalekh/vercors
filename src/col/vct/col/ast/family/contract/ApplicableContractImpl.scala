@@ -4,18 +4,25 @@ import vct.col.ast.{
   ApplicableContract,
   BooleanValue,
   Node,
+  TResource,
   UnitAccountedPredicate,
 }
 import vct.col.ast.node.NodeFamilyImpl
 import vct.col.check.{CheckContext, CheckError}
 import vct.col.print._
-import vct.col.ast.ops.{ApplicableContractOps, ApplicableContractFamilyOps}
+import vct.col.ast.ops.{ApplicableContractFamilyOps, ApplicableContractOps}
 
 trait ApplicableContractImpl[G]
     extends NodeFamilyImpl[G]
     with ApplicableContractOps[G]
     with ApplicableContractFamilyOps[G] {
   this: ApplicableContract[G] =>
+
+  // Requires and ensures are checked in UnitAccountedPredicate
+  override def check(context: CheckContext[G]): Seq[CheckError] =
+    contextEverywhere.checkSubType(TResource()) ++
+      kernelInvariant.checkSubType(TResource())
+
   override def checkContextRecursor[T](
       context: CheckContext[G],
       f: (CheckContext[G], Node[G]) => T,

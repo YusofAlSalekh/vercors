@@ -3026,7 +3026,6 @@ final case class CInit[G](decl: CDeclarator[G], init: Option[Expr[G]])(
 @family
 final case class CDeclaration[G](
     contract: ApplicableContract[G],
-    kernelInvariant: Expr[G],
     specs: Seq[CDeclarationSpecifier[G]],
     inits: Seq[CInit[G]],
 )(implicit val o: Origin)
@@ -3527,6 +3526,7 @@ final class JavaAnnotationInterface[G](
 
 sealed trait JavaClassDeclaration[G]
     extends ClassDeclaration[G] with JavaClassDeclarationImpl[G]
+@scopes[LabelDecl]
 final class JavaSharedInitialization[G](
     val isStatic: Boolean,
     val initialization: Statement[G],

@@ -13,6 +13,7 @@ import vct.col.ast.{
   Variable,
 }
 import vct.col.ast.util.Declarator
+import vct.col.origin.Origin
 import vct.col.print._
 import vct.col.util.AstBuildHelpers.tt
 
@@ -22,7 +23,7 @@ trait ClassImpl[G] extends Declarator[G] {
   def decls: Seq[ClassDeclaration[G]]
   def supports: Seq[Type[G]]
 
-  def classType(typeArgs: Seq[Type[G]]): TClass[G]
+  def classType(typeArgs: Seq[Type[G]])(implicit o: Origin = this.o): TClass[G]
 
   def transSupportArrowsHelper(
       seen: Set[TClass[G]]

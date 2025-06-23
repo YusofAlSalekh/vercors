@@ -1465,7 +1465,6 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
           struct.ref.decl.decl match {
             case CDeclaration(
                   _,
-                  _,
                   Seq(CStructDeclaration(Some(_), decls)),
                   Seq(),
                 ) =>
@@ -1501,7 +1500,6 @@ case class LangCToCol[Pre <: Generation](rw: LangSpecificToCol[Pre])
     val (decls, sdecl) =
       decl.decl match {
         case CDeclaration(
-              _,
               _,
               Seq(sdecl @ CStructDeclaration(Some(_), decls)),
               Seq(),

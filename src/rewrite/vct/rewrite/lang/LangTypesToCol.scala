@@ -9,7 +9,6 @@ import vct.col.rewrite.{Generation, Rewriter, RewriterBuilderArg, Rewritten}
 import vct.col.typerules.PlatformContext
 import vct.col.util.SuccessionMap
 import vct.result.VerificationError.UserError
-import vct.rewrite.lang.LangTypesToCol.{EmptyInlineDecl, IncompleteTypeArgs}
 
 import scala.reflect.ClassTag
 
@@ -33,10 +32,27 @@ case object LangTypesToCol extends RewriterBuilderArg[PlatformContext] {
     override def text: String =
       d.o.messageInContext(" ‘inline’ in empty declaration.")
   }
+
+  case class ContractOnMultiInitialiser(d: CDeclaration[_]) extends UserError {
+    override def code: String = "contractMultipleInit"
+    override def text: String =
+      d.o.messageInContext(
+        "A contract cannot be placed on a declaration with more than one initialiser"
+      )
+  }
+
+  case class ContractOnVariable(n: Node[_]) extends UserError {
+    override def code: String = "contractOnVariable"
+    override def text: String =
+      n.o.messageInContext(
+        "A contract cannot be placed on a variable declaration"
+      )
+  }
 }
 
 case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
     extends Rewriter[Pre] {
+  import LangTypesToCol._
 
   val cStructFieldsSuccessor: SuccessionMap[(CStructMemberDeclarator[
     Pre
@@ -145,6 +161,7 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
       specifiers: Seq[CDeclarationSpecifier[Pre]],
       declarator: CDeclarator[Pre],
       context: Option[Node[Pre]] = None,
+      hasNonTrivialContract: Boolean = false,
   )(
       implicit o: Origin
   ): (Seq[CDeclarationSpecifier[Post]], CDeclarator[Post]) = {
@@ -168,6 +185,8 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
             varargs = false,
             CName(info.name),
           )
+        case None if hasNonTrivialContract =>
+          throw ContractOnVariable(context.getOrElse(declarator))
         case None => CName[Post](info.name)
       }
 
@@ -237,11 +256,10 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
         })
       case declaration: CGlobalDeclaration[Pre] =>
         declaration.decl match {
-          case CDeclaration(_, _, Seq(_: CStructDeclaration[Pre]), Seq()) =>
+          case CDeclaration(_, Seq(_: CStructDeclaration[Pre]), Seq()) =>
             globalDeclarations
               .succeed(declaration, declaration.rewriteDefault())
           case decl @ CDeclaration(
-                _,
                 _,
                 Seq(td: CTypedef[Pre], struct: CStructDeclaration[Pre]),
                 Seq(init),
@@ -250,7 +268,6 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
               new CGlobalDeclaration[Post](
                 CDeclaration[Post](
                   dispatch(decl.contract),
-                  dispatch(decl.kernelInvariant),
                   Seq(dispatch(struct)),
                   Seq(),
                 )(decl.o)
@@ -260,12 +277,16 @@ case class LangTypesToCol[Pre <: Generation](platformContext: PlatformContext)
 
             globalDeclarations.succeed(declaration, structDecl)
           case decl =>
+            val hasNonTrivialContract = decl.contract.nonEmpty
+            if (hasNonTrivialContract && decl.inits.length > 1)
+              throw ContractOnMultiInitialiser(decl)
             decl.inits.foreach(init => {
               implicit val o: Origin = init.o
               val (specs, decl1) = normalizeCDeclaration(
                 decl.specs,
                 init.decl,
                 context = Some(declaration),
+                hasNonTrivialContract,
               )
               globalDeclarations.declare(declaration.rewrite(decl =
                 declaration.decl.rewrite(

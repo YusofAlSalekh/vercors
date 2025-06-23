@@ -450,7 +450,7 @@ case object C {
       name: String,
   ): Option[RefCStructField[G]] =
     decl.decl match {
-      case CDeclaration(_, _, Seq(CStructDeclaration(_, decls)), Seq()) =>
+      case CDeclaration(_, Seq(CStructDeclaration(_, decls)), Seq()) =>
         decls.flatMap(Referrable.from).collectFirst {
           case ref: RefCStructField[G] if ref.name == name => ref
         }
