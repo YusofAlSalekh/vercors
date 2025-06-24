@@ -181,6 +181,8 @@ fragment Universalcharactername:
 	'\\u' Hexquad
 	| '\\U' Hexquad Hexquad;
 
+Identifier: Identifiernondigit (Identifiernondigit | DIGIT)*;
+
 fragment Identifiernondigit: NONDIGIT | Universalcharactername;
 
 fragment NONDIGIT: [a-zA-Z_];
@@ -301,9 +303,6 @@ Whitespace: [ \t]+ -> skip;
 
 Newline: ('\r' '\n'? | '\n') -> skip;
 
-
-mode DEFAULT_MODE;
-Identifier: Identifiernondigit (Identifiernondigit | DIGIT)*;
 
 ExtraAt: ('\n'|'\r\n') [ \t\u000C]* '@' {inBlockSpec}? -> skip;
 
