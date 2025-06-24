@@ -3,6 +3,7 @@ package vct.col.ast.expr.misc
 import vct.col.ast.{Old, Type}
 import vct.col.print.{Ctx, Doc, Precedence, Text}
 import vct.col.ast.ops.OldOps
+import vct.col.check.{CheckContext, CheckError, OldInPrecondition}
 
 trait OldImpl[G] extends OldOps[G] {
   this: Old[G] =>
@@ -18,4 +19,10 @@ trait OldImpl[G] extends OldOps[G] {
       case (_, Some(at)) =>
         Text("\\old[") <> ctx.name(at) <> "](" <> expr <> ")"
     }
+
+  override def check(context: CheckContext[G]): Seq[CheckError] =
+    if (context.inPreCondition)
+      Seq(OldInPrecondition(this))
+    else
+      Nil
 }

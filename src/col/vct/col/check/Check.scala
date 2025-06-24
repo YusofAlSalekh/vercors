@@ -170,6 +170,8 @@ sealed trait CheckError {
           context(cls) ->
             s"This class cannot extend or implement the type $support since it is not a class"
         )
+      case OldInPrecondition(expr) =>
+        Seq(context(expr) -> s"\\old may not be used in a precondition")
     }): _*)
 
   def subcode: String
@@ -289,6 +291,9 @@ case class InconsistentEndpointExprNesting(outer: Node[_], inner: Node[_])
 }
 case class SupportNotAClass(cls: Node[_], support: Type[_]) extends CheckError {
   val subcode = "supportNotAClass"
+}
+case class OldInPrecondition(expr: Node[_]) extends CheckError {
+  val subcode = "oldInPrecondition"
 }
 
 case object CheckContext {
