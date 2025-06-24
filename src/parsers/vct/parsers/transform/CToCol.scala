@@ -242,8 +242,11 @@ case class CToCol[G](
             _,
           ) =>
         CStructDeclaration(name.map(convert), convert(declarations))
+      case StructOrUnionSpecifier0(union @ StructOrUnion1(_), _, _, _, _) =>
+        ??(union)
       case StructOrUnionSpecifier1(StructOrUnion0(_), name) =>
         CStructSpecifier(convert(name))
+      case StructOrUnionSpecifier1(union @ StructOrUnion1(_), _) => ??(union)
     }
 
   def convert(
