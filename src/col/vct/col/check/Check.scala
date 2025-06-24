@@ -165,6 +165,11 @@ sealed trait CheckError {
             "The endpoint referenced in the outer expression here...",
           context(inner) -> "...differs from the endpoint referenced here",
         )
+      case SupportNotAClass(cls, support) =>
+        Seq(
+          context(cls) ->
+            s"This class cannot extend or implement the type $support since it is not a class"
+        )
     }): _*)
 
   def subcode: String
@@ -281,6 +286,9 @@ case class OnlyInChannelInvariant(expr: Node[_]) extends CheckError {
 case class InconsistentEndpointExprNesting(outer: Node[_], inner: Node[_])
     extends CheckError {
   val subcode = "inconsistentEndpointExprNesting"
+}
+case class SupportNotAClass(cls: Node[_], support: Type[_]) extends CheckError {
+  val subcode = "supportNotAClass"
 }
 
 case object CheckContext {
