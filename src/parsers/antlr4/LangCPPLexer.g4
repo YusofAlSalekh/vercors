@@ -11,12 +11,14 @@ channels {
   LINE_DIRECTIVE_CHANNEL
 }
 
+
 // lexer tokens needed for the SpecParser
 VAL_INLINE: EOF EOF;
 VAL_ASSERT: 'assert';
 VAL_PACKAGE: 'package';
 VAL_BOOL: EOF EOF;
 
+mode DEFAULT_MODE;
 IntegerLiteral:
 	DecimalLiteral Integersuffix?
 	| OctalLiteral Integersuffix?
