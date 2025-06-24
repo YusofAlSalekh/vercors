@@ -448,40 +448,48 @@ final case class Instantiate[G](cls: Ref[G, Class[G]], out: Expr[G])(
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
     with InstantiateImpl[G]
+sealed trait NonNullOperation[G] extends Node[G] with NonNullOperationImpl[G]
 final case class Wait[G](obj: Expr[G])(val blame: Blame[UnlockFailure])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with WaitImpl[G]
 final case class Notify[G](obj: Expr[G])(val blame: Blame[NotifyFailed])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with NotifyImpl[G]
 final case class Fork[G](obj: Expr[G])(val blame: Blame[ForkFailure])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with ForkImpl[G]
 final case class Join[G](obj: Expr[G])(val blame: Blame[JoinFailure])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with JoinImpl[G]
 final case class Lock[G](obj: Expr[G])(val blame: Blame[LockFailure])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with LockImpl[G]
 final case class Unlock[G](obj: Expr[G])(val blame: Blame[UnlockFailure])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with UnlockImpl[G]
 final case class Commit[G](obj: Expr[G])(val blame: Blame[CommitFailed])(
     implicit val o: Origin
 ) extends NormallyCompletingStatement[G]
     with ExpressionContainerStatement[G]
+    with NonNullOperation[G]
     with CommitImpl[G]
 final case class Fold[G](res: FoldTarget[G])(val blame: Blame[FoldFailed])(
     implicit val o: Origin
@@ -645,6 +653,7 @@ final case class Synchronized[G](obj: Expr[G], body: Statement[G])(
 )(implicit val o: Origin)
     extends CompositeStatement[G]
     with ControlContainerStatement[G]
+    with NonNullOperation[G]
     with SynchronizedImpl[G]
 @scopes[ParInvariantDecl]
 final case class ParInvariant[G](
@@ -2391,10 +2400,10 @@ final case class Then[G](value: Expr[G], post: Statement[G])(
 ) extends Expr[G] with ThenImpl[G]
 
 final case class Held[G](obj: Expr[G])(implicit val o: Origin)
-    extends Expr[G] with HeldImpl[G]
+    extends Expr[G] with NonNullOperation[G] with HeldImpl[G]
 final case class Committed[G](obj: Expr[G])(val blame: Blame[LockObjectNull])(
     implicit val o: Origin
-) extends Expr[G] with CommittedImpl[G]
+) extends Expr[G] with NonNullOperation[G] with CommittedImpl[G]
 final case class IdleToken[G](thread: Expr[G])(implicit val o: Origin)
     extends Expr[G] with IdleTokenImpl[G] with ResourceTerm[G]
 final case class JoinToken[G](thread: Expr[G])(implicit val o: Origin)
