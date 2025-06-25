@@ -6,6 +6,7 @@ import vct.col.ast.{
   Declaration,
   Expr,
   InstanceField,
+  TAnyClass,
   TByReferenceClass,
   TClass,
   TVar,
@@ -13,8 +14,10 @@ import vct.col.ast.{
   Variable,
 }
 import vct.col.ast.util.Declarator
+import vct.col.check.{CheckContext, CheckError, SupportNotAClass, TypeError}
 import vct.col.origin.Origin
 import vct.col.print._
+import vct.col.typerules.CoercionUtils
 import vct.col.util.AstBuildHelpers.tt
 
 trait ClassImpl[G] extends Declarator[G] {
@@ -91,4 +94,8 @@ trait ClassImpl[G] extends Declarator[G] {
       case Ctx.Java => layoutJava
       case _ => layoutPvl
     }
+
+  override def check(context: CheckContext[G]): Seq[CheckError] =
+    supports.map(s => (s, CoercionUtils.getCoercion(s, TAnyClass[G]())))
+      .collect { case (s, None) => SupportNotAClass(this, s) }
 }
