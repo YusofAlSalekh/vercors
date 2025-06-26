@@ -15,6 +15,7 @@ class MyLanguageServer extends LanguageServer {
   private val textDocumentService = new MyTextDocumentService()
   private val workspaceService = new MyWorkspaceService()
   MyLanguageServer.client = null
+  MyLanguageServer.textService = textDocumentService
 
   override def cancelProgress(params: WorkDoneProgressCancelParams): Unit = {
     val token = params.getToken.getLeft
@@ -34,8 +35,14 @@ class MyLanguageServer extends LanguageServer {
       new CompletionOptions(true, java.util.Collections.emptyList())
     )
     capabilities.setDefinitionProvider(true)
-    capabilities.setReferencesProvider(true)
+    // capabilities.setReferencesProvider(true)
     capabilities.setDocumentSymbolProvider(true)
+
+    /*val execOpts = new ExecuteCommandOptions(
+      java.util.Arrays.asList("vercors.lspVerify")
+    )
+    execOpts.setWorkDoneProgress(true)
+    capabilities.setExecuteCommandProvider(execOpts)*/
 
     capabilities.setExecuteCommandProvider(new ExecuteCommandOptions(
       java.util.Arrays.asList("vercors.lspVerify")
@@ -58,4 +65,5 @@ class MyLanguageServer extends LanguageServer {
 object MyLanguageServer {
   var client: LanguageClient = _
   val cancelledTokens = collection.mutable.Map[String, Boolean]()
+  var textService: MyTextDocumentService = _
 }
