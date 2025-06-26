@@ -39,6 +39,10 @@ class MyWorkspaceService extends WorkspaceService {
       case "vercors.lspVerify" =>
         val uri =
           params.getArguments.get(0).asInstanceOf[JsonPrimitive].getAsString
+
+        if (abortIfDirty(uri))
+          return CompletableFuture.completedFuture(null)
+
         val path = Paths.get(new URI(uri))
 
         val syntheticArgs = collection.mutable.ListBuffer("--verify")
@@ -113,6 +117,15 @@ class MyWorkspaceService extends WorkspaceService {
     }
   }
 
+  private def abortIfDirty(uri: String): Boolean = {
+    if (MyLanguageServer.textService.isDirty(uri)) {
+      showWarning(
+        "You have unsaved changes in this file. Please save before verifying."
+      )
+      true
+    } else { false }
+  }
+
   private def runVerificationStages(
       options: Options,
       token: String,
@@ -180,21 +193,29 @@ class MyWorkspaceService extends WorkspaceService {
         s"Actual verification failures:\n$errorDescriptions",
       ))
 
-      showInfo("Verification completed")
+      if (failures.isEmpty) { showInfo("Verification completed successfully") }
+      else { showError("Verification completed with failures") }
     } catch {
       case err: VerificationError =>
         val end = new WorkDoneProgressEnd()
         end.setMessage(s"Verification failed: ${err.getMessage}")
         notifyProgress(token, end)
         sendVerificationErrorDiagnostic(uri, err)
+        showError("Verification failed with Error")
 
       case ex: Exception =>
         val end = new WorkDoneProgressEnd()
-        end.setMessage(s"Unexpected error: ${ex.getMessage}")
+        end.setMessage("Verification aborted due to an unexpected error")
         notifyProgress(token, end)
         showError(
-          s"Error during verification: ${ex.getStackTrace.mkString("Array(", "\n", ")")}"
+          "Unexpected error during verification. Check the VerCors log for details."
         )
+
+        val full =
+          s"Unexpected exception: ${ex.getMessage}\n" +
+            ex.getStackTrace.mkString("", "\n", "")
+        MyLanguageServer.client
+          .logMessage(new MessageParams(MessageType.Error, full))
     }
   }
 
@@ -204,24 +225,23 @@ class MyWorkspaceService extends WorkspaceService {
   ): Unit = {
     val diagnostics = failures.flatMap {
       case vf: WithContractFailure =>
-        val mainDiagOpt = nodeFailureToDiagnostic(vf, vf.inlineDesc)
-        val causeDiagOpt = nodeFailureToDiagnostic(
+        val cause = nodeFailureToDiagnostic(
           vf.failure,
           vf.failure.inlineDescCompletion,
         )
+        val main = nodeFailureToDiagnostic(vf, vf.inlineDesc)
 
-        val diagWithRelated = mainDiagOpt.map { mainDiag =>
-          causeDiagOpt.foreach { causeDiag =>
+        cause.map { causeDiagnostics =>
+          main.foreach { mainDiagnostics =>
             val related =
               new DiagnosticRelatedInformation(
-                new Location(uri, causeDiag.getRange),
-                causeDiag.getMessage,
+                new Location(uri, mainDiagnostics.getRange),
+                mainDiagnostics.getMessage,
               )
-            mainDiag.setRelatedInformation(List(related).asJava)
+            causeDiagnostics.setRelatedInformation(List(related).asJava)
           }
-          mainDiag
-        }
-        diagWithRelated.toList
+          causeDiagnostics
+        }.orElse(main).toList
 
       case vf: NodeVerificationFailure =>
         nodeFailureToDiagnostic(vf, vf.inlineDesc) match {
@@ -339,9 +359,25 @@ class MyWorkspaceService extends WorkspaceService {
 
       case None =>
         showError(
-          s"No origin found for VerificationError: ${err.getClass.getSimpleName}"
+          s"Verification failed, verification error without position, error type : ${err.getClass.getSimpleName}"
         )
+        publishNoPositionError(uri, err)
     }
+  }
+
+  private def publishNoPositionError(
+      uri: String,
+      err: VerificationError,
+  ): Unit = {
+    val diagnostic = new Diagnostic()
+    diagnostic.setSeverity(DiagnosticSeverity.Error)
+    diagnostic.setMessage(err.getMessage)
+    diagnostic.setRange(new Range(new Position(0, 0), new Position(0, 0)))
+    diagnostic.setSource("VerCors")
+
+    MyLanguageServer.client.publishDiagnostics(
+      new PublishDiagnosticsParams(uri, List(diagnostic).asJava)
+    )
   }
 
   private def originToRange(origin: Origin) = {
@@ -364,7 +400,7 @@ class MyWorkspaceService extends WorkspaceService {
     diagnostic.setSeverity(DiagnosticSeverity.Error)
     diagnostic.setRange(range)
     diagnostic.setSource("VerCors")
-    diagnostic.setMessage(err.text)
+    diagnostic.setMessage(err.getMessage)
     diagnostic
   }
 

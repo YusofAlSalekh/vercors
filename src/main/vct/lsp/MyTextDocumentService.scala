@@ -30,15 +30,17 @@ import java.net.URI
 import java.nio.file.Paths
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
+import scala.collection.concurrent.TrieMap
 import scala.collection.immutable.TreeMap
 import scala.jdk.CollectionConverters._
 import scala.util.matching.Regex
 
 class MyTextDocumentService extends TextDocumentService with LazyLogging {
-  private val docs = scala.collection.concurrent.TrieMap.empty[String, String]
+  private val docs = TrieMap.empty[String, String]
   var parsingResults: Option[ParseResult[Nothing]] = None
   var resolutionResults: Option[Verification[_ <: Generation]] = None
   var originMap: TreeMap[(Int, Int, Int), (Int, Int, Int)] = TreeMap.empty
+  private val dirty = TrieMap.empty[String, Boolean]
   private lazy val javaCompletions: List[CompletionItem] = loadCompletions(
     "lsp/language-server-java-c-matches.json"
   )
@@ -49,12 +51,13 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   override def didOpen(params: DidOpenTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
     docs(uri) = params.getTextDocument.getText
+    dirty.put(uri, false)
     analyzeDocument(uri)
   }
 
   override def didSave(params: DidSaveTextDocumentParams): Unit = {
     val uri = params.getTextDocument.getUri
-    showInfo("Document saved")
+    dirty.put(uri, false)
     analyzeDocument(uri)
   }
 
@@ -62,8 +65,11 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
     val uri = params.getTextDocument.getUri
     val text = params.getContentChanges.get(0).getText
     docs(uri) = text
+    dirty.put(uri, true)
     analyzeDocument(uri)
   }
+
+  def isDirty(uri: String): Boolean = dirty.getOrElse(uri, false)
 
   override def didClose(params: DidCloseTextDocumentParams): Unit = {}
 
@@ -84,20 +90,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
     val jsonFiltered = pool.filter(_.getLabel.startsWith(prefix))
 
-    val variableCompletions: List[CompletionItem] = resolutionResults.toList.flatMap { result =>
-      val locals = collectLocals(result.tasks.head.program)
-      locals.map { local =>
-        val name = local.ref.decl.o.getPreferredNameOrElse()
-        val nameStr = formatName(name)
-        val item = new CompletionItem(nameStr)
-        item.setKind(CompletionItemKind.Variable)
-        item
+    val variableCompletions: List[CompletionItem] = resolutionResults.toList
+      .flatMap { result =>
+        val locals = collectLocals(result.tasks.head.program)
+        locals.map { local =>
+          val name = local.ref.decl.o.getPreferredNameOrElse()
+          val nameStr = formatName(name)
+          val item = new CompletionItem(nameStr)
+          item.setKind(CompletionItemKind.Variable)
+          item
+        }.groupBy(_.getLabel).values.map(_.head).toList
       }
-        .groupBy(_.getLabel)
-        .values
-        .map(_.head)
-        .toList
-    }
 
     val allCompletions = (jsonFiltered ++ variableCompletions)
       .filter(_.getLabel.startsWith(prefix))
@@ -191,7 +194,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         )
 
       case err: VerificationError.SystemError =>
-        showError(s"Verification error: ${err.text}")
+        showError(s"Verification error: ${err.getMessage}")
 
       case ex: Exception => showError(s"Unexpected error: ${ex.getMessage}")
     }
