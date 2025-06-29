@@ -15,8 +15,24 @@ import org.eclipse.lsp4j.{
   Range,
   _,
 }
-import vct.col.ast.{Local, Node, Verification}
-import vct.col.origin.{BlameCollector, Name, PositionRange, ReadableOrigin}
+import vct.col.ast.{
+  Deref,
+  InvokeConstructor,
+  InvokeMethod,
+  InvokeProcedure,
+  InvokingNode,
+  Local,
+  ModelDeref,
+  Node,
+  Verification,
+}
+import vct.col.origin.{
+  BlameCollector,
+  Name,
+  Origin,
+  PositionRange,
+  ReadableOrigin,
+}
 import vct.col.rewrite.Generation
 import vct.lsp.LspMessages._
 import vct.main.stages.{Parsing, Resolution}
@@ -32,6 +48,7 @@ import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import scala.collection.concurrent.TrieMap
 import scala.collection.immutable.TreeMap
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.matching.Regex
 
@@ -90,19 +107,19 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
     val jsonFiltered = pool.filter(_.getLabel.startsWith(prefix))
 
-    val variableCompletions: List[CompletionItem] = resolutionResults.toList
-      .flatMap { result =>
-        val locals = collectLocals(result.tasks.head.program)
-        locals.map { local =>
-          val name = local.ref.decl.o.getPreferredNameOrElse()
-          val nameStr = formatName(name)
+    val symbolCompletions: List[CompletionItem] = resolutionResults.toList
+      .flatMap { res =>
+        val uses = collectNameUses(res.tasks.head.program)
+        uses.map { case (_, declOrigin) =>
+          val rawName = declOrigin.getPreferredNameOrElse()
+          val nameStr = formatName(rawName)
           val item = new CompletionItem(nameStr)
           item.setKind(CompletionItemKind.Variable)
           item
         }.groupBy(_.getLabel).values.map(_.head).toList
       }
 
-    val allCompletions = (jsonFiltered ++ variableCompletions)
+    val allCompletions = (jsonFiltered ++ symbolCompletions)
       .filter(_.getLabel.startsWith(prefix))
 
     val list = new CompletionList(allCompletions.asJava)
@@ -184,8 +201,8 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
       )
 
       val resolvedProgram = resolutionResults.get.tasks.head.program
-      val locals: Seq[Local[_]] = collectLocals(resolvedProgram)
-      originMap = TreeMap.from(hashLocalOrigins(locals))
+      val uses = collectNameUses(resolvedProgram)
+      originMap = TreeMap.from(hashNameUseOrigins(uri, uses))
     } catch {
       case err: VerificationError.UserError =>
         val diagnostics = createDiagnostics(err)
@@ -218,6 +235,76 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         showError(s"Failed to load completions JSON: $path")
         Nil
     }
+  }
+  private def collectLocals(root: Node[_]): Seq[Local[_]] = {
+    val result = scala.collection.mutable.Buffer.empty[Local[_]]
+    val stack = scala.collection.mutable.Stack[Node[_]](root)
+
+    while (stack.nonEmpty) {
+      val node = stack.pop()
+      if (node.isInstanceOf[Local[_]]) { result += node.asInstanceOf[Local[_]] }
+      stack.pushAll(node.subnodes)
+    }
+    result.toSeq
+  }
+
+  private def findNameInLine(
+      lines: Array[String],
+      name: String,
+      lineIdx: Int,
+      spanStart: Int,
+      spanEnd: Int,
+  ): (Int, Int) = {
+    val line = lines(lineIdx)
+    val s = spanStart.max(0).min(line.length)
+    // make sure the “spanEnd” also doesn’t run off the line
+    val eRaw = spanEnd.max(0).min(line.length)
+    val sub = line.substring(s, eRaw)
+    val m = raw"\b${Regex.quote(name)}\b".r.findFirstMatchIn(sub)
+    val found = m.map(_.start + s).getOrElse(s)
+
+    // clamp the computed end to line.length
+    val endCol = (found + name.length).min(line.length)
+    (found, endCol)
+  }
+
+  private def collectNameUses[T](root: Node[T]): Seq[(Origin, Origin)] = {
+    val buf = mutable.Buffer.empty[(Origin, Origin)]
+    val stack = mutable.Stack[Node[T]](root)
+
+    while (stack.nonEmpty) {
+      val n = stack.pop()
+      n match {
+        case l: Local[T] => buf += (l.o -> l.ref.decl.o)
+        case d: Deref[T] => buf += (d.o -> d.ref.decl.o)
+        case m: ModelDeref[T] => buf += (m.o -> m.ref.decl.o)
+        case inv: InvokingNode[T] => buf += (inv.o -> inv.ref.decl.o)
+        case other =>
+          other.o.getPreferredName.foreach { _ => buf += (other.o -> other.o) }
+      }
+      // here n.subnodes: Seq[Node[T]], so it typechecks
+      stack.pushAll(n.subnodes)
+    }
+    buf.toSeq
+  }
+
+  private def hashNameUseOrigins(
+      uri: String,
+      uses: Seq[(Origin, Origin)],
+  ): Map[(Int, Int, Int), (Int, Int, Int)] = {
+    val lines = docs(uri).split("\r?\n", -1)
+    uses.flatMap { case (useO, declO) =>
+      for {
+        PositionRange(uLine, _, Some((u0, u1))) <- useO.find[PositionRange]
+        PositionRange(dLine, _, Some((d0, d1))) <- declO.find[PositionRange]
+        name <- declO.getPreferredName
+      } yield {
+        val nm = formatName(name)
+        val (us0, us1) = findNameInLine(lines, nm, uLine, u0, u1)
+        val (ds0, ds1) = findNameInLine(lines, nm, dLine, d0, d1)
+        (uLine, us0, us1) -> (dLine, ds0, ds1)
+      }
+    }.toMap
   }
 
   private def extractPrefix(text: String, pos: Position): String = {
@@ -273,68 +360,6 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         )
       }
     }
-  }
-
-  private def collectLocals(root: Node[_]): Seq[Local[_]] = {
-    val result = scala.collection.mutable.Buffer.empty[Local[_]]
-    val stack = scala.collection.mutable.Stack[Node[_]](root)
-
-    while (stack.nonEmpty) {
-      val node = stack.pop()
-      if (node.isInstanceOf[Local[_]]) { result += node.asInstanceOf[Local[_]] }
-      stack.pushAll(node.subnodes)
-    }
-    result.toSeq
-  }
-
-  private def hashLocalOrigins(
-      locals: Seq[Local[_]]
-  ): Map[(Int, Int, Int), (Int, Int, Int)] = {
-    locals.flatMap { local =>
-      val declOrigin = local.ref.decl.o
-      val declRangeOpt = declOrigin.find[PositionRange]
-      val refRangeOpt = local.o.find[PositionRange]
-      val nameOpt = declOrigin.getPreferredName
-      val readableOpt = declOrigin.find[ReadableOrigin].map(_.readable)
-
-      for {
-        declRange <- declRangeOpt
-        refRange <- refRangeOpt
-        name <- nameOpt
-        readable <- readableOpt
-        (startDeclCol, _) <- declRange.startEndColIdx
-        (startRefCol, endRefCol) <- refRange.startEndColIdx
-      } yield {
-        val nameText = formatName(name)
-        val nameStartCol = findNameStartCol(
-          declRange,
-          readable,
-          startDeclCol,
-          nameText,
-        )
-        val nameEndCol = nameStartCol + nameText.length
-
-        val declKey = (refRange.startLineIdx, startRefCol, endRefCol)
-        val declValue = (declRange.startLineIdx, nameStartCol, nameEndCol)
-
-        declKey -> declValue
-      }
-    }.toMap
-  }
-
-  private def findNameStartCol(
-      declRange: PositionRange,
-      readable: io.Readable,
-      startDeclCol: Int,
-      nameText: String,
-  ): Int = {
-    val lineText = readable.readLines()(declRange.startLineIdx)
-    val nameRegex = raw"\b${Regex.quote(nameText)}\b".r
-    val searchRegion = lineText.drop(startDeclCol)
-    val matchOpt = nameRegex.findFirstMatchIn(searchRegion)
-    val nameStartCol = matchOpt.map(_.start + startDeclCol)
-      .getOrElse(startDeclCol)
-    nameStartCol
   }
 
   private def formatName(name: Name): String =

@@ -30,7 +30,7 @@ class MyLanguageServer extends LanguageServer {
       params: InitializeParams
   ): CompletableFuture[InitializeResult] = {
     val capabilities = new ServerCapabilities()
-    capabilities.setTextDocumentSync(TextDocumentSyncKind.Incremental)
+    capabilities.setTextDocumentSync(TextDocumentSyncKind.Full)
     capabilities.setCompletionProvider(
       new CompletionOptions(true, java.util.Collections.emptyList())
     )
