@@ -1,0 +1,3 @@
+package vct
+
+object OriginUtils {}
