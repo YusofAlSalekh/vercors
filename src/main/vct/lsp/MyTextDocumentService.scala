@@ -35,6 +35,7 @@ import vct.col.origin.{
 }
 import vct.col.rewrite.Generation
 import vct.lsp.LspMessages._
+import vct.lsp.VerificationErrorsUtils.sendVerificationErrorDiagnostic
 import vct.main.stages.{Parsing, Resolution}
 import vct.options.Options
 import vct.options.types.PathOrStd
@@ -202,16 +203,19 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
 
       val resolvedProgram = resolutionResults.get.tasks.head.program
       val uses = collectNameUses(resolvedProgram)
-      originMap = TreeMap.from(hashNameUseOrigins(uri, uses))
+      originMap = TreeMap.from(hashNameUseOrigins(uses))
     } catch {
       case err: VerificationError.UserError =>
         val diagnostics = createDiagnostics(err)
-        MyLanguageServer.client.publishDiagnostics(
-          new PublishDiagnosticsParams(uri, diagnostics.asJava)
-        )
+        if (diagnostics.nonEmpty) {
+          MyLanguageServer.client.publishDiagnostics(
+            new PublishDiagnosticsParams(uri, diagnostics.asJava)
+          )
+        } else { sendVerificationErrorDiagnostic(uri, err) }
 
-      case err: VerificationError.SystemError =>
-        showError(s"Verification error: ${err.getMessage}")
+      case err: VerificationError =>
+        sendVerificationErrorDiagnostic(uri, err)
+        showError("Verification error")
 
       case ex: Exception => showError(s"Unexpected error: ${ex.getMessage}")
     }
@@ -289,20 +293,17 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
   }
 
   private def hashNameUseOrigins(
-      uri: String,
-      uses: Seq[(Origin, Origin)],
+      uses: Seq[(Origin, Origin)]
   ): Map[(Int, Int, Int), (Int, Int, Int)] = {
-    val lines = docs(uri).split("\r?\n", -1)
     uses.flatMap { case (useO, declO) =>
       for {
-        PositionRange(uLine, _, Some((u0, u1))) <- useO.find[PositionRange]
-        PositionRange(dLine, _, Some((d0, d1))) <- declO.find[PositionRange]
-        name <- declO.getPreferredName
+        PositionRange(uLine, _, Some((uStartCol, uEndCol))) <- useO
+          .find[PositionRange]
+        PositionRange(dLine, _, Some((dStartCol, dEndCol))) <- declO
+          .find[PositionRange]
       } yield {
-        val nm = formatName(name)
-        val (us0, us1) = findNameInLine(lines, nm, uLine, u0, u1)
-        val (ds0, ds1) = findNameInLine(lines, nm, dLine, d0, d1)
-        (uLine, us0, us1) -> (dLine, ds0, ds1)
+        // just trust the span directly without scanning source lines
+        (uLine, uStartCol, uEndCol) -> (dLine, dStartCol, dEndCol)
       }
     }.toMap
   }

@@ -1,8 +1,8 @@
 package lsp
 
-import com.google.gson.{JsonElement, JsonPrimitive}
+import com.google.gson.{JsonArray, JsonElement, JsonObject, JsonPrimitive}
 import hre.progress.TaskRegistry
-import hre.progress.task.RootTask
+import hre.progress.task.{AbstractTask, RootTask}
 import lsp.MyLanguageServer.cancelledTokens
 import org.eclipse.lsp4j._
 import org.eclipse.lsp4j.jsonrpc.messages.Either
@@ -15,14 +15,17 @@ import vct.main.stages._
 import vct.options.Options
 import vct.parsers.transform.ConstantBlameProvider
 import vct.result.VerificationError
+import viper.api.backend.silicon.{DataRecordTask, Util}
 
 import java.net.URI
 import java.nio.file.Paths
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 import scala.language.reflectiveCalls
 
 class MyWorkspaceService extends WorkspaceService {
+  private val keepMonitoring = new AtomicBoolean(true)
 
   override def didChangeConfiguration(
       params: DidChangeConfigurationParams
@@ -106,6 +109,7 @@ class MyWorkspaceService extends WorkspaceService {
         }
 
         val rootTask = TaskRegistry.getRootTask
+        keepMonitoring.set(true)
         CompletableFuture
           .runAsync(() => runVerificationStages(options, token, uri, rootTask))
           .thenApply(_ => null)
@@ -134,6 +138,7 @@ class MyWorkspaceService extends WorkspaceService {
   ): Unit = {
     TaskRegistry().install()
     rootTask.start()
+    startVerificationMonitor(TaskRegistry.getRootTask, uri)
 
     try {
       val collector = BlameCollector()
@@ -184,6 +189,7 @@ class MyWorkspaceService extends WorkspaceService {
       report("ExpectedErrors")
       ExpectedErrors.ofOptions(options).run(backend)
 
+      keepMonitoring.set(false)
       val failures = collector.errs.toSeq
       sendUnexpectedFailureDiagnostics(uri, failures)
 
@@ -475,5 +481,136 @@ class MyWorkspaceService extends WorkspaceService {
     params.setToken(token)
     params.setValue(Either.forLeft(value))
     MyLanguageServer.client.notifyProgress(params)
+  }
+
+  def collectDataRecordTasks(root: AbstractTask): Seq[DataRecordTask] = {
+    val result = scala.collection.mutable.ArrayBuffer[DataRecordTask]()
+    val stack = scala.collection.mutable.Stack[AbstractTask](root)
+
+    while (stack.nonEmpty) {
+      val current = stack.pop()
+
+      current match {
+        case task: DataRecordTask => result += task
+        case _ =>
+      }
+
+      stack.pushAll(current.subTasks)
+    }
+
+    result.toSeq
+  }
+
+  def startVerificationMonitor(root: AbstractTask, uri: String): Unit = {
+    var lastSent = Set.empty[(Int, Int, Int, Int)]
+
+    val monitorThread =
+      new Thread(
+        () => {
+          try {
+            while (keepMonitoring.get()) {
+              val dataTasks = collectDataRecordTasks(root)
+
+              val origin = dataTasks.flatMap { task =>
+                Util.getOrigin(task.record.value)
+              }
+
+              if (dataTasks.nonEmpty) {
+                MyLanguageServer.client.logMessage(
+                  new MessageParams(MessageType.Info, s"Origin $origin")
+                )
+              }
+
+              val verifiedRanges = dataTasks.flatMap { task =>
+                Util.getOrigin(task.record.value).flatMap(_.find[PositionRange])
+                  .flatMap {
+                    case PositionRange(
+                          startLine,
+                          endLine,
+                          Some((startCol, endCol)),
+                        ) =>
+                      Some(new Range(
+                        new Position(startLine, startCol),
+                        new Position(endLine, endCol),
+                      ))
+                    case PositionRange(startLine, endLine, None) =>
+                      Some(new Range(
+                        new Position(startLine, 0),
+                        new Position(endLine, 0),
+                      ))
+                  }
+              }
+
+              // to avoid resending duplicates
+              val newRanges = verifiedRanges.filter { range =>
+                val key =
+                  (
+                    range.getStart.getLine,
+                    range.getStart.getCharacter,
+                    range.getEnd.getLine,
+                    range.getEnd.getCharacter,
+                  )
+                !lastSent.contains(key)
+              }
+              lastSent ++= newRanges.map(r =>
+                (
+                  r.getStart.getLine,
+                  r.getStart.getCharacter,
+                  r.getEnd.getLine,
+                  r.getEnd.getCharacter,
+                )
+              )
+
+              if (newRanges.nonEmpty) {
+                val jsonParams = new JsonObject()
+                jsonParams.addProperty("uri", uri)
+
+                val jsonArray = new JsonArray()
+                newRanges.foreach { range =>
+                  val rangeObj = new JsonObject()
+
+                  val startObj = new JsonObject()
+                  startObj.addProperty("line", range.getStart.getLine)
+                  startObj.addProperty("character", range.getStart.getCharacter)
+
+                  val endObj = new JsonObject()
+                  endObj.addProperty("line", range.getEnd.getLine)
+                  endObj.addProperty("character", range.getEnd.getCharacter)
+
+                  rangeObj.add("start", startObj)
+                  rangeObj.add("end", endObj)
+
+                  jsonArray.add(rangeObj)
+                }
+
+                jsonParams.add("ranges", jsonArray)
+
+                MyLanguageServer.client.getClass
+                  .getMethod("notify", classOf[String], classOf[Object]).invoke(
+                    MyLanguageServer.client,
+                    "vercors/verifiedRange",
+                    jsonParams,
+                  )
+
+                MyLanguageServer.client.logMessage(new MessageParams(
+                  MessageType.Info,
+                  s"Sent ${newRanges} new verified ranges",
+                ))
+              }
+              Thread.sleep(1000)
+            }
+          } catch {
+            case ex: Exception =>
+              MyLanguageServer.client.logMessage(new MessageParams(
+                MessageType.Warning,
+                s"[Monitor] Error while monitoring: ${ex.getMessage}",
+              ))
+          }
+        },
+        "VerCorsVerificationMonitor",
+      )
+
+    monitorThread.setDaemon(true)
+    monitorThread.start()
   }
 }
