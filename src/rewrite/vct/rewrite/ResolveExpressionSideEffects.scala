@@ -11,7 +11,6 @@ import vct.col.origin.{
   LabelContext,
   Origin,
   PreferredName,
-  SubscriptAssignTarget,
 }
 import vct.col.ref.Ref
 import vct.col.rewrite.{
@@ -515,17 +514,17 @@ case class ResolveExpressionSideEffects[Pre <: Generation]()
           SilverDeref[Post](notInlined(obj), succ(f))(DerefAssignTarget)(
             target.o
           )
-        case ArraySubscript(arr, index) =>
-          ArraySubscript[Post](notInlined(arr), notInlined(index))(
-            SubscriptAssignTarget
-          )(target.o)
+        case sub @ ArraySubscript(arr, index) =>
+          ArraySubscript[Post](notInlined(arr), notInlined(index))(sub.blame)(
+            target.o
+          )
         case PointerSubscript(arr, index)
             if arr.t.isInstanceOf[TConstPointer[_]] =>
           throw DisallowedAssignmentTarget(target)
-        case PointerSubscript(arr, index) =>
-          PointerSubscript[Post](notInlined(arr), notInlined(index))(
-            SubscriptAssignTarget
-          )(target.o)
+        case sub @ PointerSubscript(arr, index) =>
+          PointerSubscript[Post](notInlined(arr), notInlined(index))(sub.blame)(
+            target.o
+          )
         case deref @ DerefPointer(ptr) =>
           DerefPointer[Post](notInlined(ptr))(deref.blame)(target.o)
         case VectorSubscript(_, _) => throw DisallowedAssignmentTarget(target)
