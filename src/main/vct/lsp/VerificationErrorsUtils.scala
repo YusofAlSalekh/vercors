@@ -9,34 +9,60 @@ import org.eclipse.lsp4j.{
   Range,
 }
 import vct.col.ast.Node
+import vct.col.check.CheckError
 import vct.col.origin.{Origin, PositionRange}
 import vct.lsp.LspMessages.showError
+import vct.main.stages.HasCheckErrors
 import vct.result.VerificationError
+
 import scala.jdk.CollectionConverters._
 
 object VerificationErrorsUtils {
   def sendVerificationErrorDiagnostic(
       uri: String,
       err: VerificationError,
-  ): Unit = {
-    findOrigin(err) match {
-      case Some(origin) =>
-        val range = originToRange(origin)
-        val diagnostic: Diagnostic = createVerificationErrorDiagnostic(
-          err,
-          range,
-        )
+  ): Unit =
+    err match {
+
+      case hc: HasCheckErrors =>
+        val diagnostics = hc.errors.flatMap { chk: CheckError =>
+          findOrigin(chk).map { origin =>
+            val range: Range = origin.find[PositionRange].map {
+              case PositionRange(sl, el, Some((sc, ec))) =>
+                new Range(new Position(sl, sc), new Position(el, ec))
+              case PositionRange(sl, el, None) =>
+                new Range(new Position(sl, 0), new Position(el, 0))
+            }.getOrElse(new Range(new Position(0, 0), new Position(0, 0)))
+
+            val diag =
+              new Diagnostic(
+                range,
+                chk.message(_.o),
+                DiagnosticSeverity.Error,
+                "VerCors",
+              )
+            diag
+          }
+        }
         MyLanguageServer.client.publishDiagnostics(
-          new PublishDiagnosticsParams(uri, List(diagnostic).asJava)
+          new PublishDiagnosticsParams(uri, diagnostics.asJava)
         )
 
-      case None =>
-        showError(
-          s"Verification failed, unhandled verification error, error type : ${err.getClass.getSimpleName}"
-        )
-        publishNoPositionError(uri, err)
+      case otherErr =>
+        findOrigin(otherErr) match {
+          case Some(origin) =>
+            val range = originToRange(origin)
+            val diag = createVerificationErrorDiagnostic(otherErr, range)
+            MyLanguageServer.client.publishDiagnostics(
+              new PublishDiagnosticsParams(uri, List(diag).asJava)
+            )
+          case None =>
+            showError(
+              s"Verification failed, verification error without position, error type: ${otherErr.getClass.getSimpleName}"
+            )
+            publishNoPositionError(uri, otherErr)
+        }
     }
-  }
 
   private def publishNoPositionError(
       uri: String,

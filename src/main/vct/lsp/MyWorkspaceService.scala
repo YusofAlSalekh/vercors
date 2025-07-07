@@ -7,10 +7,10 @@ import lsp.MyLanguageServer.cancelledTokens
 import org.eclipse.lsp4j._
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.WorkspaceService
-import vct.col.ast.Node
 import vct.col.origin._
 import vct.col.rewrite.bip.BIP
 import vct.lsp.LspMessages._
+import vct.lsp.VerificationErrorsUtils.sendVerificationErrorDiagnostic
 import vct.main.stages._
 import vct.options.Options
 import vct.parsers.transform.ConstantBlameProvider
@@ -29,11 +29,18 @@ class MyWorkspaceService extends WorkspaceService {
 
   override def didChangeConfiguration(
       params: DidChangeConfigurationParams
-  ): Unit = { println("Workspace configuration changed") }
+  ): Unit = {
+    MyLanguageServer.client.logMessage(
+      new MessageParams(MessageType.Info, "Workspace configuration changed")
+    )
+  }
 
   override def didChangeWatchedFiles(
       params: DidChangeWatchedFilesParams
-  ): Unit = { println("Watched files changed") }
+  ): Unit = {
+    MyLanguageServer.client
+      .logMessage(new MessageParams(MessageType.Info, "Watched files changed"))
+  }
 
   override def executeCommand(
       params: ExecuteCommandParams
@@ -348,100 +355,6 @@ class MyWorkspaceService extends WorkspaceService {
     }
   }
 
-  private def sendVerificationErrorDiagnostic(
-      uri: String,
-      err: VerificationError,
-  ): Unit = {
-    findOrigin(err) match {
-      case Some(origin) =>
-        val range = originToRange(origin)
-        val diagnostic: Diagnostic = createVerificationErrorDiagnostic(
-          err,
-          range,
-        )
-        MyLanguageServer.client.publishDiagnostics(
-          new PublishDiagnosticsParams(uri, List(diagnostic).asJava)
-        )
-
-      case None =>
-        showError(
-          s"Verification failed, verification error without position, error type : ${err.getClass.getSimpleName}"
-        )
-        publishNoPositionError(uri, err)
-    }
-  }
-
-  private def publishNoPositionError(
-      uri: String,
-      err: VerificationError,
-  ): Unit = {
-    val diagnostic = new Diagnostic()
-    diagnostic.setSeverity(DiagnosticSeverity.Error)
-    diagnostic.setMessage(err.getMessage)
-    diagnostic.setRange(new Range(new Position(0, 0), new Position(0, 0)))
-    diagnostic.setSource("VerCors")
-
-    MyLanguageServer.client.publishDiagnostics(
-      new PublishDiagnosticsParams(uri, List(diagnostic).asJava)
-    )
-  }
-
-  private def originToRange(origin: Origin) = {
-    origin.find[PositionRange].map {
-      case PositionRange(startLine, endLine, Some((startCol, endCol))) =>
-        new Range(
-          new Position(startLine, startCol),
-          new Position(endLine, endCol),
-        )
-      case PositionRange(startLine, endLine, None) =>
-        new Range(new Position(startLine, 0), new Position(endLine, 0))
-    }.getOrElse(new Range(new Position(0, 0), new Position(0, 0)))
-  }
-
-  private def createVerificationErrorDiagnostic(
-      err: VerificationError,
-      range: Range,
-  ) = {
-    val diagnostic = new Diagnostic()
-    diagnostic.setSeverity(DiagnosticSeverity.Error)
-    diagnostic.setRange(range)
-    diagnostic.setSource("VerCors")
-    diagnostic.setMessage(err.getMessage)
-    diagnostic
-  }
-
-  private def findOrigin(obj: Any): Option[Origin] = {
-    def tryGet(methodName: String): Option[Origin] = {
-      obj.getClass.getMethods.find(m =>
-        m.getName == methodName && m.getParameterCount == 0 &&
-          classOf[Origin].isAssignableFrom(m.getReturnType)
-      ).flatMap { method =>
-        try Some(method.invoke(obj).asInstanceOf[Origin])
-        catch { case _: Throwable => None }
-      }
-    }
-
-    tryGet("o").orElse(tryGet("origin")).orElse {
-      obj.getClass.getDeclaredFields
-        .find(f => classOf[Origin].isAssignableFrom(f.getType))
-        .flatMap { field =>
-          field.setAccessible(true)
-          try Some(field.get(obj).asInstanceOf[Origin])
-          catch { case _: Throwable => None }
-        }
-    }.orElse {
-      obj.getClass.getDeclaredFields
-        .find(f => classOf[Node[_]].isAssignableFrom(f.getType))
-        .flatMap { field =>
-          field.setAccessible(true)
-          try {
-            val node = field.get(obj).asInstanceOf[Node[_]]
-            Some(node.o)
-          } catch { case _: Throwable => None }
-        }
-    }
-  }
-
   private def checkCancelled(token: String): Boolean = {
     if (cancelledTokens.contains(token)) {
       cancelledTokens.remove(token)
@@ -453,9 +366,9 @@ class MyWorkspaceService extends WorkspaceService {
       false
   }
 
-  private def notifyProgress(
+  private def notifyProgress[T <: WorkDoneProgressNotification](
       token: String,
-      value: WorkDoneProgressBegin,
+      value: T,
   ): Unit = {
     val params = new ProgressParams()
     params.setToken(token)
@@ -463,27 +376,9 @@ class MyWorkspaceService extends WorkspaceService {
     MyLanguageServer.client.notifyProgress(params)
   }
 
-  private def notifyProgress(
-      token: String,
-      value: WorkDoneProgressReport,
-  ): Unit = {
-    val params = new ProgressParams()
-    params.setToken(token)
-    params.setValue(Either.forLeft(value))
-    MyLanguageServer.client.notifyProgress(params)
-  }
-
-  private def notifyProgress(
-      token: String,
-      value: WorkDoneProgressEnd,
-  ): Unit = {
-    val params = new ProgressParams()
-    params.setToken(token)
-    params.setValue(Either.forLeft(value))
-    MyLanguageServer.client.notifyProgress(params)
-  }
-
-  def collectDataRecordTasks(root: AbstractTask): Seq[DataRecordTask] = {
+  private def collectDataRecordTasks(
+      root: AbstractTask
+  ): Seq[DataRecordTask] = {
     val result = scala.collection.mutable.ArrayBuffer[DataRecordTask]()
     val stack = scala.collection.mutable.Stack[AbstractTask](root)
 
@@ -501,116 +396,113 @@ class MyWorkspaceService extends WorkspaceService {
     result.toSeq
   }
 
-  def startVerificationMonitor(root: AbstractTask, uri: String): Unit = {
+  private def startVerificationMonitor(
+      root: AbstractTask,
+      uri: String,
+  ): Unit = {
+    val monitor =
+      new Thread(() => monitorLoop(root, uri), "VerCorsVerificationMonitor")
+    monitor.setDaemon(true)
+    monitor.start()
+  }
+
+  private def monitorLoop(root: AbstractTask, uri: String): Unit = {
     var lastSent = Set.empty[(Int, Int, Int, Int)]
+    try {
+      while (keepMonitoring.get()) {
+        val dataTasks = collectDataRecordTasks(root)
+        logCurrentOrigins(dataTasks)
 
-    val monitorThread =
-      new Thread(
-        () => {
-          try {
-            while (keepMonitoring.get()) {
-              val dataTasks = collectDataRecordTasks(root)
+        val verified = extractRanges(dataTasks)
+        val newRanges = filterNewRanges(verified, lastSent)
+        lastSent ++= rangeKeys(newRanges)
 
-              val origin = dataTasks.flatMap { task =>
-                Util.getOrigin(task.record.value)
-              }
+        if (newRanges.nonEmpty)
+          sendVerifiedRanges(uri, newRanges)
+        Thread.sleep(1000)
+      }
+    } catch { case ex: Exception => logWarning("Error while monitoring", ex) }
+  }
 
-              if (dataTasks.nonEmpty) {
-                MyLanguageServer.client.logMessage(
-                  new MessageParams(MessageType.Info, s"Origin $origin")
-                )
-              }
+  private def logCurrentOrigins(dataTasks: Seq[DataRecordTask]): Unit = {
+    dataTasks.flatMap(task => Util.getOrigin(task.record.value)) match {
+      case origins if origins.nonEmpty =>
+        MyLanguageServer.client
+          .logMessage(new MessageParams(MessageType.Info, s"Origin $origins"))
+      case _ =>
+    }
+  }
 
-              val verifiedRanges = dataTasks.flatMap { task =>
-                Util.getOrigin(task.record.value).flatMap(_.find[PositionRange])
-                  .flatMap {
-                    case PositionRange(
-                          startLine,
-                          endLine,
-                          Some((startCol, endCol)),
-                        ) =>
-                      Some(new Range(
-                        new Position(startLine, startCol),
-                        new Position(endLine, endCol),
-                      ))
-                    case PositionRange(startLine, endLine, None) =>
-                      Some(new Range(
-                        new Position(startLine, 0),
-                        new Position(endLine, 0),
-                      ))
-                  }
-              }
+  private def extractRanges(dataTasks: Seq[DataRecordTask]): Seq[Range] =
+    dataTasks.flatMap { task =>
+      Util.getOrigin(task.record.value).flatMap(_.find[PositionRange]).map {
+        case PositionRange(sL, eL, Some((sC, eC))) =>
+          new Range(new Position(sL, sC), new Position(eL, eC))
+        case PositionRange(sL, eL, None) =>
+          new Range(new Position(sL, 0), new Position(eL, 0))
+      }
+    }
 
-              // to avoid resending duplicates
-              val newRanges = verifiedRanges.filter { range =>
-                val key =
-                  (
-                    range.getStart.getLine,
-                    range.getStart.getCharacter,
-                    range.getEnd.getLine,
-                    range.getEnd.getCharacter,
-                  )
-                !lastSent.contains(key)
-              }
-              lastSent ++= newRanges.map(r =>
-                (
-                  r.getStart.getLine,
-                  r.getStart.getCharacter,
-                  r.getEnd.getLine,
-                  r.getEnd.getCharacter,
-                )
-              )
+  private def filterNewRanges(
+      ranges: Seq[Range],
+      lastSent: Set[(Int, Int, Int, Int)],
+  ): Seq[Range] =
+    ranges.filter { r =>
+      val key =
+        (
+          r.getStart.getLine,
+          r.getStart.getCharacter,
+          r.getEnd.getLine,
+          r.getEnd.getCharacter,
+        )
+      !lastSent.contains(key)
+    }
 
-              if (newRanges.nonEmpty) {
-                val jsonParams = new JsonObject()
-                jsonParams.addProperty("uri", uri)
-
-                val jsonArray = new JsonArray()
-                newRanges.foreach { range =>
-                  val rangeObj = new JsonObject()
-
-                  val startObj = new JsonObject()
-                  startObj.addProperty("line", range.getStart.getLine)
-                  startObj.addProperty("character", range.getStart.getCharacter)
-
-                  val endObj = new JsonObject()
-                  endObj.addProperty("line", range.getEnd.getLine)
-                  endObj.addProperty("character", range.getEnd.getCharacter)
-
-                  rangeObj.add("start", startObj)
-                  rangeObj.add("end", endObj)
-
-                  jsonArray.add(rangeObj)
-                }
-
-                jsonParams.add("ranges", jsonArray)
-
-                MyLanguageServer.client.getClass
-                  .getMethod("notify", classOf[String], classOf[Object]).invoke(
-                    MyLanguageServer.client,
-                    "vercors/verifiedRange",
-                    jsonParams,
-                  )
-
-                MyLanguageServer.client.logMessage(new MessageParams(
-                  MessageType.Info,
-                  s"Sent ${newRanges} new verified ranges",
-                ))
-              }
-              Thread.sleep(1000)
-            }
-          } catch {
-            case ex: Exception =>
-              MyLanguageServer.client.logMessage(new MessageParams(
-                MessageType.Warning,
-                s"[Monitor] Error while monitoring: ${ex.getMessage}",
-              ))
-          }
-        },
-        "VerCorsVerificationMonitor",
+  private def rangeKeys(ranges: Seq[Range]): Seq[(Int, Int, Int, Int)] =
+    ranges.map(r =>
+      (
+        r.getStart.getLine,
+        r.getStart.getCharacter,
+        r.getEnd.getLine,
+        r.getEnd.getCharacter,
       )
+    )
 
-    monitorThread.setDaemon(true)
-    monitorThread.start()
+  private def sendVerifiedRanges(uri: String, newRanges: Seq[Range]): Unit = {
+    val params = new JsonObject()
+    params.addProperty("uri", uri)
+    val array = new JsonArray()
+    newRanges.foreach { r =>
+      val obj = new JsonObject()
+      obj.add("start", makePos(r.getStart))
+      obj.add("end", makePos(r.getEnd))
+      array.add(obj)
+    }
+    params.add("ranges", array)
+    invokeNotify("vercors/verifiedRange", params)
+    MyLanguageServer.client.logMessage(new MessageParams(
+      MessageType.Info,
+      s"Sent $newRanges new verified ranges",
+    ))
+  }
+
+  private def makePos(p: Position): JsonObject = {
+    val o = new JsonObject()
+    o.addProperty("line", p.getLine)
+    o.addProperty("character", p.getCharacter)
+    o
+  }
+
+  private def invokeNotify(method: String, params: JsonObject): Unit = {
+    MyLanguageServer.client.getClass
+      .getMethod("notify", classOf[String], classOf[Object])
+      .invoke(MyLanguageServer.client, method, params)
+  }
+
+  private def logWarning(msg: String, ex: Throwable): Unit = {
+    MyLanguageServer.client.logMessage(new MessageParams(
+      MessageType.Warning,
+      s"[Monitor] $msg: ${ex.getMessage}",
+    ))
   }
 }

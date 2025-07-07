@@ -3,7 +3,6 @@ package lsp
 import com.typesafe.scalalogging.LazyLogging
 import io.circe.generic.auto._
 import io.circe.parser._
-import hre.io
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.services.TextDocumentService
 import org.eclipse.lsp4j.{
@@ -16,23 +15,17 @@ import org.eclipse.lsp4j.{
   _,
 }
 import vct.col.ast.{
+  Constructor,
   Deref,
-  InvokeConstructor,
-  InvokeMethod,
-  InvokeProcedure,
+  InstanceMethod,
   InvokingNode,
   Local,
   ModelDeref,
   Node,
+  Procedure,
   Verification,
 }
-import vct.col.origin.{
-  BlameCollector,
-  Name,
-  Origin,
-  PositionRange,
-  ReadableOrigin,
-}
+import vct.col.origin.{BlameCollector, Name, Origin, PositionRange}
 import vct.col.rewrite.Generation
 import vct.lsp.LspMessages._
 import vct.lsp.VerificationErrorsUtils.sendVerificationErrorDiagnostic
@@ -51,7 +44,6 @@ import scala.collection.concurrent.TrieMap
 import scala.collection.immutable.TreeMap
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
-import scala.util.matching.Regex
 
 class MyTextDocumentService extends TextDocumentService with LazyLogging {
   private val docs = TrieMap.empty[String, String]
@@ -240,37 +232,6 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         Nil
     }
   }
-  private def collectLocals(root: Node[_]): Seq[Local[_]] = {
-    val result = scala.collection.mutable.Buffer.empty[Local[_]]
-    val stack = scala.collection.mutable.Stack[Node[_]](root)
-
-    while (stack.nonEmpty) {
-      val node = stack.pop()
-      if (node.isInstanceOf[Local[_]]) { result += node.asInstanceOf[Local[_]] }
-      stack.pushAll(node.subnodes)
-    }
-    result.toSeq
-  }
-
-  private def findNameInLine(
-      lines: Array[String],
-      name: String,
-      lineIdx: Int,
-      spanStart: Int,
-      spanEnd: Int,
-  ): (Int, Int) = {
-    val line = lines(lineIdx)
-    val s = spanStart.max(0).min(line.length)
-    // make sure the “spanEnd” also doesn’t run off the line
-    val eRaw = spanEnd.max(0).min(line.length)
-    val sub = line.substring(s, eRaw)
-    val m = raw"\b${Regex.quote(name)}\b".r.findFirstMatchIn(sub)
-    val found = m.map(_.start + s).getOrElse(s)
-
-    // clamp the computed end to line.length
-    val endCol = (found + name.length).min(line.length)
-    (found, endCol)
-  }
 
   private def collectNameUses[T](root: Node[T]): Seq[(Origin, Origin)] = {
     val buf = mutable.Buffer.empty[(Origin, Origin)]
@@ -282,11 +243,21 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
         case l: Local[T] => buf += (l.o -> l.ref.decl.o)
         case d: Deref[T] => buf += (d.o -> d.ref.decl.o)
         case m: ModelDeref[T] => buf += (m.o -> m.ref.decl.o)
-        case inv: InvokingNode[T] => buf += (inv.o -> inv.ref.decl.o)
+        case inv: InvokingNode[T] =>
+          inv.ref.decl match {
+            case m: InstanceMethod[T] =>
+              m.body.foreach(stmt => buf += (inv.o -> stmt.o))
+
+            case p: Procedure[T] =>
+              p.body.foreach(stmt => buf += (inv.o -> stmt.o))
+
+            case c: Constructor[T] =>
+              c.body.foreach(stmt => buf += (inv.o -> stmt.o))
+            case otherDecl => buf += (inv.o -> otherDecl.o)
+          }
         case other =>
           other.o.getPreferredName.foreach { _ => buf += (other.o -> other.o) }
       }
-      // here n.subnodes: Seq[Node[T]], so it typechecks
       stack.pushAll(n.subnodes)
     }
     buf.toSeq
@@ -301,10 +272,7 @@ class MyTextDocumentService extends TextDocumentService with LazyLogging {
           .find[PositionRange]
         PositionRange(dLine, _, Some((dStartCol, dEndCol))) <- declO
           .find[PositionRange]
-      } yield {
-        // just trust the span directly without scanning source lines
-        (uLine, uStartCol, uEndCol) -> (dLine, dStartCol, dEndCol)
-      }
+      } yield { (uLine, uStartCol, uEndCol) -> (dLine, dStartCol, dEndCol) }
     }.toMap
   }
 

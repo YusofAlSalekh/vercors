@@ -41,8 +41,12 @@ import java.io.{
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 
+trait HasCheckErrors {
+  def errors: Seq[CheckError]
+}
+
 case object Resolution {
-  case class InputResolutionError(errors: Seq[CheckError]) extends UserError {
+  case class InputResolutionError(errors: Seq[CheckError]) extends UserError with HasCheckErrors{
     override def code: String =
       s"resolutionError:${errors.map(_.subcode).mkString(",")}"
     override def text: String = errors.map(_.message(_.o)).mkString("\n")

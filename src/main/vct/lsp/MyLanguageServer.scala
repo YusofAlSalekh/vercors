@@ -29,6 +29,10 @@ class MyLanguageServer extends LanguageServer {
   override def initialize(
       params: InitializeParams
   ): CompletableFuture[InitializeResult] = {
+    System
+      .setOut(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()))
+    System
+      .setErr(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()))
     val capabilities = new ServerCapabilities()
     capabilities.setTextDocumentSync(TextDocumentSyncKind.Incremental)
     capabilities.setCompletionProvider(
@@ -36,7 +40,7 @@ class MyLanguageServer extends LanguageServer {
     )
     capabilities.setDefinitionProvider(true)
     // capabilities.setReferencesProvider(true)
-   // capabilities.setDocumentSymbolProvider(true)
+    // capabilities.setDocumentSymbolProvider(true)
 
     /*val execOpts = new ExecuteCommandOptions(
       java.util.Arrays.asList("vercors.lspVerify")
