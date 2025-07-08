@@ -92,13 +92,13 @@ object viper extends ScalaModule {
   }
 
   object silver extends ScalaModule {
-    override def scalaVersion = "2.13.10"
+    override def scalaVersion = "2.13.16"
     override def scalacOptions = T { Seq("-Xno-patmat-analysis", "-nowarn") }
     def repo = silverGit
     override def sources = T.sources { repo.filteredRepo() / "src" / "main" / "scala" }
     override def resources = T.sources { repo.filteredRepo() / "src" / "main" / "resources" }
     override def ivyDeps = settings.deps.log ++ Agg(
-      ivy"org.scala-lang:scala-reflect:2.13.10",
+      ivy"org.scala-lang:scala-reflect:2.13.16",
       ivy"org.scalatest::scalatest:3.1.2",
       ivy"org.scala-lang.modules::scala-parser-combinators:1.1.2",
       ivy"com.lihaoyi::fastparse:2.2.2",
@@ -127,13 +127,13 @@ object viper extends ScalaModule {
     }
 
     object common extends ScalaModule {
-      override def scalaVersion = "2.13.10"
+      override def scalaVersion = "2.13.16"
       override def scalacOptions = T { Seq("-Xno-patmat-analysis", "-nowarn") }
       override def sources = T.sources { silicon.repo.filteredRepo() / "common" / "src" / "main" / "scala" }
       override def moduleDeps = Seq(silver)
     }
 
-    override def scalaVersion = "2.13.10"
+    override def scalaVersion = "2.13.16"
     override def scalacOptions = T { Seq("-Xno-patmat-analysis", "-nowarn") }
     def repo = siliconGit
     override def sources = T.sources { repo.filteredRepo() / "src" / "main" / "scala" }
@@ -149,7 +149,7 @@ object viper extends ScalaModule {
   }
 
   object carbon extends ScalaModule {
-    override def scalaVersion = "2.13.10"
+    override def scalaVersion = "2.13.16"
     override def scalacOptions = T { Seq("-Xno-patmat-analysis", "-nowarn") }
     def repo = carbonGit
     override def sources = T.sources { repo.filteredRepo() / "src" / "main" / "scala" }
@@ -590,7 +590,14 @@ object vercors extends Module {
 
     def deps = Agg(
       ivy"com.github.scopt::scopt:4.0.1",
+      ivy"org.eclipse.lsp4j:org.eclipse.lsp4j:0.23.1",
+      ivy"io.circe::circe-core:0.14.5",
+      ivy"io.circe::circe-generic:0.14.5",
+      ivy"io.circe::circe-parser:0.14.5",
     )
+    override def scalacOptions = T {
+      Seq("-Xmixin-force-forwarders:false")
+    }
     override def moduleDeps = Seq(hre, col, rewrite, parsers, viperApi, buildInfo)
     override def mainClass = Some("vct.main.Main")
     override def runScriptClasses = T { Map (
