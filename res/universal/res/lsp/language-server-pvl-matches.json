@@ -35,6 +35,8 @@
   { "name": "keyword.other", "match": "communicate" },
   { "name": "keyword.other", "match": "asserting" },
   { "name": "keyword.other", "match": "assuming" },
+  { "name": "keyword.spec", "match": "requires" },
+  { "name": "keyword.spec", "match": "ensures" },
   { "name": "variable.language", "match": "this" },
   { "name": "variable.language", "match": "null" },
   { "name": "variable.language", "match": "true" },

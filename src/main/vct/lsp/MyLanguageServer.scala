@@ -39,14 +39,6 @@ class MyLanguageServer extends LanguageServer {
       new CompletionOptions(true, java.util.Collections.emptyList())
     )
     capabilities.setDefinitionProvider(true)
-    // capabilities.setReferencesProvider(true)
-    // capabilities.setDocumentSymbolProvider(true)
-
-    /*val execOpts = new ExecuteCommandOptions(
-      java.util.Arrays.asList("vercors.lspVerify")
-    )
-    execOpts.setWorkDoneProgress(true)
-    capabilities.setExecuteCommandProvider(execOpts)*/
 
     capabilities.setExecuteCommandProvider(new ExecuteCommandOptions(
       java.util.Arrays.asList("vercors.lspVerify")
@@ -63,7 +55,6 @@ class MyLanguageServer extends LanguageServer {
   override def getTextDocumentService: TextDocumentService = textDocumentService
 
   override def getWorkspaceService: WorkspaceService = workspaceService
-
 }
 
 object MyLanguageServer {

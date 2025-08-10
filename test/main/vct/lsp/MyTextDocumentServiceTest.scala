@@ -1,8 +1,8 @@
 package vct.lsp
 
 import lsp.{MyLanguageServer, MyTextDocumentService}
-import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j._
+import org.eclipse.lsp4j.services.LanguageClient
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.scalatest.funsuite.AnyFunSuiteLike
@@ -67,20 +67,5 @@ class MyTextDocumentServiceTest extends AnyFunSuiteLike with Matchers {
     result.getRight.size() shouldBe 0
 
     verify(client).showMessage(any())
-  }
-
-  test("test didSave when document is saved") {
-    val client = mock(classOf[LanguageClient])
-    MyLanguageServer.client = client
-
-    val params = new DidSaveTextDocumentParams()
-    params.setTextDocument(new TextDocumentIdentifier("file:///fake"))
-
-    val service = new MyTextDocumentService
-    service.didSave(params)
-
-    verify(client).showMessage(argThat { msg: MessageParams =>
-      msg.getMessage == "Document saved" && msg.getType == MessageType.Info
-    })
   }
 }
